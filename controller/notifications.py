@@ -41,9 +41,7 @@ class Notifier:
         bot_token = self._config.notifications.slack_bot_token
         channel_id = self._config.notifications.slack_channel_id
         if not bot_token or not channel_id:
-            logger.warning(
-                "notifications.method is slack but slack_bot_token/slack_channel_id are not set; skipping"
-            )
+            logger.warning("notifications.method is slack but slack_bot_token/slack_channel_id are not set; skipping")
             return
 
         payload = json.dumps({"channel": channel_id, "text": f"*{subject}*\n{message}"}).encode("utf-8")

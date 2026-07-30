@@ -26,7 +26,7 @@ class DiscoveryConfig:
     threshold_tag_key: str = "DiskThreshold"
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> "DiscoveryConfig":
+    def from_dict(cls, data: dict[str, Any]) -> DiscoveryConfig:
         d = cls()
         return cls(
             eligibility_tag_key=data.get("eligibility_tag_key", d.eligibility_tag_key),
@@ -43,7 +43,7 @@ class StateConfig:
     dsn: str = "postgresql://ebs_auto_resize:changeme@postgres:5432/ebs_auto_resize"
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> "StateConfig":
+    def from_dict(cls, data: dict[str, Any]) -> StateConfig:
         d = cls()
         return cls(dsn=data.get("dsn", d.dsn))
 
@@ -54,7 +54,7 @@ class SchedulerConfig:
     max_concurrent_resizes: int = 5
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> "SchedulerConfig":
+    def from_dict(cls, data: dict[str, Any]) -> SchedulerConfig:
         d = cls()
         return cls(
             interval_seconds=data.get("interval_seconds", d.interval_seconds),
@@ -68,7 +68,7 @@ class ExtendRetryConfig:
     backoff_seconds: int = 60
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> "ExtendRetryConfig":
+    def from_dict(cls, data: dict[str, Any]) -> ExtendRetryConfig:
         d = cls()
         return cls(
             max_attempts=data.get("max_attempts", d.max_attempts),
@@ -84,7 +84,7 @@ class ResizeConfig:
     stale_lock_timeout_minutes: int = 45
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> "ResizeConfig":
+    def from_dict(cls, data: dict[str, Any]) -> ResizeConfig:
         d = cls()
         return cls(
             max_volume_size_gb=data.get("max_volume_size_gb", d.max_volume_size_gb),
@@ -101,7 +101,7 @@ class NotificationsConfig:
     slack_channel_id: str | None = None
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> "NotificationsConfig":
+    def from_dict(cls, data: dict[str, Any]) -> NotificationsConfig:
         d = cls()
         return cls(
             method=data.get("method", d.method),
@@ -138,7 +138,7 @@ class Config:
             )
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> "Config":
+    def from_dict(cls, data: dict[str, Any]) -> Config:
         defaults_source = _RAW_DEFAULTS
         return cls(
             regions=data.get("regions", defaults_source["regions"]),

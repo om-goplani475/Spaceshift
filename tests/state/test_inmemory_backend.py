@@ -1,10 +1,10 @@
 """Tests for tests/helpers.py's InMemoryStateBackend test double itself -
 proving it's a trustworthy stand-in for the real state machine contract,
 not just "probably fine" (see its docstring for why this exists alongside
-SqliteBackend-less test suite and tests/test_state_postgres.py)."""
+tests/state/test_postgres_backend.py)."""
 
 from concurrent.futures import ThreadPoolExecutor
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 from controller.state.base import ResizeStatus
 from tests.helpers import InMemoryStateBackend
@@ -44,12 +44,12 @@ def test_list_stale_excludes_terminal_rows():
     backend = InMemoryStateBackend()
     backend.create_if_absent("vol-1", "i-1", 100, 150)
     backend.update_status("vol-1", ResizeStatus.EXTEND_COMPLETED)
-    assert backend.list_stale(datetime.now(timezone.utc) + timedelta(minutes=1)) == []
+    assert backend.list_stale(datetime.now(UTC) + timedelta(minutes=1)) == []
 
 
 def test_modification_history():
     backend = InMemoryStateBackend()
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     backend.record_modification("vol-1", now)
     assert backend.modification_count_since("vol-1", now - timedelta(hours=24)) == 1
     assert backend.modification_count_since("vol-1", now + timedelta(seconds=1)) == 0

@@ -12,15 +12,15 @@ from __future__ import annotations
 import logging
 import time
 from concurrent.futures import ThreadPoolExecutor
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from controller.aws_session import build_boto3_session
 from controller.config import Config
 from controller.connections.base import ConnectionTarget, Connector
 from controller.connections.ssm_connector import SsmConnector
-from controller.disk_check import check_disk_usage
 from controller.discovery import EligibleVolume, discover_eligible_volumes, is_ssm_ready
+from controller.disk_check import check_disk_usage
 from controller.notifications import Notifier
 from controller.resize import attempt_extend, should_retry_extend_now, start_resize
 from controller.state.base import ResizeStatus, StateBackend
@@ -44,12 +44,8 @@ class Scheduler:
         # through it, not just some of the clients.
         self._session = build_boto3_session(config)
 
-        self._ec2_clients = {
-            region: self._session.client("ec2", region_name=region) for region in config.regions
-        }
-        self._ssm_clients = {
-            region: self._session.client("ssm", region_name=region) for region in config.regions
-        }
+        self._ec2_clients = {region: self._session.client("ec2", region_name=region) for region in config.regions}
+        self._ssm_clients = {region: self._session.client("ssm", region_name=region) for region in config.regions}
         self._connectors: dict[str, Connector] = {
             region: SsmConnector(region=region, session=self._session) for region in config.regions
         }
@@ -70,7 +66,7 @@ class Scheduler:
 
     @staticmethod
     def _write_heartbeat() -> None:
-        Path(HEARTBEAT_PATH).write_text(datetime.now(timezone.utc).isoformat())
+        Path(HEARTBEAT_PATH).write_text(datetime.now(UTC).isoformat())
 
     def run_once(self) -> None:
         for region in self._config.regions:
@@ -142,7 +138,7 @@ class Scheduler:
         return ConnectionTarget(instance_id=instance_id)
 
     def _recover_stale_rows(self, ec2) -> None:
-        cutoff = datetime.now(timezone.utc) - timedelta(minutes=self._config.resize.stale_lock_timeout_minutes)
+        cutoff = datetime.now(UTC) - timedelta(minutes=self._config.resize.stale_lock_timeout_minutes)
         for record in self._state.list_stale(cutoff):
             try:
                 self._recover_stale_row(ec2, record)

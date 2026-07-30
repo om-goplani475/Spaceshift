@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import threading
 from dataclasses import replace
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from controller.connections.base import CommandResult, ConnectionTarget, Connector
 from controller.state.base import TERMINAL_STATUSES, ResizeRecord, ResizeStatus, StateBackend
@@ -29,9 +29,9 @@ class InMemoryStateBackend(StateBackend):
     don't care which real storage engine sits behind the interface.
 
     PostgresStateBackend's own conformance - real SQL, real concurrency
-    guarantees - is covered separately in tests/test_state_postgres.py
+    guarantees - is covered separately in tests/state/test_postgres_backend.py
     against an actual Postgres server. This double is verified against the
-    same concurrency contract there's a test for below, so it's trustworthy
+    same concurrency contract in tests/state/test_inmemory_backend.py, so it's trustworthy
     as a stand-in rather than just "probably fine."
     """
 
@@ -47,7 +47,7 @@ class InMemoryStateBackend(StateBackend):
             existing = self._records.get(volume_id)
             if existing is not None and existing.status not in TERMINAL_STATUSES:
                 return None
-            now = datetime.now(timezone.utc)
+            now = datetime.now(UTC)
             record = ResizeRecord(
                 volume_id=volume_id,
                 instance_id=instance_id,
@@ -67,14 +67,12 @@ class InMemoryStateBackend(StateBackend):
     def update_status(self, volume_id: str, status: ResizeStatus) -> None:
         with self._lock:
             record = self._records[volume_id]
-            self._records[volume_id] = replace(record, status=status, updated_at=datetime.now(timezone.utc))
+            self._records[volume_id] = replace(record, status=status, updated_at=datetime.now(UTC))
 
     def increment_extend_attempts(self, volume_id: str) -> int:
         with self._lock:
             record = self._records[volume_id]
-            updated = replace(
-                record, extend_attempts=record.extend_attempts + 1, updated_at=datetime.now(timezone.utc)
-            )
+            updated = replace(record, extend_attempts=record.extend_attempts + 1, updated_at=datetime.now(UTC))
             self._records[volume_id] = updated
             return updated.extend_attempts
 

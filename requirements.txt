@@ -13,3 +13,6 @@ Flask>=3.0
 # testing
 pytest>=8.0
 moto[ec2,ssm]>=5.0
+
+# linting/formatting
+ruff>=0.8

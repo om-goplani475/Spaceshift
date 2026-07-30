@@ -25,9 +25,11 @@ The Postgres backend tests are skipped by default, since they need a real Postgr
 
 ```bash
 docker run -d --name ebs-auto-resize-test-pg -e POSTGRES_PASSWORD=test -e POSTGRES_DB=testdb -p 15432:5432 postgres:16-alpine
-EBS_AUTO_RESIZE_TEST_POSTGRES_DSN="dbname=testdb user=postgres password=test host=localhost port=15432" pytest tests/test_state_postgres.py
+EBS_AUTO_RESIZE_TEST_POSTGRES_DSN="dbname=testdb user=postgres password=test host=localhost port=15432" pytest tests/state/test_postgres_backend.py
 docker rm -f ebs-auto-resize-test-pg
 ```
+
+`tests/` mirrors `controller/`'s package layout - `tests/connections/` and `tests/state/` for the `connections/` and `state/` subpackages, flat files for everything else.
 
 ## Code style
 
@@ -35,6 +37,13 @@ docker rm -f ebs-auto-resize-test-pg
 - Docstrings explain *why*, not *what* - skip them where the code is already self-explanatory.
 - New connection methods or state backends should implement the abstract interface in `connections/base.py` or `state/base.py` rather than being special-cased elsewhere.
 - Any value that reaches a remote shell command (device paths, mount points, tag-derived data) must be validated and/or passed through `shlex.quote()` - tag values are editable by anyone with `ec2:CreateTags`, which is often loosely granted, so they're treated as semi-trusted input rather than safe to interpolate directly.
+
+Lint and format with [`ruff`](https://docs.astral.sh/ruff/) (config in `pyproject.toml`):
+
+```bash
+ruff check .            # lint
+ruff format .           # format
+```
 
 ## Submitting changes
 

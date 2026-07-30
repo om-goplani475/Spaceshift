@@ -97,7 +97,7 @@ def test_start_resize_modification_limit_guard(aws, state, notifier):
     volume_id = ec2.create_volume(AvailabilityZone="us-east-1a", Size=100)["VolumeId"]
     config = Config.from_dict({"dry_run": False})
 
-    now = dt.datetime.now(dt.timezone.utc)
+    now = dt.datetime.now(dt.UTC)
     for _ in range(4):
         state.record_modification(volume_id, now)
 
@@ -231,7 +231,7 @@ def test_attempt_extend_unsupported_filesystem_raises():
 
 
 def test_should_retry_extend_now():
-    now = dt.datetime.now(dt.timezone.utc)
+    now = dt.datetime.now(dt.UTC)
 
     modify_completed = ResizeRecord("v", "i", ResizeStatus.MODIFY_COMPLETED, 100, 120, 0, now, now)
     assert should_retry_extend_now(modify_completed, 60) is True
@@ -239,7 +239,5 @@ def test_should_retry_extend_now():
     just_failed = ResizeRecord("v", "i", ResizeStatus.EXTEND_FAILED, 100, 120, 1, now, now)
     assert should_retry_extend_now(just_failed, 60) is False
 
-    old_failed = ResizeRecord(
-        "v", "i", ResizeStatus.EXTEND_FAILED, 100, 120, 1, now, now - dt.timedelta(seconds=120)
-    )
+    old_failed = ResizeRecord("v", "i", ResizeStatus.EXTEND_FAILED, 100, 120, 1, now, now - dt.timedelta(seconds=120))
     assert should_retry_extend_now(old_failed, 60) is True
