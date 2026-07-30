@@ -64,6 +64,11 @@ dry_run: true
 
 # --- Notifications ---
 notifications:
-  # "slack_webhook", "email", or "none"
+  # "slack", "email", or "none"
   method: none
-  # slack_webhook_url: "https://hooks.slack.com/services/..."
+  # Requires a Slack app with a bot token (xoxb-...) granted the chat:write
+  # scope, installed to your workspace, and invited to the target channel
+  # (or granted chat:write.public to post without being invited). See
+  # docs/SETUP.md for step-by-step setup.
+  # slack_bot_token: "xoxb-..."
+  # slack_channel_id: "C0123456789"
