@@ -58,7 +58,19 @@ If centrally managing another AWS account:
 - That role's **trust policy** must explicitly allow the controller's own identity (its instance role, typically) to assume it - this is configured on the target account's side, not something the controller's own IAM policy can grant by itself.
 - Set `assume_role_arn` in `config.yaml` to that role's ARN.
 
-## 2. Host prerequisites
+## 2. Slack prerequisites (optional, `notifications.method: slack`)
+
+Only needed if you want resize alerts in Slack. Skip this entirely for `method: none`.
+
+1. Create a Slack app at [api.slack.com/apps](https://api.slack.com/apps) → **Create New App** → **From scratch**, in the workspace you want alerts posted to.
+2. Under **OAuth & Permissions** → **Scopes** → **Bot Token Scopes**, add `chat:write` (lets the bot post to channels it's a member of). Add `chat:write.public` too if you want it to post to public channels without being explicitly invited.
+3. **Install App to Workspace** (top of the OAuth & Permissions page) and copy the **Bot User OAuth Token** - it starts with `xoxb-`. This is `notifications.slack_bot_token`.
+4. Get the target channel's ID: in Slack, right-click the channel → **View channel details** → the ID is at the bottom of that panel (looks like `C0123456789`, not the channel name). This is `notifications.slack_channel_id`.
+5. If you didn't add `chat:write.public` in step 2, invite the bot to that channel: `/invite @your-bot-name` in Slack.
+
+Both values are secrets (the bot token especially) - they belong in `config.yaml` (already gitignored), never in `config.yaml.example` or committed anywhere.
+
+## 3. Host prerequisites
 
 - **Docker + Docker Compose** on whatever machine runs the controller.
 - **If the controller itself runs on an EC2 instance:** raise that instance's IMDSv2 metadata hop limit to 2:
@@ -67,7 +79,7 @@ If centrally managing another AWS account:
   ```
   Docker's networking adds an extra hop to the instance metadata service; the default hop limit of 1 makes `boto3`'s automatic credential lookup fail silently *only* inside the container, which is a confusing thing to debug blind if you don't know to look for it.
 
-## 3. `config.yaml` reference
+## 4. `config.yaml` reference
 
 Copy the example first: `cp config.yaml.example config.yaml`. Every field below shows its default.
 
@@ -123,15 +135,17 @@ Copy the example first: `cp config.yaml.example config.yaml`. Every field below 
 
 | Field | Default | Meaning |
 |---|---|---|
-| `method` | `none` | `none`, `slack_webhook`, or `email`. **`email` is a documented placeholder, not implemented yet** - selecting it raises `NotImplementedError` (see `controller/notifications.py`). |
-| `slack_webhook_url` | unset | Required (and only used) when `method: slack_webhook`. |
+| `method` | `none` | `none`, `slack`, or `email`. **`email` is a documented placeholder, not implemented yet** - selecting it raises `NotImplementedError` (see `controller/notifications.py`). |
+| `slack_bot_token` | unset | Bot User OAuth Token (`xoxb-...`). Required (and only used) when `method: slack`. See section 2 for how to get one. |
+| `slack_channel_id` | unset | Target channel's ID (e.g. `C0123456789`), not its name. Required (and only used) when `method: slack`. |
 
-## 4. First-run checklist
+## 5. First-run checklist
 
 1. IAM role attached to the host running the controller (1.1).
 2. SSM Agent + `AmazonSSMManagedInstanceCore` on every target instance, or SSH set up instead (1.2 / 1.4).
 3. At least one volume or instance tagged `AutoResize=true` (1.3).
-4. Docker + Docker Compose installed; IMDSv2 hop limit raised if the controller itself is on EC2 (2).
-5. `config.yaml` copied from the example and adjusted (3) - leave `dry_run: true`.
-6. `docker compose up`, watch the logs, confirm the dry-run output matches what you expect.
-7. Only then, flip `dry_run: false`.
+4. Slack bot token + channel ID, if using `notifications.method: slack` (2).
+5. Docker + Docker Compose installed; IMDSv2 hop limit raised if the controller itself is on EC2 (3).
+6. `config.yaml` copied from the example and adjusted (4) - leave `dry_run: true`.
+7. `docker compose up`, watch the logs, confirm the dry-run output matches what you expect.
+8. Only then, flip `dry_run: false`.
