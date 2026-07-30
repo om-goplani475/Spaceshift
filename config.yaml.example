@@ -1,0 +1,68 @@
+# Copy this file to config.yaml and adjust as needed.
+# Every option below shows its default value.
+
+# AWS regions to scan. The controller checks every region in this list on each cycle.
+regions:
+  - us-east-1
+
+# Optional: assume a role in another account before making any AWS calls.
+# Leave unset to use the controller's own credentials/instance role directly.
+# assume_role_arn: "arn:aws:iam::123456789012:role/ebs-auto-resize"
+
+# --- Discovery ---
+# Tag key/value that marks a volume or instance as eligible for auto-resize.
+discovery:
+  eligibility_tag_key: "AutoResize"
+  eligibility_tag_value: "true"
+  threshold_tag_key: "DiskThreshold"
+
+# Fallback threshold (percent full) used when neither the volume nor its
+# attached instance carries a DiskThreshold tag.
+default_threshold_percent: 80
+
+# --- Connection method ---
+# "ssm" (default, no inbound port/keys needed) or "ssh".
+connection:
+  mode: ssm
+  ssh:
+    # Only used when mode: ssh
+    key_path: "~/.ssh/id_rsa"
+    # AMI family -> username, used when the instance has no explicit username tag.
+    username_by_ami_family:
+      amazon-linux: ec2-user
+      ubuntu: ubuntu
+      debian: admin
+    username_tag_key: "SshUsername"
+
+# --- State backend ---
+state:
+  backend: sqlite   # sqlite (default) or postgres
+  sqlite:
+    path: "/data/state.db"
+  # postgres:
+  #   dsn: "postgresql://user:pass@host:5432/ebs_auto_resize"
+
+# --- Scheduler ---
+scheduler:
+  interval_seconds: 300
+  max_concurrent_resizes: 5
+
+# --- Resize behavior / safety limits ---
+resize:
+  # Hard ceiling per volume; the tool refuses to grow a volume past this size
+  # and alerts for manual review instead.
+  max_volume_size_gb: 500
+  extend_retry:
+    max_attempts: 3
+    backoff_seconds: 60
+  stale_lock_timeout_minutes: 45
+
+# If true, the controller logs what it *would* do (current size -> target size)
+# without calling modify-volume or running any remote command.
+dry_run: true
+
+# --- Notifications ---
+notifications:
+  # "slack_webhook", "email", or "none"
+  method: none
+  # slack_webhook_url: "https://hooks.slack.com/services/..."
