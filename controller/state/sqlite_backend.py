@@ -130,6 +130,12 @@ class SqliteStateBackend(StateBackend):
         ).fetchall()
         return [self._row_to_record(row) for row in rows]
 
+    def list_all(self, limit: int = 100) -> list[ResizeRecord]:
+        rows = self._conn.execute(
+            "SELECT * FROM resize_state ORDER BY updated_at DESC LIMIT ?", (limit,)
+        ).fetchall()
+        return [self._row_to_record(row) for row in rows]
+
     def record_modification(self, volume_id: str, requested_at: datetime) -> None:
         with self._lock:
             self._conn.execute(

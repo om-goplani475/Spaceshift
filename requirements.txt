@@ -7,6 +7,9 @@ paramiko>=3.4
 # config.yaml parsing
 PyYAML>=6.0
 
+# optional Postgres state backend (only needed if state.backend: postgres)
+psycopg2-binary>=2.9
+
 # optional status dashboard
 Flask>=3.0
 
