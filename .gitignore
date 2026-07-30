@@ -1,0 +1,20 @@
+# secrets / local config
+.env
+config.yaml
+*.pem
+*.key
+.aws/
+
+# python
+__pycache__/
+venv/
+*.pyc
+
+# data
+*.db
+*.sqlite3
+
+# misc
+.DS_Store
+
+docs/PLAN.md
