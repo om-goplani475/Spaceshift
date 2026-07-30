@@ -17,6 +17,8 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import boto3
+import botocore.session
+from botocore.credentials import RefreshableCredentials
 
 from controller.config import Config
 from controller.connections.base import ConnectionTarget, Connector
@@ -42,6 +44,54 @@ _AMI_FAMILY_MATCHERS = (
     ("debian", ("debian",)),
 )
 
+_ASSUME_ROLE_SESSION_NAME = "ebs-auto-resize"
+
+
+def _build_boto3_session(config: Config) -> boto3.Session:
+    """Return the session every AWS client should be built from.
+
+    Without assume_role_arn set, this is just the controller's own default
+    credentials (instance role, env vars, etc). With it set, every client
+    - EC2, SSM, and the SSM connector - authenticates as the assumed role,
+    which is what makes multi-account central management actually work
+    (PLAN.md section 5, 10).
+    """
+    if not config.assume_role_arn:
+        return boto3.Session()
+    return boto3.Session(botocore_session=_build_refreshable_assume_role_session(config.assume_role_arn))
+
+
+def _build_refreshable_assume_role_session(role_arn: str) -> botocore.session.Session:
+    """A botocore session whose credentials re-assume the role automatically
+    before they expire.
+
+    A plain one-shot sts.assume_role() call would leave the controller
+    running on credentials that silently expire ~1 hour later (STS's
+    default session duration) - unacceptable for a process meant to run
+    forever (PLAN.md section 8).
+    """
+    sts_client = boto3.client("sts")
+
+    def refresh() -> dict:
+        response = sts_client.assume_role(RoleArn=role_arn, RoleSessionName=_ASSUME_ROLE_SESSION_NAME)
+        credentials = response["Credentials"]
+        return {
+            "access_key": credentials["AccessKeyId"],
+            "secret_key": credentials["SecretAccessKey"],
+            "token": credentials["SessionToken"],
+            "expiry_time": credentials["Expiration"].isoformat(),
+        }
+
+    refreshable_credentials = RefreshableCredentials.create_from_metadata(
+        metadata=refresh(),
+        refresh_using=refresh,
+        method="sts-assume-role",
+    )
+
+    botocore_session = botocore.session.get_session()
+    botocore_session._credentials = refreshable_credentials
+    return botocore_session
+
 
 class Scheduler:
     def __init__(self, config: Config, state: StateBackend, notifier: Notifier) -> None:
@@ -49,8 +99,18 @@ class Scheduler:
         self._state = state
         self._notifier = notifier
 
-        self._ec2_clients = {region: boto3.client("ec2", region_name=region) for region in config.regions}
-        self._ssm_clients = {region: boto3.client("ssm", region_name=region) for region in config.regions}
+        # A single session, used for every AWS client this scheduler builds
+        # (including the SSM connector's) - assume_role_arn only actually
+        # provides multi-account support if *everything* authenticates
+        # through it, not just some of the clients (PLAN.md section 10).
+        self._session = _build_boto3_session(config)
+
+        self._ec2_clients = {
+            region: self._session.client("ec2", region_name=region) for region in config.regions
+        }
+        self._ssm_clients = {
+            region: self._session.client("ssm", region_name=region) for region in config.regions
+        }
         self._connectors: dict[str, Connector] = self._build_connectors()
 
         self._ami_family_cache: dict[str, str | None] = {}
@@ -61,7 +121,9 @@ class Scheduler:
 
     def _build_connectors(self) -> dict[str, Connector]:
         if self._config.connection.mode == "ssm":
-            return {region: SsmConnector(region=region) for region in self._config.regions}
+            return {
+                region: SsmConnector(region=region, session=self._session) for region in self._config.regions
+            }
         # SSH mode needs no per-region client - one connector is enough,
         # since host/username are resolved per-instance at call time.
         ssh_connector = SshConnector(key_path=self._config.connection.ssh.key_path)
