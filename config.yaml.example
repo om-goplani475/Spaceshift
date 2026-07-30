@@ -1,5 +1,10 @@
 # Copy this file to config.yaml and adjust as needed.
 # Every option below shows its default value.
+#
+# The controller talks to instances exclusively via SSM Send-Command - no
+# inbound port, no SSH keys to manage. Target instances need the SSM Agent
+# running and AmazonSSMManagedInstanceCore on their own instance profile;
+# see docs/SETUP.md section 1.2.
 
 # AWS regions to scan. The controller checks every region in this list on each cycle.
 regions:
@@ -19,20 +24,6 @@ discovery:
 # Fallback threshold (percent full) used when neither the volume nor its
 # attached instance carries a DiskThreshold tag.
 default_threshold_percent: 80
-
-# --- Connection method ---
-# "ssm" (default, no inbound port/keys needed) or "ssh".
-connection:
-  mode: ssm
-  ssh:
-    # Only used when mode: ssh
-    key_path: "~/.ssh/id_rsa"
-    # AMI family -> username, used when the instance has no explicit username tag.
-    username_by_ami_family:
-      amazon-linux: ec2-user
-      ubuntu: ubuntu
-      debian: admin
-    username_tag_key: "SshUsername"
 
 # --- State backend (Postgres) ---
 # Default matches the "postgres" service in docker-compose.yml - works with

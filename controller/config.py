@@ -16,7 +16,6 @@ import yaml
 
 DEFAULT_CONFIG_PATH = Path(os.environ.get("EBS_AUTO_RESIZE_CONFIG", "config.yaml"))
 
-_VALID_CONNECTION_MODES = {"ssm", "ssh"}
 _VALID_NOTIFICATION_METHODS = {"none", "slack", "email"}
 
 
@@ -33,42 +32,6 @@ class DiscoveryConfig:
             eligibility_tag_key=data.get("eligibility_tag_key", d.eligibility_tag_key),
             eligibility_tag_value=data.get("eligibility_tag_value", d.eligibility_tag_value),
             threshold_tag_key=data.get("threshold_tag_key", d.threshold_tag_key),
-        )
-
-
-@dataclass
-class SshConfig:
-    key_path: str = "~/.ssh/id_rsa"
-    username_by_ami_family: dict[str, str] = field(
-        default_factory=lambda: {
-            "amazon-linux": "ec2-user",
-            "ubuntu": "ubuntu",
-            "debian": "admin",
-        }
-    )
-    username_tag_key: str = "SshUsername"
-
-    @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> "SshConfig":
-        d = cls()
-        return cls(
-            key_path=data.get("key_path", d.key_path),
-            username_by_ami_family=data.get("username_by_ami_family", d.username_by_ami_family),
-            username_tag_key=data.get("username_tag_key", d.username_tag_key),
-        )
-
-
-@dataclass
-class ConnectionConfig:
-    mode: str = "ssm"
-    ssh: SshConfig = field(default_factory=SshConfig)
-
-    @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> "ConnectionConfig":
-        d = cls()
-        return cls(
-            mode=data.get("mode", d.mode),
-            ssh=SshConfig.from_dict(data.get("ssh", {})),
         )
 
 
@@ -153,7 +116,6 @@ class Config:
     assume_role_arn: str | None = None
     discovery: DiscoveryConfig = field(default_factory=DiscoveryConfig)
     default_threshold_percent: int = 80
-    connection: ConnectionConfig = field(default_factory=ConnectionConfig)
     state: StateConfig = field(default_factory=StateConfig)
     scheduler: SchedulerConfig = field(default_factory=SchedulerConfig)
     resize: ResizeConfig = field(default_factory=ResizeConfig)
@@ -161,10 +123,6 @@ class Config:
     notifications: NotificationsConfig = field(default_factory=NotificationsConfig)
 
     def __post_init__(self) -> None:
-        if self.connection.mode not in _VALID_CONNECTION_MODES:
-            raise ValueError(
-                f"connection.mode must be one of {sorted(_VALID_CONNECTION_MODES)}, got {self.connection.mode!r}"
-            )
         if self.notifications.method not in _VALID_NOTIFICATION_METHODS:
             raise ValueError(
                 f"notifications.method must be one of {sorted(_VALID_NOTIFICATION_METHODS)}, "
@@ -189,7 +147,6 @@ class Config:
             default_threshold_percent=data.get(
                 "default_threshold_percent", defaults_source["default_threshold_percent"]
             ),
-            connection=ConnectionConfig.from_dict(data.get("connection", {})),
             state=StateConfig.from_dict(data.get("state", {})),
             scheduler=SchedulerConfig.from_dict(data.get("scheduler", {})),
             resize=ResizeConfig.from_dict(data.get("resize", {})),
