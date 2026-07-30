@@ -40,18 +40,13 @@ docker compose --profile dashboard up
 
 Serves a read-only status page at `http://localhost:8080` showing recent resize activity (also available as JSON at `/api/status`).
 
-## Configuration
+## Setup and configuration
 
-Every option is documented with its default in [config.yaml.example](config.yaml.example) — connection mode, state backend, regions, thresholds, retry/backoff, size ceiling, notifications, and more.
+Before running this against a real AWS account, see **[docs/SETUP.md](docs/SETUP.md)** for the full prerequisites (IAM role, SSM-managed instances, tagging, IMDSv2 gotcha) and a field-by-field reference for every option in [config.yaml.example](config.yaml.example).
 
 ## Required AWS permissions
 
-Attach an IAM role to whatever host runs the container — **never put access keys in `config.yaml` or commit them to version control.** A ready-to-copy least-privilege policy is in [docs/iam-policy.json](docs/iam-policy.json):
-
-- `ec2:DescribeVolumes` / `DescribeInstances` / `DescribeImages` / `DescribeVolumesModifications` — read-only discovery. AWS requires `Resource: "*"` for these regardless of scope; that's a platform constraint, not something this policy chose to leave open.
-- `ec2:ModifyVolume` — scoped to only volumes tagged `AutoResize=true`, matching the tool's own eligibility model.
-- `ssm:SendCommand` / `GetCommandInvocation` / `DescribeInstanceInformation` — only needed in the default SSM connection mode; drop these entirely if using `connection.mode: ssh`.
-- `sts:AssumeRole` — only needed if you set `assume_role_arn` to centrally manage another account. Remove that statement for single-account use.
+Attach an IAM role to whatever host runs the container — **never put access keys in `config.yaml` or commit them to version control.** A ready-to-copy least-privilege policy is in [docs/iam-policy.json](docs/iam-policy.json); see [docs/SETUP.md](docs/SETUP.md) for what each statement is for.
 
 ## Connection modes
 
