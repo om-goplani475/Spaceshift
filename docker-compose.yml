@@ -1,0 +1,35 @@
+services:
+  controller:
+    build: .
+    restart: unless-stopped
+    # No AWS keys here by default - attach an IAM role to the host running
+    # this container instead (see README for the least-privilege policy).
+    # Only needed for local testing without an instance role:
+    # environment:
+    #   - AWS_ACCESS_KEY_ID=
+    #   - AWS_SECRET_ACCESS_KEY=
+    volumes:
+      - ./config.yaml:/app/config.yaml:ro
+      - state-data:/data
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # Optional status page - not started by a plain `docker compose up`.
+  # Run with: docker compose --profile dashboard up
+  dashboard:
+    build: .
+    command: ["python", "-m", "controller.dashboard"]
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./config.yaml:/app/config.yaml:ro
+      - state-data:/data
+    profiles:
+      - dashboard
+
+volumes:
+  state-data:
