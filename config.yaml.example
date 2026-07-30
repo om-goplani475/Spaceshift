@@ -52,6 +52,8 @@ resize:
   # Hard ceiling per volume; the tool refuses to grow a volume past this size
   # and alerts for manual review instead.
   max_volume_size_gb: 500
+  # How much bigger to make a volume each time it crosses its threshold.
+  growth_increment_percent: 20
   extend_retry:
     max_attempts: 3
     backoff_seconds: 60
