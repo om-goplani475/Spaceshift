@@ -21,7 +21,6 @@ from botocore.credentials import RefreshableCredentials
 
 from controller.config import Config
 from controller.connections.base import ConnectionTarget, Connector
-from controller.connections.ssh_connector import SshConnector
 from controller.connections.ssm_connector import SsmConnector
 from controller.disk_check import check_disk_usage
 from controller.discovery import EligibleVolume, discover_eligible_volumes, is_ssm_ready
@@ -34,14 +33,6 @@ logger = logging.getLogger(__name__)
 # Checked by the Dockerfile's HEALTHCHECK to detect a hung (not just
 # crashed) scheduler loop.
 HEARTBEAT_PATH = "/tmp/ebs-auto-resize-heartbeat"
-
-# Heuristic AMI-name matching for SSH-mode username resolution, only used
-# when an instance has no explicit username tag.
-_AMI_FAMILY_MATCHERS = (
-    ("amazon-linux", ("amzn", "amazon linux")),
-    ("ubuntu", ("ubuntu",)),
-    ("debian", ("debian",)),
-)
 
 _ASSUME_ROLE_SESSION_NAME = "ebs-auto-resize"
 
@@ -98,7 +89,7 @@ class Scheduler:
         self._notifier = notifier
 
         # A single session, used for every AWS client this scheduler builds
-        # (including the SSM connector's) - assume_role_arn only actually
+        # (including the SSM connectors) - assume_role_arn only actually
         # provides multi-account support if *everything* authenticates
         # through it, not just some of the clients.
         self._session = _build_boto3_session(config)
@@ -109,23 +100,14 @@ class Scheduler:
         self._ssm_clients = {
             region: self._session.client("ssm", region_name=region) for region in config.regions
         }
-        self._connectors: dict[str, Connector] = self._build_connectors()
+        self._connectors: dict[str, Connector] = {
+            region: SsmConnector(region=region, session=self._session) for region in config.regions
+        }
 
-        self._ami_family_cache: dict[str, str | None] = {}
         # In-memory, not state-backed: a controller restart may repeat one
         # alert, which is an acceptable trade-off for "don't spam every
         # tick" without needing a persisted table for it.
         self._ssm_not_ready_alerted: set[str] = set()
-
-    def _build_connectors(self) -> dict[str, Connector]:
-        if self._config.connection.mode == "ssm":
-            return {
-                region: SsmConnector(region=region, session=self._session) for region in self._config.regions
-            }
-        # SSH mode needs no per-region client - one connector is enough,
-        # since host/username are resolved per-instance at call time.
-        ssh_connector = SshConnector(key_path=self._config.connection.ssh.key_path)
-        return {region: ssh_connector for region in self._config.regions}
 
     def run_forever(self) -> None:
         while True:
@@ -160,7 +142,7 @@ class Scheduler:
         # Each volume gets its own try/except so one bad volume can never
         # pause fleet-wide monitoring (fault isolation).
         try:
-            target = self._resolve_target(ec2, ssm, connector, volume.instance_id)
+            target = self._resolve_target(ssm, volume.instance_id)
             if target is None:
                 return  # SSM not ready yet; already alerted/logged inside _resolve_target
 
@@ -196,56 +178,18 @@ class Scheduler:
         except Exception:
             logger.exception("Error processing volume %s (instance %s)", volume.volume_id, volume.instance_id)
 
-    def _resolve_target(self, ec2, ssm, connector: Connector, instance_id: str) -> ConnectionTarget | None:
-        if self._config.connection.mode == "ssm":
-            if not is_ssm_ready(ssm, instance_id):
-                if instance_id not in self._ssm_not_ready_alerted:
-                    self._ssm_not_ready_alerted.add(instance_id)
-                    self._notifier.send(
-                        "Instance not ready for SSM",
-                        f"{instance_id} is not registered with SSM or not online yet - disk checks "
-                        f"are skipped until it is. Re-checked every discovery cycle.",
-                    )
-                return None
-            self._ssm_not_ready_alerted.discard(instance_id)
-            return ConnectionTarget(instance_id=instance_id)
-
-        return self._resolve_ssh_target(ec2, instance_id)
-
-    def _resolve_ssh_target(self, ec2, instance_id: str) -> ConnectionTarget:
-        response = ec2.describe_instances(InstanceIds=[instance_id])
-        instance = response["Reservations"][0]["Instances"][0]
-        host = instance.get("PrivateIpAddress")
-
-        tags = {tag["Key"]: tag["Value"] for tag in instance.get("Tags", [])}
-        username = tags.get(self._config.connection.ssh.username_tag_key)
-        if username is None:
-            username = self._resolve_username_by_ami(ec2, instance["ImageId"])
-
-        return ConnectionTarget(instance_id=instance_id, host=host, username=username)
-
-    def _resolve_username_by_ami(self, ec2, image_id: str) -> str | None:
-        if image_id not in self._ami_family_cache:
-            self._ami_family_cache[image_id] = self._detect_ami_family(ec2, image_id)
-        family = self._ami_family_cache[image_id]
-        if family is None:
+    def _resolve_target(self, ssm, instance_id: str) -> ConnectionTarget | None:
+        if not is_ssm_ready(ssm, instance_id):
+            if instance_id not in self._ssm_not_ready_alerted:
+                self._ssm_not_ready_alerted.add(instance_id)
+                self._notifier.send(
+                    "Instance not ready for SSM",
+                    f"{instance_id} is not registered with SSM or not online yet - disk checks "
+                    f"are skipped until it is. Re-checked every discovery cycle.",
+                )
             return None
-        return self._config.connection.ssh.username_by_ami_family.get(family)
-
-    @staticmethod
-    def _detect_ami_family(ec2, image_id: str) -> str | None:
-        try:
-            response = ec2.describe_images(ImageIds=[image_id])
-        except Exception:
-            return None
-        images = response.get("Images", [])
-        if not images:
-            return None
-        haystack = f"{images[0].get('Name', '')} {images[0].get('Description', '')}".lower()
-        for family, needles in _AMI_FAMILY_MATCHERS:
-            if any(needle in haystack for needle in needles):
-                return family
-        return None
+        self._ssm_not_ready_alerted.discard(instance_id)
+        return ConnectionTarget(instance_id=instance_id)
 
     def _recover_stale_rows(self, ec2) -> None:
         cutoff = datetime.now(timezone.utc) - timedelta(minutes=self._config.resize.stale_lock_timeout_minutes)
