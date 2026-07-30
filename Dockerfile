@@ -8,13 +8,10 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY controller/ controller/
 COPY config.yaml.example .
 
-# Non-root by default; /data is chowned here so a fresh named volume
-# mounted at /data on first run inherits correct ownership from the image -
-# the SQLite file lives on that persistent volume, not the container's
-# writable layer, so data survives a container replacement.
+# Non-root by default. State lives in the separate postgres container/volume
+# (see docker-compose.yml), not on disk here, so there's nothing else to chown.
 RUN useradd --create-home --uid 1000 controller \
-    && mkdir -p /data \
-    && chown -R controller:controller /app /data
+    && chown -R controller:controller /app
 
 USER controller
 
