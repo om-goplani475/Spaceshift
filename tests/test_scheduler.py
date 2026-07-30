@@ -5,7 +5,6 @@ from unittest.mock import MagicMock, patch
 import boto3
 import pytest
 
-from controller.config import Config
 from controller.discovery import EligibleVolume
 from controller.disk_check import DiskUsage
 from controller.scheduler import Scheduler

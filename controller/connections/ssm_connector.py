@@ -39,9 +39,7 @@ class SsmConnector(Connector):
         invocation = None
         while time.monotonic() < deadline:
             try:
-                invocation = self._client.get_command_invocation(
-                    CommandId=command_id, InstanceId=target.instance_id
-                )
+                invocation = self._client.get_command_invocation(CommandId=command_id, InstanceId=target.instance_id)
             except self._client.exceptions.InvocationDoesNotExist:
                 # SSM hasn't dispatched the invocation to the instance yet.
                 time.sleep(_POLL_INTERVAL_SECONDS)

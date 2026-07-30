@@ -91,9 +91,7 @@ def is_ssm_ready(ssm_client, instance_id: str) -> bool:
     already been alerted across ticks - this function only answers "is it
     ready right now."
     """
-    response = ssm_client.describe_instance_information(
-        Filters=[{"Key": "InstanceIds", "Values": [instance_id]}]
-    )
+    response = ssm_client.describe_instance_information(Filters=[{"Key": "InstanceIds", "Values": [instance_id]}])
     entries = response.get("InstanceInformationList", [])
     return bool(entries) and entries[0].get("PingStatus") == "Online"
 

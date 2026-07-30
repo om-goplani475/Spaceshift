@@ -15,7 +15,7 @@ import math
 import re
 import shlex
 import time
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 from controller.config import Config
 from controller.connections.base import ConnectionTarget, Connector
@@ -87,7 +87,7 @@ def start_resize(
         )
         return True
 
-    since = datetime.now(timezone.utc) - _MODIFICATION_WINDOW
+    since = datetime.now(UTC) - _MODIFICATION_WINDOW
     if state.modification_count_since(volume_id, since) >= _MAX_MODIFICATIONS_PER_WINDOW:
         logger.warning(
             "%s has reached the AWS %d-modification/24h limit; skipping until the window rolls over",
@@ -101,7 +101,7 @@ def start_resize(
         return False  # a resize is already in flight for this volume
 
     ec2_client.modify_volume(VolumeId=volume_id, Size=target_size_gb)
-    state.record_modification(volume_id, datetime.now(timezone.utc))
+    state.record_modification(volume_id, datetime.now(UTC))
     _wait_for_modification_completed(ec2_client, volume_id)
     state.update_status(volume_id, ResizeStatus.MODIFY_COMPLETED)
     return True
@@ -164,7 +164,7 @@ def should_retry_extend_now(record: ResizeRecord, backoff_seconds: int) -> bool:
     if record.status != ResizeStatus.EXTEND_FAILED:
         return True  # e.g. MODIFY_COMPLETED rows are always ready for their first extend attempt
     next_attempt_at = record.updated_at + timedelta(seconds=backoff_seconds)
-    return datetime.now(timezone.utc) >= next_attempt_at
+    return datetime.now(UTC) >= next_attempt_at
 
 
 def _wait_for_modification_completed(ec2_client, volume_id: str) -> None:
@@ -188,13 +188,9 @@ def _extend_filesystem(connector: Connector, target: ConnectionTarget, device_na
 
     disk, partition = _split_device(device_name)
 
-    growpart_result = connector.run_command(
-        target, f"growpart {shlex.quote(disk)} {partition}", timeout_seconds=60
-    )
+    growpart_result = connector.run_command(target, f"growpart {shlex.quote(disk)} {partition}", timeout_seconds=60)
     if not growpart_result.succeeded and "NOCHANGE" not in growpart_result.stdout:
-        raise ExtendFailedError(
-            f"growpart failed on {target.instance_id} for {device_name}: {growpart_result.stderr}"
-        )
+        raise ExtendFailedError(f"growpart failed on {target.instance_id} for {device_name}: {growpart_result.stderr}")
 
     fs_type = _detect_filesystem_type(connector, target, device_name)
 

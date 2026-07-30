@@ -19,7 +19,7 @@ from dataclasses import dataclass
 from datetime import datetime
 
 
-class ResizeStatus(str, enum.Enum):
+class ResizeStatus(enum.StrEnum):
     MODIFY_REQUESTED = "MODIFY_REQUESTED"
     MODIFY_COMPLETED = "MODIFY_COMPLETED"
     EXTEND_FAILED = "EXTEND_FAILED"

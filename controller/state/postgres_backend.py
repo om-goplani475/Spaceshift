@@ -11,9 +11,9 @@ borrow/return connections without serializing on a single lock.
 
 from __future__ import annotations
 
+from collections.abc import Iterator
 from contextlib import contextmanager
-from datetime import datetime, timezone
-from typing import Iterator
+from datetime import UTC, datetime
 
 import psycopg2
 import psycopg2.pool
@@ -52,7 +52,7 @@ class PostgresStateBackend(StateBackend):
             cur.execute(_SCHEMA)
 
     @contextmanager
-    def _cursor(self, commit: bool = False) -> Iterator["psycopg2.extensions.cursor"]:
+    def _cursor(self, commit: bool = False) -> Iterator[psycopg2.extensions.cursor]:
         conn = self._pool.getconn()
         try:
             cur = conn.cursor()
@@ -71,7 +71,7 @@ class PostgresStateBackend(StateBackend):
     def create_if_absent(
         self, volume_id: str, instance_id: str, from_size_gb: int, to_size_gb: int
     ) -> ResizeRecord | None:
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         with self._cursor(commit=True) as cur:
             # The WHERE clause on DO UPDATE makes this a single atomic
             # statement: if a non-terminal row already exists, the update
@@ -116,13 +116,13 @@ class PostgresStateBackend(StateBackend):
             if row is None:
                 return None
             columns = [desc[0] for desc in cur.description]
-        return self._row_to_record(dict(zip(columns, row)))
+        return self._row_to_record(dict(zip(columns, row, strict=True)))
 
     def update_status(self, volume_id: str, status: ResizeStatus) -> None:
         with self._cursor(commit=True) as cur:
             cur.execute(
                 "UPDATE resize_state SET status = %s, updated_at = %s WHERE volume_id = %s",
-                (status.value, datetime.now(timezone.utc), volume_id),
+                (status.value, datetime.now(UTC), volume_id),
             )
 
     def increment_extend_attempts(self, volume_id: str) -> int:
@@ -134,7 +134,7 @@ class PostgresStateBackend(StateBackend):
                 WHERE volume_id = %s
                 RETURNING extend_attempts
                 """,
-                (datetime.now(timezone.utc), volume_id),
+                (datetime.now(UTC), volume_id),
             )
             return cur.fetchone()[0]
 
@@ -146,14 +146,14 @@ class PostgresStateBackend(StateBackend):
             )
             rows = cur.fetchall()
             columns = [desc[0] for desc in cur.description]
-        return [self._row_to_record(dict(zip(columns, row))) for row in rows]
+        return [self._row_to_record(dict(zip(columns, row, strict=True))) for row in rows]
 
     def list_all(self, limit: int = 100) -> list[ResizeRecord]:
         with self._cursor() as cur:
             cur.execute("SELECT * FROM resize_state ORDER BY updated_at DESC LIMIT %s", (limit,))
             rows = cur.fetchall()
             columns = [desc[0] for desc in cur.description]
-        return [self._row_to_record(dict(zip(columns, row))) for row in rows]
+        return [self._row_to_record(dict(zip(columns, row, strict=True))) for row in rows]
 
     def record_modification(self, volume_id: str, requested_at: datetime) -> None:
         with self._cursor(commit=True) as cur:
