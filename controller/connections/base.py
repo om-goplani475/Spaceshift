@@ -1,10 +1,8 @@
-"""Abstract interface for running a command on a remote EC2 instance.
-
-Two implementations exist: SSM Send-Command (default - no inbound port, no
-SSH keys, auth via the controller's IAM role) and SSH via paramiko (opt-in,
-for users who prefer it or can't run the SSM Agent). Both are driven through
-this same interface so disk_check.py and resize.py never need to know which
-one is configured.
+"""Abstract interface for running a command on a remote EC2 instance via SSM
+Send-Command - no inbound port, no SSH keys, auth via the controller's IAM
+role. Kept as an interface (rather than calling SsmConnector directly) so
+disk_check.py and resize.py depend on "something that can run a remote
+command," not on SSM specifically, and so tests can swap in a fake.
 """
 
 from __future__ import annotations
@@ -15,17 +13,10 @@ from dataclasses import dataclass
 
 @dataclass
 class ConnectionTarget:
-    """Identifies a remote instance to run a command on.
-
-    instance_id is always required - it's SSM's addressing mechanism and is
-    used for logging/state regardless of connection mode. host/username are
-    only needed in SSH mode, resolved ahead of time from instance metadata
-    and config.py's SSH username-resolution chain.
-    """
+    """Identifies the instance to run a command on - SSM's addressing
+    mechanism, and used for logging/state either way."""
 
     instance_id: str
-    host: str | None = None
-    username: str | None = None
 
 
 @dataclass
