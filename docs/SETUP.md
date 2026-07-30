@@ -14,12 +14,12 @@ What each statement in that policy is for:
 
 | Statement | Needed for |
 |---|---|
-| `ec2:DescribeVolumes` / `DescribeInstances` / `DescribeImages` / `DescribeVolumesModifications` | Discovery, AMI-family detection (SSH mode), and polling resize progress. AWS requires `Resource: "*"` for these regardless of scope - that's a platform constraint, not something the policy chose to leave open. |
+| `ec2:DescribeVolumes` / `DescribeInstances` / `DescribeImages` / `DescribeVolumesModifications` | Discovery and polling resize progress. AWS requires `Resource: "*"` for these regardless of scope - that's a platform constraint, not something the policy chose to leave open. |
 | `ec2:ModifyVolume` | The actual AWS-side resize. Scoped to only volumes tagged `AutoResize=true`, matching the tool's own eligibility model - a policy typo elsewhere can't accidentally grant blanket resize rights. |
-| `ssm:SendCommand` / `GetCommandInvocation` / `DescribeInstanceInformation` | Only needed in the default SSM connection mode. Delete this statement entirely if using `connection.mode: ssh`. |
+| `ssm:SendCommand` / `GetCommandInvocation` / `DescribeInstanceInformation` | How the controller talks to every instance - always needed, since SSM is the only connection method. |
 | `sts:AssumeRole` | Only needed if you set `assume_role_arn` to centrally manage a different AWS account. Delete this statement for single-account use. |
 
-### 1.2 SSM-managed target instances (default connection mode)
+### 1.2 SSM-managed target instances
 
 This is the step people most often miss, because it's separate from step 1.1 - that step is about what the **controller** can do; this step is about what the **target instances** allow.
 
@@ -42,15 +42,7 @@ aws ec2 create-tags --resources vol-xxxxxxxx \
 
 `DiskThreshold` is optional per-resource - omit it and the volume falls back to `default_threshold_percent` in `config.yaml`. The tag can live on the volume itself, or on the instance it's attached to (every volume on a tagged instance becomes eligible, including its root volume).
 
-### 1.4 SSH mode prerequisites (alternative to SSM)
-
-Only relevant if you set `connection.mode: ssh`:
-
-- A key pair, with the **private** key available to mount read-only into the container (see the commented example in `docker-compose.yml`). Never bake a key into the image.
-- A way to resolve the SSH username per instance: either tag the instance with `SshUsername`, or make sure its AMI name matches one of the families in `username_by_ami_family` (Amazon Linux, Ubuntu, Debian by default).
-- The instance's security group must allow inbound SSH from wherever the controller runs.
-
-### 1.5 Multi-account setup (optional, `assume_role_arn`)
+### 1.4 Multi-account setup (optional, `assume_role_arn`)
 
 If centrally managing another AWS account:
 
@@ -88,7 +80,7 @@ Copy the example first: `cp config.yaml.example config.yaml`. Every field below 
 | Field | Default | Meaning |
 |---|---|---|
 | `regions` | `[us-east-1]` | List of AWS regions scanned every cycle. Add more for a multi-region fleet. |
-| `assume_role_arn` | unset | ARN of a role to assume in another account before making any AWS call. See section 1.5. Leave commented out for single-account use. |
+| `assume_role_arn` | unset | ARN of a role to assume in another account before making any AWS call. See section 1.4. Leave commented out for single-account use. |
 | `default_threshold_percent` | `80` | Fallback percent-full threshold, used only when a volume has neither its own `DiskThreshold` tag nor one on its instance. |
 | `dry_run` | `true` | **The most important setting for a first run.** When true, the controller only logs what it *would* do - no `modify-volume` call, no `growpart`/`resize2fs`/`xfs_growfs`. Flip to `false` only after confirming the dry-run logs look right against your real account. |
 
@@ -98,15 +90,6 @@ Copy the example first: `cp config.yaml.example config.yaml`. Every field below 
 |---|---|---|
 | `eligibility_tag_key` / `eligibility_tag_value` | `AutoResize` / `true` | The tag key/value that marks a resource as eligible. Change only if your org already has a conflicting tag naming convention. |
 | `threshold_tag_key` | `DiskThreshold` | The tag key holding a per-resource threshold override. |
-
-### `connection`
-
-| Field | Default | Meaning |
-|---|---|---|
-| `mode` | `ssm` | `ssm` (no inbound port, no keys) or `ssh`. Everything under `ssh:` below is ignored when `mode: ssm`. |
-| `ssh.key_path` | `~/.ssh/id_rsa` | Path *inside the container* to the mounted private key. Only used when `mode: ssh`. |
-| `ssh.username_by_ami_family` | Amazon Linux → `ec2-user`, Ubuntu → `ubuntu`, Debian → `admin` | Fallback username map, keyed by a heuristic match against the AMI's name/description - used only when an instance has no `SshUsername` tag. |
-| `ssh.username_tag_key` | `SshUsername` | Tag key checked first, before falling back to the AMI-family map. |
 
 ### `state`
 
@@ -142,7 +125,7 @@ Copy the example first: `cp config.yaml.example config.yaml`. Every field below 
 ## 5. First-run checklist
 
 1. IAM role attached to the host running the controller (1.1).
-2. SSM Agent + `AmazonSSMManagedInstanceCore` on every target instance, or SSH set up instead (1.2 / 1.4).
+2. SSM Agent + `AmazonSSMManagedInstanceCore` on every target instance (1.2).
 3. At least one volume or instance tagged `AutoResize=true` (1.3).
 4. Slack bot token + channel ID, if using `notifications.method: slack` (2).
 5. Docker + Docker Compose installed; IMDSv2 hop limit raised if the controller itself is on EC2 (3).
