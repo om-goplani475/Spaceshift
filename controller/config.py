@@ -17,7 +17,6 @@ import yaml
 DEFAULT_CONFIG_PATH = Path(os.environ.get("EBS_AUTO_RESIZE_CONFIG", "config.yaml"))
 
 _VALID_CONNECTION_MODES = {"ssm", "ssh"}
-_VALID_STATE_BACKENDS = {"sqlite", "postgres"}
 _VALID_NOTIFICATION_METHODS = {"none", "slack_webhook", "email"}
 
 
@@ -74,39 +73,16 @@ class ConnectionConfig:
 
 
 @dataclass
-class SqliteStateConfig:
-    path: str = "/data/state.db"
-
-    @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> "SqliteStateConfig":
-        d = cls()
-        return cls(path=data.get("path", d.path))
-
-
-@dataclass
-class PostgresStateConfig:
-    dsn: str | None = None
-
-    @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> "PostgresStateConfig":
-        d = cls()
-        return cls(dsn=data.get("dsn", d.dsn))
-
-
-@dataclass
 class StateConfig:
-    backend: str = "sqlite"
-    sqlite: SqliteStateConfig = field(default_factory=SqliteStateConfig)
-    postgres: PostgresStateConfig = field(default_factory=PostgresStateConfig)
+    # Matches the "postgres" service name in docker-compose.yml, so
+    # `docker compose up` works with zero config edits out of the box.
+    # Override this if running the controller outside that compose network.
+    dsn: str = "postgresql://ebs_auto_resize:changeme@postgres:5432/ebs_auto_resize"
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "StateConfig":
         d = cls()
-        return cls(
-            backend=data.get("backend", d.backend),
-            sqlite=SqliteStateConfig.from_dict(data.get("sqlite", {})),
-            postgres=PostgresStateConfig.from_dict(data.get("postgres", {})),
-        )
+        return cls(dsn=data.get("dsn", d.dsn))
 
 
 @dataclass
@@ -186,10 +162,6 @@ class Config:
         if self.connection.mode not in _VALID_CONNECTION_MODES:
             raise ValueError(
                 f"connection.mode must be one of {sorted(_VALID_CONNECTION_MODES)}, got {self.connection.mode!r}"
-            )
-        if self.state.backend not in _VALID_STATE_BACKENDS:
-            raise ValueError(
-                f"state.backend must be one of {sorted(_VALID_STATE_BACKENDS)}, got {self.state.backend!r}"
             )
         if self.notifications.method not in _VALID_NOTIFICATION_METHODS:
             raise ValueError(

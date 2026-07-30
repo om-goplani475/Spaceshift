@@ -13,9 +13,9 @@ from controller.state.base import ResizeStatus
 
 
 @pytest.fixture
-def scheduler(config, sqlite_state, notifier):
+def scheduler(config, state, notifier):
     with patch("boto3.client", return_value=MagicMock()):
-        return Scheduler(config, sqlite_state, notifier)
+        return Scheduler(config, state, notifier)
 
 
 @pytest.fixture
@@ -26,11 +26,11 @@ def volume():
 
 
 @pytest.fixture
-def ssh_scheduler_factory(sqlite_state, notifier):
+def ssh_scheduler_factory(state, notifier):
     def _make(overrides: dict) -> Scheduler:
         config = Config.from_dict({"connection": {"mode": "ssh"}, **overrides})
         with patch("boto3.client", return_value=MagicMock()):
-            return Scheduler(config, sqlite_state, notifier)
+            return Scheduler(config, state, notifier)
 
     return _make
 
@@ -59,9 +59,9 @@ def test_over_threshold_triggers_resize(scheduler, volume):
         start.assert_called_once()
 
 
-def test_modify_completed_routes_to_extend_not_disk_check(scheduler, volume, sqlite_state):
-    sqlite_state.create_if_absent("vol-1", "i-1", 100, 120)
-    sqlite_state.update_status("vol-1", ResizeStatus.MODIFY_COMPLETED)
+def test_modify_completed_routes_to_extend_not_disk_check(scheduler, volume, state):
+    state.create_if_absent("vol-1", "i-1", 100, 120)
+    state.update_status("vol-1", ResizeStatus.MODIFY_COMPLETED)
 
     with (
         patch("controller.scheduler.is_ssm_ready", return_value=True),
@@ -73,9 +73,9 @@ def test_modify_completed_routes_to_extend_not_disk_check(scheduler, volume, sql
         check.assert_not_called()
 
 
-def test_terminal_needs_attention_takes_no_action(scheduler, volume, sqlite_state):
-    sqlite_state.create_if_absent("vol-1", "i-1", 100, 120)
-    sqlite_state.update_status("vol-1", ResizeStatus.EXTEND_FAILED_NEEDS_ATTENTION)
+def test_terminal_needs_attention_takes_no_action(scheduler, volume, state):
+    state.create_if_absent("vol-1", "i-1", 100, 120)
+    state.update_status("vol-1", ResizeStatus.EXTEND_FAILED_NEEDS_ATTENTION)
 
     with (
         patch("controller.scheduler.is_ssm_ready", return_value=True),
@@ -89,9 +89,9 @@ def test_terminal_needs_attention_takes_no_action(scheduler, volume, sqlite_stat
         start.assert_not_called()
 
 
-def test_ssm_not_ready_alerts_once_across_ticks(scheduler, volume, sqlite_state):
-    sqlite_state.create_if_absent("vol-1", "i-1", 100, 120)
-    sqlite_state.update_status("vol-1", ResizeStatus.EXTEND_COMPLETED)
+def test_ssm_not_ready_alerts_once_across_ticks(scheduler, volume, state):
+    state.create_if_absent("vol-1", "i-1", 100, 120)
+    state.update_status("vol-1", ResizeStatus.EXTEND_COMPLETED)
 
     sent = []
     scheduler._notifier.send = lambda subject, message: sent.append(subject)
@@ -135,17 +135,17 @@ def test_resolve_ssh_target_falls_back_to_ami_family(aws, ssh_scheduler_factory)
 # --- stale-row recovery -------------------------------------------------------
 
 
-def test_recover_stale_row_marks_modify_completed(aws, scheduler, sqlite_state):
+def test_recover_stale_row_marks_modify_completed(aws, scheduler, state):
     ec2 = boto3.client("ec2", region_name="us-east-1")
     volume_id = ec2.create_volume(AvailabilityZone="us-east-1a", Size=100)["VolumeId"]
     ec2.modify_volume(VolumeId=volume_id, Size=120)
 
-    sqlite_state.create_if_absent(volume_id, "i-1", 100, 120)
-    record = sqlite_state.get(volume_id)
+    state.create_if_absent(volume_id, "i-1", 100, 120)
+    record = state.get(volume_id)
 
     scheduler._recover_stale_row(ec2, record)
 
-    assert sqlite_state.get(volume_id).status == ResizeStatus.MODIFY_COMPLETED
+    assert state.get(volume_id).status == ResizeStatus.MODIFY_COMPLETED
 
 
 # --- assume_role_arn ----------------------------------------------------------

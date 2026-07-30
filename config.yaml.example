@@ -34,13 +34,12 @@ connection:
       debian: admin
     username_tag_key: "SshUsername"
 
-# --- State backend ---
+# --- State backend (Postgres) ---
+# Default matches the "postgres" service in docker-compose.yml - works with
+# zero edits if you're running via `docker compose up`. Override this if
+# you're pointing at a Postgres server you manage yourself instead.
 state:
-  backend: sqlite   # sqlite (default) or postgres
-  sqlite:
-    path: "/data/state.db"
-  # postgres:
-  #   dsn: "postgresql://user:pass@host:5432/ebs_auto_resize"
+  dsn: "postgresql://ebs_auto_resize:changeme@postgres:5432/ebs_auto_resize"
 
 # --- Scheduler ---
 scheduler:

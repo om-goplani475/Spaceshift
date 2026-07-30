@@ -100,9 +100,7 @@ Copy the example first: `cp config.yaml.example config.yaml`. Every field below 
 
 | Field | Default | Meaning |
 |---|---|---|
-| `backend` | `sqlite` | `sqlite` (zero setup) or `postgres` (for larger deployments where SQLite's single-writer model becomes a bottleneck). |
-| `sqlite.path` | `/data/state.db` | Path inside the container; backed by the `state-data` Docker volume so history survives a restart. |
-| `postgres.dsn` | unset | Connection string, e.g. `postgresql://user:pass@host:5432/ebs_auto_resize`. Required (and only used) when `backend: postgres`. |
+| `dsn` | `postgresql://ebs_auto_resize:changeme@postgres:5432/ebs_auto_resize` | Connection string for the Postgres backend. The default matches `docker-compose.yml`'s `postgres` service, so it works unmodified via `docker compose up`. Override this only if pointing at a Postgres server you manage yourself instead of the bundled container - and change the password either way if this is anything more than a local test. |
 
 ### `scheduler`
 

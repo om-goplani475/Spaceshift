@@ -11,7 +11,7 @@ Resizing an EBS volume is a two-step process (grow the volume via the EC2 API, t
 1. **Discovery** — finds volumes tagged `AutoResize=true` (directly, or via the instance they're attached to), with an optional `DiskThreshold` tag for a per-volume threshold.
 2. **Disk check** — connects to the instance (via SSM Send-Command by default, or SSH) and checks real filesystem usage. There's no AWS API for this — CloudWatch doesn't report it natively either.
 3. **Resize** — if usage crosses the threshold, calls `modify-volume`, waits for AWS to complete it, then runs `growpart` + `resize2fs`/`xfs_growfs` remotely to actually extend the filesystem.
-4. **State tracking** — every resize attempt is tracked through a state machine (SQLite by default, Postgres for larger deployments) so partial failures retry safely, duplicate triggers are prevented, and the AWS 4-modification/24h limit is respected.
+4. **State tracking** — every resize attempt is tracked through a state machine in Postgres (its own container, started alongside the controller) so partial failures retry safely, duplicate triggers are prevented, and the AWS 4-modification/24h limit is respected.
 
 v1 supports **Amazon Linux + Ubuntu, ext4 + XFS**. LVM-based volumes are out of scope for now.
 
@@ -23,6 +23,8 @@ cd ebs-auto-resize
 cp config.yaml.example config.yaml
 docker compose up
 ```
+
+This starts two containers: the controller, and a Postgres container it uses to track resize state (no separate database setup needed — `config.yaml.example`'s default DSN already points at it).
 
 By default `config.yaml` has `dry_run: true` — the controller will log what it *would* resize without ever calling `modify-volume` or running a mutating remote command. Confirm the logs show what you expect against your own AWS account before flipping `dry_run: false`.
 
@@ -57,7 +59,7 @@ Attach an IAM role to whatever host runs the container — **never put access ke
 
 - The container runs as a non-root user by default.
 - `restart: unless-stopped` plus a heartbeat-file `HEALTHCHECK` catch both crashes and hangs, so the controller recovers from both a crash and a silent lockup without manual intervention.
-- The SQLite state file lives on a named Docker volume (`state-data`), not the container's writable layer — back it up periodically if you care about resize history surviving a host replacement.
+- Postgres runs as its own container (`docker-compose.yml`'s `postgres` service), with its data on a named volume (`postgres-data`) — back it up periodically if you care about resize history surviving a host replacement.
 - **IMDSv2 gotcha:** if credentials mysteriously fail *only* inside the container (but work fine directly on the host), it's usually because Docker's networking adds an extra hop to the instance metadata service, and the default IMDSv2 hop limit is 1. Raise the instance's metadata hop limit to 2 to fix it.
 
 ## Testing

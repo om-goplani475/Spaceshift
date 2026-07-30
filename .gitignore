@@ -10,10 +10,6 @@ __pycache__/
 venv/
 *.pyc
 
-# data
-*.db
-*.sqlite3
-
 # misc
 .DS_Store
 

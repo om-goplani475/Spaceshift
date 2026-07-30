@@ -1,7 +1,35 @@
 services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ebs_auto_resize
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-changeme}
+      POSTGRES_DB: ebs_auto_resize
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ebs_auto_resize"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    # Not published to the host by default - only the controller/dashboard
+    # containers need to reach it, over the compose network. Uncomment to
+    # inspect it directly with a local psql client:
+    # ports:
+    #   - "5432:5432"
+
   controller:
     build: .
     restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
     # No AWS keys here by default - attach an IAM role to the host running
     # this container instead (see README for the least-privilege policy).
     # Only needed for local testing without an instance role:
@@ -10,7 +38,6 @@ services:
     #   - AWS_SECRET_ACCESS_KEY=
     volumes:
       - ./config.yaml:/app/config.yaml:ro
-      - state-data:/data
       # Only needed if connection.mode: ssh in config.yaml - never bake a
       # key into the image, mount it read-only instead:
       # - ~/.ssh/ebs-auto-resize-key.pem:/home/controller/.ssh/id_rsa:ro
@@ -26,11 +53,13 @@ services:
     build: .
     command: ["python", "-m", "controller.dashboard"]
     restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
     ports:
       - "8080:8080"
     volumes:
       - ./config.yaml:/app/config.yaml:ro
-      - state-data:/data
     logging:
       driver: json-file
       options:
@@ -40,4 +69,4 @@ services:
       - dashboard
 
 volumes:
-  state-data:
+  postgres-data:
