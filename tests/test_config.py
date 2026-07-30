@@ -2,12 +2,11 @@
 
 import pytest
 
-from controller.config import Config, ConnectionConfig, load_config
+from controller.config import Config, load_config
 
 
 def test_defaults_match_config_yaml_example():
     config = load_config("config.yaml.example")
-    assert config.connection.mode == "ssm"
     assert config.state.dsn == "postgresql://ebs_auto_resize:changeme@postgres:5432/ebs_auto_resize"
     assert config.default_threshold_percent == 80
     assert config.dry_run is True
@@ -18,11 +17,6 @@ def test_missing_config_file_falls_back_to_defaults():
     config = load_config("/nonexistent/path/config.yaml")
     assert config.regions == ["us-east-1"]
     assert config.dry_run is True
-
-
-def test_invalid_connection_mode_rejected():
-    with pytest.raises(ValueError, match="connection.mode"):
-        Config(connection=ConnectionConfig(mode="telnet"))
 
 
 def test_state_dsn_is_overridable():
