@@ -9,9 +9,9 @@ COPY controller/ controller/
 COPY config.yaml.example .
 
 # Non-root by default; /data is chowned here so a fresh named volume
-# mounted at /data on first run inherits correct ownership from the image
-# (PLAN.md section 8 - the SQLite file lives on a persistent volume, not
-# the container's writable layer).
+# mounted at /data on first run inherits correct ownership from the image -
+# the SQLite file lives on that persistent volume, not the container's
+# writable layer, so data survives a container replacement.
 RUN useradd --create-home --uid 1000 controller \
     && mkdir -p /data \
     && chown -R controller:controller /app /data

@@ -23,7 +23,7 @@ In scope:
 - Authentication/authorization bypass in the SSM or SSH connection paths.
 
 Out of scope:
-- Vulnerabilities requiring an attacker to already have `ec2:CreateTags` or equivalent write access to your own AWS account - the threat model assumes tags are semi-trusted input (see `docs/PLAN.md` section 11 for how tag values are validated), not that a tag-writer is fully trusted.
+- Vulnerabilities requiring an attacker to already have `ec2:CreateTags` or equivalent write access to your own AWS account - the threat model assumes tags are semi-trusted input (parsed and range-checked rather than trusted as-is, e.g. `DiskThreshold` is validated as an integer 0-100 and device paths are matched against a strict pattern before use), not that a tag-writer is fully trusted.
 - Issues in third-party dependencies - please report those upstream, though a heads-up here is still appreciated.
 
 ## Supported Versions

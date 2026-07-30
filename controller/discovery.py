@@ -4,7 +4,7 @@ Discovery is volume-centric because resizing is fundamentally a per-volume
 operation: describe_volumes (filtered by tag) returns eligible volumes
 directly, and each volume's Attachments field already supplies the
 instance-id and device name needed for the OS-side extend step - no
-separate lookup required (PLAN.md section 11).
+separate lookup required.
 
 Eligibility and threshold resolve via a fallback chain, most specific first:
   1. Tag directly on the volume.
@@ -85,8 +85,8 @@ def is_ssm_ready(ssm_client, instance_id: str) -> bool:
 
     An instance whose SSM Agent isn't running, or whose instance profile
     lacks AmazonSSMManagedInstanceCore, would otherwise fail silently via a
-    long command timeout instead of a clear error (PLAN.md section 11).
-    Deciding when to alert about a not-ready instance (once, not every
+    long command timeout instead of a clear error. Deciding when to alert
+    about a not-ready instance (once, not every
     tick) is the scheduler's job, since that requires remembering what's
     already been alerted across ticks - this function only answers "is it
     ready right now."
@@ -111,7 +111,7 @@ def _parse_threshold(raw: str | None) -> int | None:
 
     Tag values are external input - anyone with ec2:CreateTags can set
     them - so an invalid value is ignored (falls through the chain) rather
-    than trusted as-is (PLAN.md section 11).
+    than trusted as-is.
     """
     if raw is None:
         return None

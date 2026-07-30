@@ -1,6 +1,6 @@
 """Optional read-only status dashboard - shows recent resize activity from
 the state backend. Entirely separate from the scheduler process; run it
-only if you want visibility beyond the logs (PLAN.md section 9).
+only if you want visibility beyond the logs.
 """
 
 from __future__ import annotations

@@ -1,8 +1,8 @@
 """SSM Send-Command implementation of Connector - the default connection mode.
 
 No inbound port and no SSH keys to manage; auth is purely the controller's
-IAM role (or an assumed role, in multi-account setups - PLAN.md section 10),
-which needs ssm:SendCommand and ssm:GetCommandInvocation.
+IAM role (or an assumed role, in multi-account setups), which needs
+ssm:SendCommand and ssm:GetCommandInvocation.
 """
 
 from __future__ import annotations

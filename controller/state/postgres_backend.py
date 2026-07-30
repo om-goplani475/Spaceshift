@@ -1,7 +1,7 @@
 """PostgreSQL implementation of StateBackend - an optional swap-in for
-larger deployments where SQLite's single-file model doesn't fit (PLAN.md
-sections 5, 10). Implements the exact same contract as SqliteStateBackend;
-only the storage engine and concurrency model differ.
+larger deployments where SQLite's single-file model doesn't fit. Implements
+the exact same contract as SqliteStateBackend; only the storage engine and
+concurrency model differ.
 
 Uses a connection pool (rather than SqliteStateBackend's single
 lock-guarded connection) because Postgres, unlike SQLite, is meant to

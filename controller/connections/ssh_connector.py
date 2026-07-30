@@ -40,8 +40,8 @@ class SshConnector(Connector):
             )
             # `command` arrives fully-formed from the tool's fixed command
             # templates, with any external input already validated and
-            # shlex.quote()'d at the call site (PLAN.md section 11) - this
-            # connector just executes it, it doesn't build it.
+            # shlex.quote()'d at the call site - this connector just
+            # executes it, it doesn't build it.
             _stdin, stdout, stderr = client.exec_command(command, timeout=timeout_seconds)
             exit_code = stdout.channel.recv_exit_status()
             return CommandResult(

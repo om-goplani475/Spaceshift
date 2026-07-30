@@ -32,7 +32,7 @@ docker rm -f ebs-auto-resize-test-pg
 - Type hints throughout; dataclasses for structured records (config sections, `ResizeRecord`, etc).
 - Docstrings explain *why*, not *what* - skip them where the code is already self-explanatory.
 - New connection methods or state backends should implement the abstract interface in `connections/base.py` or `state/base.py` rather than being special-cased elsewhere.
-- Any value that reaches a remote shell command (device paths, mount points, tag-derived data) must be validated and/or passed through `shlex.quote()` - see `docs/PLAN.md` section 11 for the reasoning.
+- Any value that reaches a remote shell command (device paths, mount points, tag-derived data) must be validated and/or passed through `shlex.quote()` - tag values are editable by anyone with `ec2:CreateTags`, which is often loosely granted, so they're treated as semi-trusted input rather than safe to interpolate directly.
 
 ## Submitting changes
 

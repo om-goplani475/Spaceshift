@@ -1,7 +1,7 @@
 """SQLite implementation of StateBackend - the default, zero-config state store.
 
 Runs in WAL mode so the scheduler's thread pool can read/write concurrently
-without "database is locked" errors (see PLAN.md section 11).
+without "database is locked" errors.
 """
 
 from __future__ import annotations
