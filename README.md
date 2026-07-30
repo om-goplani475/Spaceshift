@@ -2,12 +2,81 @@
 
 Self-hosted controller that watches EC2/EBS disk usage across a fleet and automatically grows a volume — both the AWS-side size **and** the OS-side partition/filesystem — before it fills up.
 
-Status: under active development. See [docs/PLAN.md](docs/PLAN.md) for the full design and rationale.
-
 ## Why
 
 Resizing an EBS volume is a two-step process (grow the volume via the EC2 API, then extend the partition/filesystem on the instance), and there's no built-in AWS service that does both steps for you automatically based on real OS-level disk usage. This tool closes that gap: tag a volume or instance, and it gets monitored and resized on its own.
 
-## Status
+For the full design, trade-offs considered, and reliability model, see [docs/PLAN.md](docs/PLAN.md).
 
-Not yet ready to run. Core modules (config, state, connections, discovery, resize, scheduler) are being built incrementally — check back once this section is updated with quickstart steps.
+## How it works
+
+1. **Discovery** — finds volumes tagged `AutoResize=true` (directly, or via the instance they're attached to), with an optional `DiskThreshold` tag for a per-volume threshold.
+2. **Disk check** — connects to the instance (via SSM Send-Command by default, or SSH) and checks real filesystem usage. There's no AWS API for this — CloudWatch doesn't report it natively either.
+3. **Resize** — if usage crosses the threshold, calls `modify-volume`, waits for AWS to complete it, then runs `growpart` + `resize2fs`/`xfs_growfs` remotely to actually extend the filesystem.
+4. **State tracking** — every resize attempt is tracked through a state machine (SQLite by default, Postgres for larger deployments) so partial failures retry safely, duplicate triggers are prevented, and the AWS 4-modification/24h limit is respected.
+
+v1 supports **Amazon Linux + Ubuntu, ext4 + XFS**. LVM-based volumes are out of scope for now.
+
+## Quickstart
+
+```bash
+git clone <this-repo>
+cd ebs-auto-resize
+cp config.yaml.example config.yaml
+docker compose up
+```
+
+By default `config.yaml` has `dry_run: true` — the controller will log what it *would* resize without ever calling `modify-volume` or running a mutating remote command. Confirm the logs show what you expect against your own AWS account before flipping `dry_run: false`.
+
+Tag a volume (or the instance it's attached to) to make it eligible:
+
+```bash
+aws ec2 create-tags --resources vol-xxxxxxxx --tags Key=AutoResize,Value=true Key=DiskThreshold,Value=80
+```
+
+### Optional status dashboard
+
+```bash
+docker compose --profile dashboard up
+```
+
+Serves a read-only status page at `http://localhost:8080` showing recent resize activity (also available as JSON at `/api/status`).
+
+## Configuration
+
+Every option is documented with its default in [config.yaml.example](config.yaml.example) — connection mode, state backend, regions, thresholds, retry/backoff, size ceiling, notifications, and more.
+
+## Required AWS permissions
+
+Attach an IAM role to whatever host runs the container — **never put access keys in `config.yaml` or commit them to version control.** A ready-to-copy least-privilege policy is in [docs/iam-policy.json](docs/iam-policy.json):
+
+- `ec2:DescribeVolumes` / `DescribeInstances` / `DescribeImages` / `DescribeVolumesModifications` — read-only discovery. AWS requires `Resource: "*"` for these regardless of scope; that's a platform constraint, not something this policy chose to leave open.
+- `ec2:ModifyVolume` — scoped to only volumes tagged `AutoResize=true`, matching the tool's own eligibility model.
+- `ssm:SendCommand` / `GetCommandInvocation` / `DescribeInstanceInformation` — only needed in the default SSM connection mode; drop these entirely if using `connection.mode: ssh`.
+- `sts:AssumeRole` — only needed if you set `assume_role_arn` to centrally manage another account. Remove that statement for single-account use.
+
+## Connection modes
+
+- **SSM (default)** — no inbound port, no key management, auth is purely the IAM role above. Requires the SSM Agent running and `AmazonSSMManagedInstanceCore` on the target instances.
+- **SSH** — set `connection.mode: ssh`. Mount a private key read-only into the container (see the commented example in `docker-compose.yml`) — never bake it into the image. Username is resolved from an instance tag or an AMI-family heuristic; see `config.yaml.example`.
+
+## Running in Docker
+
+- The container runs as a non-root user by default.
+- `restart: unless-stopped` plus a heartbeat-file `HEALTHCHECK` catch both crashes and hangs — see `docs/PLAN.md` section 8.
+- The SQLite state file lives on a named Docker volume (`state-data`), not the container's writable layer — back it up periodically if you care about resize history surviving a host replacement.
+- **IMDSv2 gotcha:** if credentials mysteriously fail *only* inside the container (but work fine directly on the host), it's usually because Docker's networking adds an extra hop to the instance metadata service, and the default IMDSv2 hop limit is 1. Raise the instance's metadata hop limit to 2 to fix it.
+
+## Testing
+
+```bash
+pytest
+```
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for full dev setup, including how to run the Postgres-backend tests (which need a real Postgres, not something `moto` can mock).
+
+## Contributing / Security
+
+- [CONTRIBUTING.md](CONTRIBUTING.md) — dev environment, running tests, code style.
+- [SECURITY.md](SECURITY.md) — this tool holds real AWS and instance access; please report vulnerabilities privately rather than via a public issue.
+- [LICENSE](LICENSE) — MIT.
