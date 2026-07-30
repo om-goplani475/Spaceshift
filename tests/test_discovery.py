@@ -43,8 +43,8 @@ def test_discover_via_instance_level_fallback(aws, config):
 
     # Tagging the instance (rather than the volume) makes every volume
     # attached to it eligible - including its auto-created root volume,
-    # not just the one explicitly created here. That's correct per PLAN.md
-    # section 11's fallback chain, not a bug.
+    # not just the one explicitly created here. That's correct per the
+    # instance-level fallback chain, not a bug.
     assert volume_id in by_id
     assert by_id[volume_id].threshold_percent == 90
 

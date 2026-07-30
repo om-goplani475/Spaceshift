@@ -147,7 +147,7 @@ def test_attempt_extend_success_xfs(sqlite_state, notifier):
 def test_xfs_growfs_quotes_hostile_mount_point(sqlite_state, notifier):
     """mount_point comes from lsblk output, not a strict pattern like
     device_name - shlex.quote() is real defense-in-depth here, not
-    redundant with upstream validation (PLAN.md section 11)."""
+    redundant with upstream validation."""
     target = ConnectionTarget(instance_id="i-1")
     live_config = Config.from_dict({"dry_run": False})
     sqlite_state.create_if_absent("vol-1", "i-1", 100, 120)

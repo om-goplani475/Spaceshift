@@ -1,9 +1,9 @@
 """Orchestrates OS-level disk-usage collection for a single volume.
 
 CloudWatch doesn't natively report OS-level disk usage, and neither
-describe_instances nor describe_volumes reveals it either (PLAN.md
-section 3) - the only way to get it is to ask the instance directly
-through whichever connector (SSM/SSH) is configured.
+describe_instances nor describe_volumes reveals it either - the only way
+to get it is to ask the instance directly through whichever connector
+(SSM/SSH) is configured.
 """
 
 from __future__ import annotations
@@ -38,7 +38,7 @@ def check_disk_usage(connector: Connector, target: ConnectionTarget, device_name
     `device_name` comes from AWS's own Attachments response (discovery.py),
     not from tag data, but it's still validated against a strict path
     pattern before being used in any remote command - defense in depth
-    against a malformed value ever reaching a shell (PLAN.md section 11).
+    against a malformed value ever reaching a shell.
     """
     if not DEVICE_PATTERN.match(device_name):
         raise InvalidDeviceNameError(f"Refusing to use unexpected device path: {device_name!r}")
@@ -53,8 +53,8 @@ def find_mount_point(connector: Connector, target: ConnectionTarget, device_name
     """Auto-detect the mount point for `device_name` via lsblk on the instance.
 
     Mount points are always auto-detected this way rather than trusted from
-    a tag (PLAN.md section 11) - also reused by resize.py for the xfs_growfs
-    step, which needs a mount point rather than a device path.
+    a tag - also reused by resize.py for the xfs_growfs step, which needs a
+    mount point rather than a device path.
     """
     result = connector.run_command(target, f"lsblk -no MOUNTPOINT {shlex.quote(device_name)}", timeout_seconds=30)
     if not result.succeeded:

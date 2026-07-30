@@ -1,7 +1,6 @@
 """The two-step resize itself: modify-volume via boto3, then extend the
 filesystem remotely - guarded by the resize state machine, the AWS
-4-per-24h modification limit, and the configured per-volume size ceiling
-(PLAN.md sections 2 and 11).
+4-per-24h modification limit, and the configured per-volume size ceiling.
 
 start_resize() handles the AWS-side step. attempt_extend() handles one
 OS-side extend attempt and its retry/terminal-failure bookkeeping - the
@@ -26,7 +25,7 @@ from controller.state.base import ResizeRecord, ResizeStatus, StateBackend
 
 logger = logging.getLogger(__name__)
 
-# AWS platform limit, not a user preference - see PLAN.md section 3.
+# AWS platform limit, not a user preference.
 _MODIFICATION_WINDOW = timedelta(hours=24)
 _MAX_MODIFICATIONS_PER_WINDOW = 4
 
@@ -65,7 +64,7 @@ def start_resize(
     skipped for an expected reason (already in flight, at the size
     ceiling, or over the 24h modification cap). Unexpected AWS errors
     propagate - the scheduler wraps each volume in its own try/except so
-    one bad volume never blocks the rest of the fleet (PLAN.md section 11).
+    one bad volume never blocks the rest of the fleet.
     """
     target_size_gb = compute_target_size_gb(current_size_gb, config.resize.growth_increment_percent)
 
@@ -120,7 +119,7 @@ def attempt_extend(
     """Run one OS-side extend attempt for volume_id and update its state row.
 
     Never re-runs modify-volume - a flaky extend step must not burn another
-    slot of the AWS 4-per-24h modification limit (PLAN.md section 11).
+    slot of the AWS 4-per-24h modification limit.
 
     Guarded by dry_run even though start_resize() never creates a state row
     in dry-run mode (so this path is normally unreachable then) - a row can

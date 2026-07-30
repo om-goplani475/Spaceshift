@@ -4,8 +4,7 @@ and drives the resize/extend state machine on a fixed interval.
 Ties together every other module: discovery finds candidates, disk_check
 measures usage, resize.py performs the two-step resize, notifications.py
 alerts on anything that needs a human, and the state backend tracks
-per-volume progress across ticks. See PLAN.md section 11 for the full
-concurrency/reliability design this implements.
+per-volume progress across ticks.
 """
 
 from __future__ import annotations
@@ -33,11 +32,11 @@ from controller.state.base import ResizeStatus, StateBackend
 logger = logging.getLogger(__name__)
 
 # Checked by the Dockerfile's HEALTHCHECK to detect a hung (not just
-# crashed) scheduler loop (PLAN.md section 8).
+# crashed) scheduler loop.
 HEARTBEAT_PATH = "/tmp/ebs-auto-resize-heartbeat"
 
 # Heuristic AMI-name matching for SSH-mode username resolution, only used
-# when an instance has no explicit username tag (PLAN.md section 5, 11).
+# when an instance has no explicit username tag.
 _AMI_FAMILY_MATCHERS = (
     ("amazon-linux", ("amzn", "amazon linux")),
     ("ubuntu", ("ubuntu",)),
@@ -53,8 +52,7 @@ def _build_boto3_session(config: Config) -> boto3.Session:
     Without assume_role_arn set, this is just the controller's own default
     credentials (instance role, env vars, etc). With it set, every client
     - EC2, SSM, and the SSM connector - authenticates as the assumed role,
-    which is what makes multi-account central management actually work
-    (PLAN.md section 5, 10).
+    which is what makes multi-account central management actually work.
     """
     if not config.assume_role_arn:
         return boto3.Session()
@@ -68,7 +66,7 @@ def _build_refreshable_assume_role_session(role_arn: str) -> botocore.session.Se
     A plain one-shot sts.assume_role() call would leave the controller
     running on credentials that silently expire ~1 hour later (STS's
     default session duration) - unacceptable for a process meant to run
-    forever (PLAN.md section 8).
+    forever.
     """
     sts_client = boto3.client("sts")
 
@@ -102,7 +100,7 @@ class Scheduler:
         # A single session, used for every AWS client this scheduler builds
         # (including the SSM connector's) - assume_role_arn only actually
         # provides multi-account support if *everything* authenticates
-        # through it, not just some of the clients (PLAN.md section 10).
+        # through it, not just some of the clients.
         self._session = _build_boto3_session(config)
 
         self._ec2_clients = {
@@ -116,7 +114,7 @@ class Scheduler:
         self._ami_family_cache: dict[str, str | None] = {}
         # In-memory, not state-backed: a controller restart may repeat one
         # alert, which is an acceptable trade-off for "don't spam every
-        # tick" (PLAN.md section 11) without needing a persisted table for it.
+        # tick" without needing a persisted table for it.
         self._ssm_not_ready_alerted: set[str] = set()
 
     def _build_connectors(self) -> dict[str, Connector]:
@@ -160,7 +158,7 @@ class Scheduler:
 
     def _process_volume(self, ec2, ssm, connector: Connector, volume: EligibleVolume) -> None:
         # Each volume gets its own try/except so one bad volume can never
-        # pause fleet-wide monitoring (PLAN.md section 11 - fault isolation).
+        # pause fleet-wide monitoring (fault isolation).
         try:
             target = self._resolve_target(ec2, ssm, connector, volume.instance_id)
             if target is None:
@@ -260,7 +258,7 @@ class Scheduler:
     def _recover_stale_row(self, ec2, record) -> None:
         # The controller may have crashed mid-resize; ask AWS what actually
         # happened instead of blindly retrying or leaving the row stuck
-        # forever (PLAN.md section 11 - stale in-progress rows).
+        # forever (stale in-progress row recovery).
         response = ec2.describe_volumes_modifications(VolumeIds=[record.volume_id])
         modifications = response.get("VolumesModifications", [])
         if not modifications:

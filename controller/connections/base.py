@@ -47,8 +47,7 @@ class Connector(abc.ABC):
         """Execute `command` on `target` and block until it completes or times out.
 
         `command` must always come from the tool's own fixed set of command
-        templates (growpart, resize2fs, xfs_growfs, lsblk, blkid - see
-        PLAN.md section 11) with pre-validated values already inserted,
-        never a raw string built dynamically from tag values or other
-        external input.
+        templates (growpart, resize2fs, xfs_growfs, lsblk, blkid) with
+        pre-validated values already inserted, never a raw string built
+        dynamically from tag values or other external input.
         """

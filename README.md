@@ -6,8 +6,6 @@ Self-hosted controller that watches EC2/EBS disk usage across a fleet and automa
 
 Resizing an EBS volume is a two-step process (grow the volume via the EC2 API, then extend the partition/filesystem on the instance), and there's no built-in AWS service that does both steps for you automatically based on real OS-level disk usage. This tool closes that gap: tag a volume or instance, and it gets monitored and resized on its own.
 
-For the full design, trade-offs considered, and reliability model, see [docs/PLAN.md](docs/PLAN.md).
-
 ## How it works
 
 1. **Discovery** — finds volumes tagged `AutoResize=true` (directly, or via the instance they're attached to), with an optional `DiskThreshold` tag for a per-volume threshold.
@@ -63,7 +61,7 @@ Attach an IAM role to whatever host runs the container — **never put access ke
 ## Running in Docker
 
 - The container runs as a non-root user by default.
-- `restart: unless-stopped` plus a heartbeat-file `HEALTHCHECK` catch both crashes and hangs — see `docs/PLAN.md` section 8.
+- `restart: unless-stopped` plus a heartbeat-file `HEALTHCHECK` catch both crashes and hangs, so the controller recovers from both a crash and a silent lockup without manual intervention.
 - The SQLite state file lives on a named Docker volume (`state-data`), not the container's writable layer — back it up periodically if you care about resize history surviving a host replacement.
 - **IMDSv2 gotcha:** if credentials mysteriously fail *only* inside the container (but work fine directly on the host), it's usually because Docker's networking adds an extra hop to the instance metadata service, and the default IMDSv2 hop limit is 1. Raise the instance's metadata hop limit to 2 to fix it.
 

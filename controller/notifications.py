@@ -1,5 +1,5 @@
 """Sends alert/success notifications - built from scratch, no existing
-notify system to integrate with (see PLAN.md section 1 and 7).
+notify system to integrate with.
 
 Used for events the controller can't silently recover from: a filesystem
 extend that's exhausted its retries, a volume hitting its size ceiling, an

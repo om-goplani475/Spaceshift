@@ -12,7 +12,7 @@ services:
       - ./config.yaml:/app/config.yaml:ro
       - state-data:/data
       # Only needed if connection.mode: ssh in config.yaml - never bake a
-      # key into the image, mount it read-only instead (PLAN.md section 8):
+      # key into the image, mount it read-only instead:
       # - ~/.ssh/ebs-auto-resize-key.pem:/home/controller/.ssh/id_rsa:ro
     logging:
       driver: json-file
