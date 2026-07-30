@@ -2,8 +2,7 @@
 
 CloudWatch doesn't natively report OS-level disk usage, and neither
 describe_instances nor describe_volumes reveals it either - the only way
-to get it is to ask the instance directly through whichever connector
-(SSM/SSH) is configured.
+to get it is to ask the instance directly via SSM.
 """
 
 from __future__ import annotations

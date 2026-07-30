@@ -25,16 +25,6 @@ def volume():
     )
 
 
-@pytest.fixture
-def ssh_scheduler_factory(state, notifier):
-    def _make(overrides: dict) -> Scheduler:
-        config = Config.from_dict({"connection": {"mode": "ssh"}, **overrides})
-        with patch("boto3.client", return_value=MagicMock()):
-            return Scheduler(config, state, notifier)
-
-    return _make
-
-
 # --- _process_volume routing ------------------------------------------------
 
 
@@ -105,31 +95,6 @@ def test_ssm_not_ready_alerts_once_across_ticks(scheduler, volume, state):
         check.assert_not_called()
 
     assert sent == ["Instance not ready for SSM"]
-
-
-# --- SSH target resolution ---------------------------------------------------
-
-
-def test_resolve_ssh_target_prefers_explicit_tag(aws, ssh_scheduler_factory):
-    ec2 = boto3.client("ec2", region_name="us-east-1")
-    instance_id = ec2.run_instances(ImageId="ami-12345678", MinCount=1, MaxCount=1)["Instances"][0]["InstanceId"]
-    ec2.create_tags(Resources=[instance_id], Tags=[{"Key": "SshUsername", "Value": "customuser"}])
-
-    sched = ssh_scheduler_factory({"dry_run": True})
-    target = sched._resolve_ssh_target(ec2, instance_id)
-
-    assert target.username == "customuser"
-
-
-def test_resolve_ssh_target_falls_back_to_ami_family(aws, ssh_scheduler_factory):
-    ec2 = boto3.client("ec2", region_name="us-east-1")
-    instance_id = ec2.run_instances(ImageId="ami-87654321", MinCount=1, MaxCount=1)["Instances"][0]["InstanceId"]
-
-    sched = ssh_scheduler_factory({"dry_run": True})
-    with patch.object(ec2, "describe_images", return_value={"Images": [{"Name": "ubuntu-jammy", "Description": ""}]}):
-        target = sched._resolve_ssh_target(ec2, instance_id)
-
-    assert target.username == "ubuntu"
 
 
 # --- stale-row recovery -------------------------------------------------------

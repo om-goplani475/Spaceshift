@@ -29,9 +29,8 @@ def main() -> None:
     scheduler = Scheduler(config, state, notifier)
 
     logger.info(
-        "ebs-auto-resize starting - regions=%s connection=%s dry_run=%s",
+        "ebs-auto-resize starting - regions=%s dry_run=%s",
         config.regions,
-        config.connection.mode,
         config.dry_run,
     )
 

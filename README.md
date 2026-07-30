@@ -9,7 +9,7 @@ Resizing an EBS volume is a two-step process (grow the volume via the EC2 API, t
 ## How it works
 
 1. **Discovery** — finds volumes tagged `AutoResize=true` (directly, or via the instance they're attached to), with an optional `DiskThreshold` tag for a per-volume threshold.
-2. **Disk check** — connects to the instance (via SSM Send-Command by default, or SSH) and checks real filesystem usage. There's no AWS API for this — CloudWatch doesn't report it natively either.
+2. **Disk check** — connects to the instance via SSM Send-Command and checks real filesystem usage. There's no AWS API for this — CloudWatch doesn't report it natively either.
 3. **Resize** — if usage crosses the threshold, calls `modify-volume`, waits for AWS to complete it, then runs `growpart` + `resize2fs`/`xfs_growfs` remotely to actually extend the filesystem.
 4. **State tracking** — every resize attempt is tracked through a state machine in Postgres (its own container, started alongside the controller) so partial failures retry safely, duplicate triggers are prevented, and the AWS 4-modification/24h limit is respected.
 
@@ -50,10 +50,9 @@ Before running this against a real AWS account, see **[docs/SETUP.md](docs/SETUP
 
 Attach an IAM role to whatever host runs the container — **never put access keys in `config.yaml` or commit them to version control.** A ready-to-copy least-privilege policy is in [docs/iam-policy.json](docs/iam-policy.json); see [docs/SETUP.md](docs/SETUP.md) for what each statement is for.
 
-## Connection modes
+## Connection method
 
-- **SSM (default)** — no inbound port, no key management, auth is purely the IAM role above. Requires the SSM Agent running and `AmazonSSMManagedInstanceCore` on the target instances.
-- **SSH** — set `connection.mode: ssh`. Mount a private key read-only into the container (see the commented example in `docker-compose.yml`) — never bake it into the image. Username is resolved from an instance tag or an AMI-family heuristic; see `config.yaml.example`.
+The controller talks to instances exclusively via **SSM Send-Command** — no inbound port, no key management, auth is purely the IAM role above. Target instances need the SSM Agent running and `AmazonSSMManagedInstanceCore` on their own instance profile; see [docs/SETUP.md](docs/SETUP.md).
 
 ## Running in Docker
 

@@ -1,6 +1,6 @@
 # Security Policy
 
-This tool holds real AWS permissions (`ec2:ModifyVolume`, `ssm:SendCommand`, optionally SSH keys and `sts:AssumeRole`) and runs commands against production instances. Treat any issue that could let it be tricked into resizing/running commands on the wrong volume, escalating its own permissions, or leaking credentials as a security issue - not just a bug.
+This tool holds real AWS permissions (`ec2:ModifyVolume`, `ssm:SendCommand`, optionally `sts:AssumeRole`) and runs commands against production instances. Treat any issue that could let it be tricked into resizing/running commands on the wrong volume, escalating its own permissions, or leaking credentials as a security issue - not just a bug.
 
 ## Reporting a Vulnerability
 
@@ -20,7 +20,7 @@ In scope:
 - Command injection via tag values, discovered AWS metadata, or instance responses (device names, mount points, filesystem types) reaching a remote shell unsanitized.
 - Anything that could trigger a resize/modify-volume call on a volume the tool wasn't authorized to touch.
 - Credential handling issues (e.g., secrets logged, keys baked into images, unnecessary permission scope).
-- Authentication/authorization bypass in the SSM or SSH connection paths.
+- Authentication/authorization bypass in the SSM connection path.
 
 Out of scope:
 - Vulnerabilities requiring an attacker to already have `ec2:CreateTags` or equivalent write access to your own AWS account - the threat model assumes tags are semi-trusted input (parsed and range-checked rather than trusted as-is, e.g. `DiskThreshold` is validated as an integer 0-100 and device paths are matched against a strict pattern before use), not that a tag-writer is fully trusted.
