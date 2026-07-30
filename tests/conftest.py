@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import os
-import tempfile
 from collections.abc import Iterator
 
 import pytest
@@ -11,7 +9,7 @@ from moto import mock_aws
 
 from controller.config import Config, load_config
 from controller.notifications import Notifier
-from controller.state.sqlite_backend import SqliteStateBackend
+from tests.helpers import InMemoryStateBackend
 
 
 @pytest.fixture
@@ -20,11 +18,8 @@ def config() -> Config:
 
 
 @pytest.fixture
-def sqlite_state() -> Iterator[SqliteStateBackend]:
-    with tempfile.TemporaryDirectory() as tmp:
-        backend = SqliteStateBackend(os.path.join(tmp, "state.db"))
-        yield backend
-        backend.close()
+def state() -> InMemoryStateBackend:
+    return InMemoryStateBackend()
 
 
 @pytest.fixture

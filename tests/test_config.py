@@ -8,7 +8,7 @@ from controller.config import Config, ConnectionConfig, load_config
 def test_defaults_match_config_yaml_example():
     config = load_config("config.yaml.example")
     assert config.connection.mode == "ssm"
-    assert config.state.backend == "sqlite"
+    assert config.state.dsn == "postgresql://ebs_auto_resize:changeme@postgres:5432/ebs_auto_resize"
     assert config.default_threshold_percent == 80
     assert config.dry_run is True
     assert config.resize.growth_increment_percent == 20
@@ -25,9 +25,9 @@ def test_invalid_connection_mode_rejected():
         Config(connection=ConnectionConfig(mode="telnet"))
 
 
-def test_invalid_state_backend_rejected():
-    with pytest.raises(ValueError, match="state.backend"):
-        Config.from_dict({"state": {"backend": "mongodb"}})
+def test_state_dsn_is_overridable():
+    config = Config.from_dict({"state": {"dsn": "postgresql://x:y@localhost:5432/db"}})
+    assert config.state.dsn == "postgresql://x:y@localhost:5432/db"
 
 
 def test_invalid_threshold_percent_rejected():

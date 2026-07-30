@@ -44,64 +44,64 @@ def test_split_device_rejects_unparseable_path():
 # --- start_resize ---------------------------------------------------------
 
 
-def test_start_resize_dry_run_writes_no_state_and_calls_no_aws(aws, sqlite_state, notifier):
+def test_start_resize_dry_run_writes_no_state_and_calls_no_aws(aws, state, notifier):
     ec2 = boto3.client("ec2", region_name="us-east-1")
     volume_id = ec2.create_volume(AvailabilityZone="us-east-1a", Size=100)["VolumeId"]
     config = Config.from_dict({"dry_run": True})
 
-    started = start_resize(ec2, sqlite_state, notifier, config, volume_id, "i-1", 100)
+    started = start_resize(ec2, state, notifier, config, volume_id, "i-1", 100)
 
     assert started is True
-    assert sqlite_state.get(volume_id) is None
+    assert state.get(volume_id) is None
 
 
-def test_start_resize_live_flow(aws, sqlite_state, notifier):
+def test_start_resize_live_flow(aws, state, notifier):
     ec2 = boto3.client("ec2", region_name="us-east-1")
     volume_id = ec2.create_volume(AvailabilityZone="us-east-1a", Size=100)["VolumeId"]
     config = Config.from_dict({"dry_run": False, "resize": {"max_volume_size_gb": 500}})
 
-    started = start_resize(ec2, sqlite_state, notifier, config, volume_id, "i-1", 100)
+    started = start_resize(ec2, state, notifier, config, volume_id, "i-1", 100)
 
     assert started is True
-    record = sqlite_state.get(volume_id)
+    record = state.get(volume_id)
     assert record.status == ResizeStatus.MODIFY_COMPLETED
     assert record.to_size_gb == 120
 
 
-def test_start_resize_skips_when_already_in_flight(aws, sqlite_state, notifier):
+def test_start_resize_skips_when_already_in_flight(aws, state, notifier):
     ec2 = boto3.client("ec2", region_name="us-east-1")
     volume_id = ec2.create_volume(AvailabilityZone="us-east-1a", Size=100)["VolumeId"]
     config = Config.from_dict({"dry_run": False})
 
-    start_resize(ec2, sqlite_state, notifier, config, volume_id, "i-1", 100)
-    sqlite_state.update_status(volume_id, ResizeStatus.EXTEND_FAILED)  # still non-terminal
+    start_resize(ec2, state, notifier, config, volume_id, "i-1", 100)
+    state.update_status(volume_id, ResizeStatus.EXTEND_FAILED)  # still non-terminal
 
-    result = start_resize(ec2, sqlite_state, notifier, config, volume_id, "i-1", 120)
+    result = start_resize(ec2, state, notifier, config, volume_id, "i-1", 120)
 
     assert result is False
 
 
-def test_start_resize_size_ceiling_guard(aws, sqlite_state, notifier):
+def test_start_resize_size_ceiling_guard(aws, state, notifier):
     ec2 = boto3.client("ec2", region_name="us-east-1")
     volume_id = ec2.create_volume(AvailabilityZone="us-east-1a", Size=100)["VolumeId"]
     config = Config.from_dict({"dry_run": False, "resize": {"max_volume_size_gb": 10}})
 
-    result = start_resize(ec2, sqlite_state, notifier, config, volume_id, "i-1", 100)
+    result = start_resize(ec2, state, notifier, config, volume_id, "i-1", 100)
 
     assert result is False
-    assert sqlite_state.get(volume_id) is None
+    assert state.get(volume_id) is None
 
 
-def test_start_resize_modification_limit_guard(aws, sqlite_state, notifier):
+def test_start_resize_modification_limit_guard(aws, state, notifier):
     ec2 = boto3.client("ec2", region_name="us-east-1")
     volume_id = ec2.create_volume(AvailabilityZone="us-east-1a", Size=100)["VolumeId"]
     config = Config.from_dict({"dry_run": False})
 
     now = dt.datetime.now(dt.timezone.utc)
     for _ in range(4):
-        sqlite_state.record_modification(volume_id, now)
+        state.record_modification(volume_id, now)
 
-    result = start_resize(ec2, sqlite_state, notifier, config, volume_id, "i-1", 100)
+    result = start_resize(ec2, state, notifier, config, volume_id, "i-1", 100)
 
     assert result is False
 
@@ -109,10 +109,10 @@ def test_start_resize_modification_limit_guard(aws, sqlite_state, notifier):
 # --- attempt_extend --------------------------------------------------------
 
 
-def test_attempt_extend_success_ext4(sqlite_state, notifier):
+def test_attempt_extend_success_ext4(state, notifier):
     target = ConnectionTarget(instance_id="i-1")
     live_config = Config.from_dict({"dry_run": False})
-    sqlite_state.create_if_absent("vol-x", "i-1", 100, 120)
+    state.create_if_absent("vol-x", "i-1", 100, 120)
 
     connector = FakeConnector(
         [
@@ -121,15 +121,15 @@ def test_attempt_extend_success_ext4(sqlite_state, notifier):
             CommandResult(0, "", ""),  # resize2fs
         ]
     )
-    attempt_extend(connector, sqlite_state, notifier, live_config, target, "vol-x", "/dev/xvdf1")
+    attempt_extend(connector, state, notifier, live_config, target, "vol-x", "/dev/xvdf1")
 
-    assert sqlite_state.get("vol-x").status == ResizeStatus.EXTEND_COMPLETED
+    assert state.get("vol-x").status == ResizeStatus.EXTEND_COMPLETED
 
 
-def test_attempt_extend_success_xfs(sqlite_state, notifier):
+def test_attempt_extend_success_xfs(state, notifier):
     target = ConnectionTarget(instance_id="i-1")
     live_config = Config.from_dict({"dry_run": False})
-    sqlite_state.create_if_absent("vol-y", "i-1", 100, 120)
+    state.create_if_absent("vol-y", "i-1", 100, 120)
 
     connector = FakeConnector(
         [
@@ -139,18 +139,18 @@ def test_attempt_extend_success_xfs(sqlite_state, notifier):
             CommandResult(0, "", ""),  # xfs_growfs
         ]
     )
-    attempt_extend(connector, sqlite_state, notifier, live_config, target, "vol-y", "/dev/nvme1n1p2")
+    attempt_extend(connector, state, notifier, live_config, target, "vol-y", "/dev/nvme1n1p2")
 
-    assert sqlite_state.get("vol-y").status == ResizeStatus.EXTEND_COMPLETED
+    assert state.get("vol-y").status == ResizeStatus.EXTEND_COMPLETED
 
 
-def test_xfs_growfs_quotes_hostile_mount_point(sqlite_state, notifier):
+def test_xfs_growfs_quotes_hostile_mount_point(state, notifier):
     """mount_point comes from lsblk output, not a strict pattern like
     device_name - shlex.quote() is real defense-in-depth here, not
     redundant with upstream validation."""
     target = ConnectionTarget(instance_id="i-1")
     live_config = Config.from_dict({"dry_run": False})
-    sqlite_state.create_if_absent("vol-1", "i-1", 100, 120)
+    state.create_if_absent("vol-1", "i-1", 100, 120)
 
     connector = FakeConnector(
         [
@@ -160,47 +160,47 @@ def test_xfs_growfs_quotes_hostile_mount_point(sqlite_state, notifier):
             CommandResult(0, "", ""),
         ]
     )
-    attempt_extend(connector, sqlite_state, notifier, live_config, target, "vol-1", "/dev/xvdf1")
+    attempt_extend(connector, state, notifier, live_config, target, "vol-1", "/dev/xvdf1")
 
     assert connector.calls[-1] == "xfs_growfs '/data; rm -rf /'"
-    assert sqlite_state.get("vol-1").status == ResizeStatus.EXTEND_COMPLETED
+    assert state.get("vol-1").status == ResizeStatus.EXTEND_COMPLETED
 
 
-def test_attempt_extend_exhausts_retries_to_terminal(sqlite_state, notifier):
+def test_attempt_extend_exhausts_retries_to_terminal(state, notifier):
     target = ConnectionTarget(instance_id="i-1")
     live_config = Config.from_dict({"dry_run": False})
-    sqlite_state.create_if_absent("vol-z", "i-1", 100, 120)
+    state.create_if_absent("vol-z", "i-1", 100, 120)
 
     for _ in range(live_config.resize.extend_retry.max_attempts):
         connector = FakeConnector([CommandResult(1, "", "growpart: boom")])
-        attempt_extend(connector, sqlite_state, notifier, live_config, target, "vol-z", "/dev/xvdf1")
+        attempt_extend(connector, state, notifier, live_config, target, "vol-z", "/dev/xvdf1")
 
-    record = sqlite_state.get("vol-z")
+    record = state.get("vol-z")
     assert record.status == ResizeStatus.EXTEND_FAILED_NEEDS_ATTENTION
     assert record.extend_attempts == live_config.resize.extend_retry.max_attempts
 
 
-def test_attempt_extend_respects_dry_run_even_with_existing_row(sqlite_state, notifier):
+def test_attempt_extend_respects_dry_run_even_with_existing_row(state, notifier):
     """Guards against the case where dry_run is turned on after real state
     rows already exist - growpart/resize2fs/xfs_growfs must never run."""
     target = ConnectionTarget(instance_id="i-1")
     dry_config = Config.from_dict({"dry_run": True})
-    sqlite_state.create_if_absent("vol-1", "i-1", 100, 120)
-    sqlite_state.update_status("vol-1", ResizeStatus.MODIFY_COMPLETED)
+    state.create_if_absent("vol-1", "i-1", 100, 120)
+    state.update_status("vol-1", ResizeStatus.MODIFY_COMPLETED)
 
     class BoomConnector(FakeConnector):
         def run_command(self, target, command, timeout_seconds=120):
             raise AssertionError(f"should never run a real command in dry-run: {command!r}")
 
-    attempt_extend(BoomConnector([]), sqlite_state, notifier, dry_config, target, "vol-1", "/dev/xvdf1")
+    attempt_extend(BoomConnector([]), state, notifier, dry_config, target, "vol-1", "/dev/xvdf1")
 
-    assert sqlite_state.get("vol-1").status == ResizeStatus.MODIFY_COMPLETED  # untouched
+    assert state.get("vol-1").status == ResizeStatus.MODIFY_COMPLETED  # untouched
 
 
-def test_attempt_extend_wraps_xfs_mount_lookup_failure_as_retryable(sqlite_state, notifier):
+def test_attempt_extend_wraps_xfs_mount_lookup_failure_as_retryable(state, notifier):
     target = ConnectionTarget(instance_id="i-1")
     live_config = Config.from_dict({"dry_run": False})
-    sqlite_state.create_if_absent("vol-w", "i-1", 100, 120)
+    state.create_if_absent("vol-w", "i-1", 100, 120)
 
     connector = FakeConnector(
         [
@@ -209,9 +209,9 @@ def test_attempt_extend_wraps_xfs_mount_lookup_failure_as_retryable(sqlite_state
             CommandResult(1, "", "lsblk: no such device"),
         ]
     )
-    attempt_extend(connector, sqlite_state, notifier, live_config, target, "vol-w", "/dev/xvdf1")
+    attempt_extend(connector, state, notifier, live_config, target, "vol-w", "/dev/xvdf1")
 
-    record = sqlite_state.get("vol-w")
+    record = state.get("vol-w")
     assert record.status == ResizeStatus.EXTEND_FAILED
     assert record.extend_attempts == 1
 
