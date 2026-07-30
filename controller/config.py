@@ -140,6 +140,7 @@ class ExtendRetryConfig:
 @dataclass
 class ResizeConfig:
     max_volume_size_gb: int = 500
+    growth_increment_percent: int = 20
     extend_retry: ExtendRetryConfig = field(default_factory=ExtendRetryConfig)
     stale_lock_timeout_minutes: int = 45
 
@@ -148,6 +149,7 @@ class ResizeConfig:
         d = cls()
         return cls(
             max_volume_size_gb=data.get("max_volume_size_gb", d.max_volume_size_gb),
+            growth_increment_percent=data.get("growth_increment_percent", d.growth_increment_percent),
             extend_retry=ExtendRetryConfig.from_dict(data.get("extend_retry", {})),
             stale_lock_timeout_minutes=data.get("stale_lock_timeout_minutes", d.stale_lock_timeout_minutes),
         )
@@ -197,6 +199,10 @@ class Config:
         if not 0 <= self.default_threshold_percent <= 100:
             raise ValueError(
                 f"default_threshold_percent must be between 0 and 100, got {self.default_threshold_percent}"
+            )
+        if self.resize.growth_increment_percent <= 0:
+            raise ValueError(
+                f"resize.growth_increment_percent must be positive, got {self.resize.growth_increment_percent}"
             )
 
     @classmethod
