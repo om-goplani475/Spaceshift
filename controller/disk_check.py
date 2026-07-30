@@ -9,6 +9,7 @@ through whichever connector (SSM/SSH) is configured.
 from __future__ import annotations
 
 import re
+import shlex
 from dataclasses import dataclass
 
 from controller.connections.base import ConnectionTarget, Connector
@@ -55,7 +56,7 @@ def find_mount_point(connector: Connector, target: ConnectionTarget, device_name
     a tag (PLAN.md section 11) - also reused by resize.py for the xfs_growfs
     step, which needs a mount point rather than a device path.
     """
-    result = connector.run_command(target, f"lsblk -no MOUNTPOINT {device_name}", timeout_seconds=30)
+    result = connector.run_command(target, f"lsblk -no MOUNTPOINT {shlex.quote(device_name)}", timeout_seconds=30)
     if not result.succeeded:
         raise DiskCheckError(f"lsblk failed on {target.instance_id} for {device_name}: {result.stderr}")
 
@@ -66,7 +67,9 @@ def find_mount_point(connector: Connector, target: ConnectionTarget, device_name
 
 
 def _read_percent_used(connector: Connector, target: ConnectionTarget, mount_point: str) -> int:
-    result = connector.run_command(target, f"df --output=pcent {mount_point} | tail -n 1", timeout_seconds=30)
+    result = connector.run_command(
+        target, f"df --output=pcent {shlex.quote(mount_point)} | tail -n 1", timeout_seconds=30
+    )
     if not result.succeeded:
         raise DiskCheckError(f"df failed on {target.instance_id} for {mount_point}: {result.stderr}")
 
