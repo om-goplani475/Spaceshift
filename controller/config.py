@@ -17,7 +17,7 @@ import yaml
 DEFAULT_CONFIG_PATH = Path(os.environ.get("EBS_AUTO_RESIZE_CONFIG", "config.yaml"))
 
 _VALID_CONNECTION_MODES = {"ssm", "ssh"}
-_VALID_NOTIFICATION_METHODS = {"none", "slack_webhook", "email"}
+_VALID_NOTIFICATION_METHODS = {"none", "slack", "email"}
 
 
 @dataclass
@@ -134,14 +134,16 @@ class ResizeConfig:
 @dataclass
 class NotificationsConfig:
     method: str = "none"
-    slack_webhook_url: str | None = None
+    slack_bot_token: str | None = None
+    slack_channel_id: str | None = None
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "NotificationsConfig":
         d = cls()
         return cls(
             method=data.get("method", d.method),
-            slack_webhook_url=data.get("slack_webhook_url", d.slack_webhook_url),
+            slack_bot_token=data.get("slack_bot_token", d.slack_bot_token),
+            slack_channel_id=data.get("slack_channel_id", d.slack_channel_id),
         )
 
 
