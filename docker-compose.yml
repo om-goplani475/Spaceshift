@@ -38,9 +38,6 @@ services:
     #   - AWS_SECRET_ACCESS_KEY=
     volumes:
       - ./config.yaml:/app/config.yaml:ro
-      # Only needed if connection.mode: ssh in config.yaml - never bake a
-      # key into the image, mount it read-only instead:
-      # - ~/.ssh/ebs-auto-resize-key.pem:/home/controller/.ssh/id_rsa:ro
     logging:
       driver: json-file
       options:
