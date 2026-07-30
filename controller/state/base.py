@@ -6,8 +6,9 @@ Every resize attempt is tracked as a row keyed by volume_id, moving through:
                                           -> EXTEND_FAILED (retryable)
                                           -> EXTEND_FAILED_NEEDS_ATTENTION (terminal)
 
-Concrete backends (sqlite, postgres, ...) implement this same contract so
-the rest of the controller never depends on which one is configured.
+Postgres is the only shipped implementation (see postgres_backend.py); a
+test-only in-memory double lives in tests/helpers.py for fast, dependency-
+free tests of state-machine logic that don't care about the storage engine.
 """
 
 from __future__ import annotations
