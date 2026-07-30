@@ -1,0 +1,26 @@
+[project]
+name = "ebs-auto-resize"
+version = "0.1.0"
+description = "Self-hosted controller that auto-resizes EBS volumes (AWS-side and OS-side) based on real disk usage"
+requires-python = ">=3.12"
+
+# Runtime dependencies are pinned in requirements.txt (what the Dockerfile
+# and CONTRIBUTING.md's venv setup actually install) - not duplicated here,
+# since this project ships as a container, not a published package, and two
+# dependency lists would just be two things to keep in sync.
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 120
+target-version = "py312"
+
+[tool.ruff.lint]
+select = [
+    "E",   # pycodestyle errors
+    "F",   # pyflakes
+    "I",   # isort (import sorting)
+    "UP",  # pyupgrade (modern syntax)
+    "B",   # bugbear (common bug patterns)
+]
