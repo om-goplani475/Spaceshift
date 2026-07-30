@@ -1,7 +1,8 @@
 """SSM Send-Command implementation of Connector - the default connection mode.
 
 No inbound port and no SSH keys to manage; auth is purely the controller's
-IAM role, which needs ssm:SendCommand and ssm:GetCommandInvocation.
+IAM role (or an assumed role, in multi-account setups - PLAN.md section 10),
+which needs ssm:SendCommand and ssm:GetCommandInvocation.
 """
 
 from __future__ import annotations
@@ -17,8 +18,13 @@ _POLL_INTERVAL_SECONDS = 2
 
 
 class SsmConnector(Connector):
-    def __init__(self, region: str) -> None:
-        self._client = boto3.client("ssm", region_name=region)
+    def __init__(self, region: str, session: boto3.Session | None = None) -> None:
+        # Accepting a session (rather than always using the default boto3
+        # session) matters for assume_role_arn: without it, this connector
+        # would silently authenticate as the controller's own identity even
+        # when discovery/resize are correctly running under an assumed role.
+        client_factory = session if session is not None else boto3
+        self._client = client_factory.client("ssm", region_name=region)
 
     def run_command(self, target: ConnectionTarget, command: str, timeout_seconds: int = 120) -> CommandResult:
         send_response = self._client.send_command(
