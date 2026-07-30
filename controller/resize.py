@@ -14,6 +14,7 @@ from __future__ import annotations
 import logging
 import math
 import re
+import shlex
 import time
 from datetime import datetime, timedelta, timezone
 
@@ -120,7 +121,22 @@ def attempt_extend(
 
     Never re-runs modify-volume - a flaky extend step must not burn another
     slot of the AWS 4-per-24h modification limit (PLAN.md section 11).
+
+    Guarded by dry_run even though start_resize() never creates a state row
+    in dry-run mode (so this path is normally unreachable then) - a row can
+    still exist here if dry_run was turned on *after* real rows were
+    already created, and growpart/resize2fs/xfs_growfs must never run in
+    that case either.
     """
+    if config.dry_run:
+        logger.info(
+            "[dry-run] would attempt filesystem extend for %s on %s (device %s)",
+            volume_id,
+            target.instance_id,
+            device_name,
+        )
+        return
+
     try:
         _extend_filesystem(connector, target, device_name)
     except (InvalidDeviceNameError, ExtendFailedError) as exc:
@@ -173,7 +189,9 @@ def _extend_filesystem(connector: Connector, target: ConnectionTarget, device_na
 
     disk, partition = _split_device(device_name)
 
-    growpart_result = connector.run_command(target, f"growpart {disk} {partition}", timeout_seconds=60)
+    growpart_result = connector.run_command(
+        target, f"growpart {shlex.quote(disk)} {partition}", timeout_seconds=60
+    )
     if not growpart_result.succeeded and "NOCHANGE" not in growpart_result.stdout:
         raise ExtendFailedError(
             f"growpart failed on {target.instance_id} for {device_name}: {growpart_result.stderr}"
@@ -182,13 +200,13 @@ def _extend_filesystem(connector: Connector, target: ConnectionTarget, device_na
     fs_type = _detect_filesystem_type(connector, target, device_name)
 
     if fs_type == "ext4":
-        resize_result = connector.run_command(target, f"resize2fs {device_name}", timeout_seconds=120)
+        resize_result = connector.run_command(target, f"resize2fs {shlex.quote(device_name)}", timeout_seconds=120)
     elif fs_type == "xfs":
         try:
             mount_point = find_mount_point(connector, target, device_name)
         except DiskCheckError as exc:
             raise ExtendFailedError(str(exc)) from exc
-        resize_result = connector.run_command(target, f"xfs_growfs {mount_point}", timeout_seconds=120)
+        resize_result = connector.run_command(target, f"xfs_growfs {shlex.quote(mount_point)}", timeout_seconds=120)
     else:
         raise ExtendFailedError(f"Unsupported filesystem type {fs_type!r} on {device_name} ({target.instance_id})")
 
@@ -199,7 +217,7 @@ def _extend_filesystem(connector: Connector, target: ConnectionTarget, device_na
 
 
 def _detect_filesystem_type(connector: Connector, target: ConnectionTarget, device_name: str) -> str:
-    result = connector.run_command(target, f"blkid -o value -s TYPE {device_name}", timeout_seconds=30)
+    result = connector.run_command(target, f"blkid -o value -s TYPE {shlex.quote(device_name)}", timeout_seconds=30)
     if not result.succeeded:
         raise ExtendFailedError(f"blkid failed on {target.instance_id} for {device_name}: {result.stderr}")
     return result.stdout.strip()
