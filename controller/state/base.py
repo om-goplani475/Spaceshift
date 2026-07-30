@@ -79,6 +79,14 @@ class StateBackend(abc.ABC):
         """
 
     @abc.abstractmethod
+    def list_all(self, limit: int = 100) -> list[ResizeRecord]:
+        """Return the most recently updated records, newest first.
+
+        Used by the optional status dashboard - not on any hot path, so a
+        simple ORDER BY + LIMIT is sufficient.
+        """
+
+    @abc.abstractmethod
     def record_modification(self, volume_id: str, requested_at: datetime) -> None:
         """Append an entry to volume_id's modification-history log.
 
