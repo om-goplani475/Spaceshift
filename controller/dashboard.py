@@ -69,9 +69,8 @@ def create_app(state: StateBackend) -> Flask:
 
 
 if __name__ == "__main__":
-    from controller.config import load_config
     from controller.main import build_state_backend
 
     logging.basicConfig(level=logging.INFO)
-    dashboard_state = build_state_backend(load_config())
+    dashboard_state = build_state_backend()
     create_app(dashboard_state).run(host="0.0.0.0", port=8080)

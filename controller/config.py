@@ -37,19 +37,6 @@ class DiscoveryConfig:
 
 
 @dataclass
-class StateConfig:
-    # Matches the "postgres" service name in docker-compose.yml, so
-    # `docker compose up` works with zero config edits out of the box.
-    # Override this if running the controller outside that compose network.
-    dsn: str = "postgresql://ebs_auto_resize:changeme@postgres:5432/ebs_auto_resize"
-
-    @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> StateConfig:
-        d = cls()
-        return cls(dsn=data.get("dsn", d.dsn))
-
-
-@dataclass
 class SchedulerConfig:
     interval_seconds: int = 300
     max_concurrent_resizes: int = 5
@@ -140,7 +127,6 @@ class Config:
     credentials: CredentialsConfig = field(default_factory=CredentialsConfig)
     discovery: DiscoveryConfig = field(default_factory=DiscoveryConfig)
     default_threshold_percent: int = 80
-    state: StateConfig = field(default_factory=StateConfig)
     scheduler: SchedulerConfig = field(default_factory=SchedulerConfig)
     resize: ResizeConfig = field(default_factory=ResizeConfig)
     dry_run: bool = True
@@ -182,7 +168,6 @@ class Config:
             default_threshold_percent=data.get(
                 "default_threshold_percent", defaults_source["default_threshold_percent"]
             ),
-            state=StateConfig.from_dict(data.get("state", {})),
             scheduler=SchedulerConfig.from_dict(data.get("scheduler", {})),
             resize=ResizeConfig.from_dict(data.get("resize", {})),
             dry_run=data.get("dry_run", defaults_source["dry_run"]),

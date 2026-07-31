@@ -6,6 +6,7 @@ as the container's default command (see Dockerfile).
 from __future__ import annotations
 
 import logging
+import os
 
 from controller.config import load_config
 from controller.notifications import Notifier
@@ -15,16 +16,27 @@ from controller.state.postgres_backend import PostgresStateBackend
 
 logger = logging.getLogger(__name__)
 
+# Postgres is not pluggable - it's always the bundled docker-compose
+# container ("postgres" service) and its named volume, never a DSN a user
+# points elsewhere. Only the password varies, via the same POSTGRES_PASSWORD
+# env var docker-compose.yml already uses for the postgres service itself,
+# so both containers always agree on it with nothing to configure twice.
+# POSTGRES_HOST defaults to the compose service name and only needs
+# overriding for local dev outside Docker (see CONTRIBUTING.md).
+_POSTGRES_DSN_TEMPLATE = "postgresql://ebs_auto_resize:{password}@{host}:5432/ebs_auto_resize"
 
-def build_state_backend(config) -> StateBackend:
-    return PostgresStateBackend(config.state.dsn)
+
+def build_state_backend() -> StateBackend:
+    password = os.environ.get("POSTGRES_PASSWORD", "changeme")
+    host = os.environ.get("POSTGRES_HOST", "postgres")
+    return PostgresStateBackend(_POSTGRES_DSN_TEMPLATE.format(password=password, host=host))
 
 
 def main() -> None:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 
     config = load_config()
-    state = build_state_backend(config)
+    state = build_state_backend()
     notifier = Notifier(config)
     scheduler = Scheduler(config, state, notifier)
 

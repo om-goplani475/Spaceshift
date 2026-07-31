@@ -7,7 +7,6 @@ from controller.config import Config, load_config
 
 def test_defaults_match_config_yaml_example():
     config = load_config("config.yaml.example")
-    assert config.state.dsn == "postgresql://ebs_auto_resize:changeme@postgres:5432/ebs_auto_resize"
     assert config.default_threshold_percent == 80
     assert config.dry_run is True
     assert config.resize.growth_increment_percent == 20
@@ -17,11 +16,6 @@ def test_missing_config_file_falls_back_to_defaults():
     config = load_config("/nonexistent/path/config.yaml")
     assert config.regions == ["us-east-1"]
     assert config.dry_run is True
-
-
-def test_state_dsn_is_overridable():
-    config = Config.from_dict({"state": {"dsn": "postgresql://x:y@localhost:5432/db"}})
-    assert config.state.dsn == "postgresql://x:y@localhost:5432/db"
 
 
 def test_invalid_threshold_percent_rejected():
