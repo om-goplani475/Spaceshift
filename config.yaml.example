@@ -14,6 +14,20 @@ regions:
 # Leave unset to use the controller's own credentials/instance role directly.
 # assume_role_arn: "arn:aws:iam::123456789012:role/ebs-auto-resize"
 
+# --- Credentials ---
+# "role" (default): use the controller's own default credential chain - an
+# EC2 instance role, typically. Leave this section alone if the controller
+# runs on EC2 with a role attached (recommended - see docs/SETUP.md 1.1).
+# "static": authenticate with an IAM user's access key instead, for
+# deployments with no instance role available (own server, another cloud,
+# local testing). This file is gitignored once copied to config.yaml, same
+# as the Slack bot token below - never commit real keys here.
+credentials:
+  mode: role
+  # aws_access_key_id: ""
+  # aws_secret_access_key: ""
+  # aws_session_token: ""  # only for temporary credentials
+
 # --- Discovery ---
 # Tag key/value that marks a volume or instance as eligible for auto-resize.
 discovery:

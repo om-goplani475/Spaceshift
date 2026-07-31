@@ -30,12 +30,11 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
-    # No AWS keys here by default - attach an IAM role to the host running
-    # this container instead (see README for the least-privilege policy).
-    # Only needed for local testing without an instance role:
-    # environment:
-    #   - AWS_ACCESS_KEY_ID=
-    #   - AWS_SECRET_ACCESS_KEY=
+    # No AWS keys here - attach an IAM role to the host running this
+    # container instead (see docs/SETUP.md), and boto3 picks it up
+    # automatically with zero config. If no instance role is available
+    # (your own server, another cloud, etc), set credentials.mode: static
+    # and the access key in config.yaml instead - see docs/SETUP.md.
     volumes:
       - ./config.yaml:/app/config.yaml:ro
     logging:

@@ -10,6 +10,8 @@ Attach an IAM role to whatever host runs the container (an instance profile if t
 
 **Never put AWS access keys in `config.yaml` or commit them to version control.** The whole design assumes the controller authenticates via an attached role, not static credentials.
 
+**Running the controller somewhere with no EC2 instance role available** (your own server, a different cloud, locally)? Set `credentials.mode: static` in `config.yaml` and fill in an IAM **user's** access key under `credentials.aws_access_key_id` / `credentials.aws_secret_access_key` (see section 4 below) - `config.yaml` is already gitignored, so this lives in the same place as every other secret in this tool (e.g. the Slack bot token), not a second file. Leave `credentials.mode` at its default (`role`) for the EC2 path - it's completely unaffected either way. Static keys are a weaker security posture than a role - use them only when a role genuinely isn't an option, and rotate them periodically.
+
 What each statement in that policy is for:
 
 | Statement | Needed for |
@@ -83,6 +85,14 @@ Copy the example first: `cp config.yaml.example config.yaml`. Every field below 
 | `assume_role_arn` | unset | ARN of a role to assume in another account before making any AWS call. See section 1.4. Leave commented out for single-account use. |
 | `default_threshold_percent` | `80` | Fallback percent-full threshold, used only when a volume has neither its own `DiskThreshold` tag nor one on its instance. |
 | `dry_run` | `true` | **The most important setting for a first run.** When true, the controller only logs what it *would* do - no `modify-volume` call, no `growpart`/`resize2fs`/`xfs_growfs`. Flip to `false` only after confirming the dry-run logs look right against your real account. |
+
+### `credentials`
+
+| Field | Default | Meaning |
+|---|---|---|
+| `mode` | `role` | `role` uses the controller's default credential chain (an EC2 instance role, typically) - leave this alone if the controller runs on EC2 with a role attached. `static` authenticates with the access key below instead, for deployments with no instance role available. |
+| `aws_access_key_id` / `aws_secret_access_key` | unset | An IAM **user's** access key. Required (and only used) when `mode: static` - startup fails with a clear error if either is missing while `static` is set. Ignored (with a startup warning if present) when `mode: role`. |
+| `aws_session_token` | unset | Only needed if `aws_access_key_id`/`aws_secret_access_key` are temporary credentials (e.g. from an SSO session or an AssumeRole call you made yourself, outside this tool). |
 
 ### `discovery`
 
