@@ -11,7 +11,7 @@ cp config.yaml.example config.yaml
 
 `config.yaml` defaults to `dry_run: true`, so running the controller locally never calls `modify-volume` or a mutating remote command even against a real AWS account - only the read-only discovery/disk-check calls hit AWS. Leave it that way unless you specifically need to test the live resize path.
 
-`config.yaml.example`'s default `state.dsn` points at hostname `postgres`, which only resolves inside `docker-compose.yml`'s network. Running `python -m controller.main` directly on your host (rather than via `docker compose up`) needs a reachable Postgres and a `state.dsn` pointing at it - e.g. start just the bundled service with `docker compose up postgres` and set `state.dsn` to `postgresql://ebs_auto_resize:changeme@localhost:5432/ebs_auto_resize` (uncomment the `ports` mapping on the `postgres` service in `docker-compose.yml` first, since it isn't published by default).
+The state backend is always Postgres, hardcoded to host `postgres` - which only resolves inside `docker-compose.yml`'s network. Running `python -m controller.main` directly on your host (rather than via `docker compose up`) needs a reachable Postgres and `POSTGRES_HOST` pointing at it - e.g. start just the bundled service with `docker compose up postgres` (uncomment the `ports` mapping on the `postgres` service in `docker-compose.yml` first, since it isn't published by default), then run `POSTGRES_HOST=localhost python -m controller.main`. If you changed `POSTGRES_PASSWORD` from its `changeme` default, export that too.
 
 ## Running tests
 

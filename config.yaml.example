@@ -5,6 +5,11 @@
 # inbound port, no SSH keys to manage. Target instances need the SSM Agent
 # running and AmazonSSMManagedInstanceCore on their own instance profile;
 # see docs/SETUP.md section 1.2.
+#
+# State is always the bundled Postgres container from docker-compose.yml -
+# not configurable here. Only its password varies, via the POSTGRES_PASSWORD
+# env var (see docs/SETUP.md's config reference) - not a config.yaml field,
+# since both the postgres container and the controller need to agree on it.
 
 # AWS regions to scan. The controller checks every region in this list on each cycle.
 regions:
@@ -38,13 +43,6 @@ discovery:
 # Fallback threshold (percent full) used when neither the volume nor its
 # attached instance carries a DiskThreshold tag.
 default_threshold_percent: 80
-
-# --- State backend (Postgres) ---
-# Default matches the "postgres" service in docker-compose.yml - works with
-# zero edits if you're running via `docker compose up`. Override this if
-# you're pointing at a Postgres server you manage yourself instead.
-state:
-  dsn: "postgresql://ebs_auto_resize:changeme@postgres:5432/ebs_auto_resize"
 
 # --- Scheduler ---
 scheduler:

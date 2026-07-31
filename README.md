@@ -24,7 +24,7 @@ cp config.yaml.example config.yaml
 docker compose up
 ```
 
-This starts two containers: the controller, and a Postgres container it uses to track resize state (no separate database setup needed — `config.yaml.example`'s default DSN already points at it).
+This starts two containers: the controller, and a Postgres container it uses to track resize state (no separate database setup needed — the controller connects to it automatically, no config required).
 
 By default `config.yaml` has `dry_run: true` — the controller will log what it *would* resize without ever calling `modify-volume` or running a mutating remote command. Confirm the logs show what you expect against your own AWS account before flipping `dry_run: false`.
 

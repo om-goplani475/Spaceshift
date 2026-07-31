@@ -101,11 +101,9 @@ Copy the example first: `cp config.yaml.example config.yaml`. Every field below 
 | `eligibility_tag_key` / `eligibility_tag_value` | `AutoResize` / `true` | The tag key/value that marks a resource as eligible. Change only if your org already has a conflicting tag naming convention. |
 | `threshold_tag_key` | `DiskThreshold` | The tag key holding a per-resource threshold override. |
 
-### `state`
+### State backend (Postgres)
 
-| Field | Default | Meaning |
-|---|---|---|
-| `dsn` | `postgresql://ebs_auto_resize:changeme@postgres:5432/ebs_auto_resize` | Connection string for the Postgres backend. The default matches `docker-compose.yml`'s `postgres` service, so it works unmodified via `docker compose up`. Override this only if pointing at a Postgres server you manage yourself instead of the bundled container - and change the password either way if this is anything more than a local test. |
+Not a `config.yaml` field - the state backend is always the bundled Postgres container (`docker-compose.yml`'s `postgres` service) and its named volume (`postgres-data`), not something you point elsewhere. The only thing you can change is its password, via the `POSTGRES_PASSWORD` environment variable (e.g. `POSTGRES_PASSWORD=<something-strong> docker compose up`, or exported in your shell/CI) - both the `postgres` and `controller` services read the same variable, so they always agree on it with nothing to configure twice. It defaults to `changeme`, which is fine for local testing but should be overridden for anything longer-lived.
 
 ### `scheduler`
 

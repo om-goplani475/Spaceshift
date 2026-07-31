@@ -30,6 +30,10 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+    environment:
+      # Must match the postgres service's password above - same variable,
+      # same default, so the two never disagree without extra config.
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-changeme}
     # No AWS keys here - attach an IAM role to the host running this
     # container instead (see docs/SETUP.md), and boto3 picks it up
     # automatically with zero config. If no instance role is available
@@ -52,10 +56,10 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+    environment:
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-changeme}
     ports:
       - "8080:8080"
-    volumes:
-      - ./config.yaml:/app/config.yaml:ro
     logging:
       driver: json-file
       options:
