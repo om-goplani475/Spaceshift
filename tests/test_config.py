@@ -39,3 +39,33 @@ def test_partial_override_keeps_other_defaults():
     assert config.dry_run is False
     assert config.resize.max_volume_size_gb == 10
     assert config.resize.growth_increment_percent == 20  # untouched default
+
+
+def test_credentials_mode_defaults_to_role():
+    config = Config.from_dict({})
+    assert config.credentials.mode == "role"
+    assert config.credentials.aws_access_key_id is None
+
+
+def test_credentials_static_mode_requires_keys():
+    with pytest.raises(ValueError, match="credentials.mode is 'static'"):
+        Config.from_dict({"credentials": {"mode": "static"}})
+
+
+def test_credentials_static_mode_accepts_keys():
+    config = Config.from_dict(
+        {
+            "credentials": {
+                "mode": "static",
+                "aws_access_key_id": "AKIAEXAMPLE",
+                "aws_secret_access_key": "secret",
+            }
+        }
+    )
+    assert config.credentials.mode == "static"
+    assert config.credentials.aws_access_key_id == "AKIAEXAMPLE"
+
+
+def test_invalid_credentials_mode_rejected():
+    with pytest.raises(ValueError, match="credentials.mode"):
+        Config.from_dict({"credentials": {"mode": "bogus"}})

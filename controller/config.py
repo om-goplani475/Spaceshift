@@ -17,6 +17,7 @@ import yaml
 DEFAULT_CONFIG_PATH = Path(os.environ.get("EBS_AUTO_RESIZE_CONFIG", "config.yaml"))
 
 _VALID_NOTIFICATION_METHODS = {"none", "slack", "email"}
+_VALID_CREDENTIALS_MODES = {"role", "static"}
 
 
 @dataclass
@@ -111,9 +112,32 @@ class NotificationsConfig:
 
 
 @dataclass
+class CredentialsConfig:
+    # "role" (default): use the controller's own default credential chain -
+    # an EC2 instance role, typically. "static": authenticate with the
+    # access key below instead, for deployments with no instance role
+    # available (own server, another cloud, local testing).
+    mode: str = "role"
+    aws_access_key_id: str | None = None
+    aws_secret_access_key: str | None = None
+    aws_session_token: str | None = None
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> CredentialsConfig:
+        d = cls()
+        return cls(
+            mode=data.get("mode", d.mode),
+            aws_access_key_id=data.get("aws_access_key_id", d.aws_access_key_id),
+            aws_secret_access_key=data.get("aws_secret_access_key", d.aws_secret_access_key),
+            aws_session_token=data.get("aws_session_token", d.aws_session_token),
+        )
+
+
+@dataclass
 class Config:
     regions: list[str] = field(default_factory=lambda: ["us-east-1"])
     assume_role_arn: str | None = None
+    credentials: CredentialsConfig = field(default_factory=CredentialsConfig)
     discovery: DiscoveryConfig = field(default_factory=DiscoveryConfig)
     default_threshold_percent: int = 80
     state: StateConfig = field(default_factory=StateConfig)
@@ -123,6 +147,16 @@ class Config:
     notifications: NotificationsConfig = field(default_factory=NotificationsConfig)
 
     def __post_init__(self) -> None:
+        if self.credentials.mode not in _VALID_CREDENTIALS_MODES:
+            raise ValueError(
+                f"credentials.mode must be one of {sorted(_VALID_CREDENTIALS_MODES)}, got {self.credentials.mode!r}"
+            )
+        if self.credentials.mode == "static" and not (
+            self.credentials.aws_access_key_id and self.credentials.aws_secret_access_key
+        ):
+            raise ValueError(
+                "credentials.mode is 'static' but aws_access_key_id and aws_secret_access_key are not both set"
+            )
         if self.notifications.method not in _VALID_NOTIFICATION_METHODS:
             raise ValueError(
                 f"notifications.method must be one of {sorted(_VALID_NOTIFICATION_METHODS)}, "
@@ -143,6 +177,7 @@ class Config:
         return cls(
             regions=data.get("regions", defaults_source["regions"]),
             assume_role_arn=data.get("assume_role_arn", defaults_source["assume_role_arn"]),
+            credentials=CredentialsConfig.from_dict(data.get("credentials", {})),
             discovery=DiscoveryConfig.from_dict(data.get("discovery", {})),
             default_threshold_percent=data.get(
                 "default_threshold_percent", defaults_source["default_threshold_percent"]
