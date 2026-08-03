@@ -27,7 +27,12 @@ _POSTGRES_DSN_TEMPLATE = "postgresql://ebs_auto_resize:{password}@{host}:5432/eb
 
 
 def build_state_backend() -> StateBackend:
-    password = os.environ.get("POSTGRES_PASSWORD", "changeme")
+    password = os.environ.get("POSTGRES_PASSWORD")
+    if not password:
+        raise RuntimeError(
+            "POSTGRES_PASSWORD is not set. Under docker compose this should never happen (see "
+            ".env.example); running controller.main directly, export it yourself first."
+        )
     host = os.environ.get("POSTGRES_HOST", "postgres")
     return PostgresStateBackend(_POSTGRES_DSN_TEMPLATE.format(password=password, host=host))
 

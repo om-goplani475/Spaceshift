@@ -9,6 +9,8 @@ that class of bug.
 
 from unittest.mock import MagicMock, patch
 
+import pytest
+
 from controller.config import Config
 from controller.main import build_state_backend, main
 
@@ -35,9 +37,15 @@ def test_main_startup_does_not_crash_before_run_forever():
         state.close.assert_called_once()
 
 
+def test_build_state_backend_requires_password(monkeypatch):
+    monkeypatch.delenv("POSTGRES_PASSWORD", raising=False)
+    with pytest.raises(RuntimeError, match="POSTGRES_PASSWORD"):
+        build_state_backend()
+
+
 def test_build_state_backend_defaults_to_compose_service_name(monkeypatch):
     monkeypatch.delenv("POSTGRES_HOST", raising=False)
-    monkeypatch.delenv("POSTGRES_PASSWORD", raising=False)
+    monkeypatch.setenv("POSTGRES_PASSWORD", "changeme")
     with patch("controller.main.PostgresStateBackend") as backend_cls:
         build_state_backend()
     backend_cls.assert_called_once_with("postgresql://ebs_auto_resize:changeme@postgres:5432/ebs_auto_resize")

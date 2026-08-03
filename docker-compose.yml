@@ -4,7 +4,7 @@ services:
     restart: unless-stopped
     environment:
       POSTGRES_USER: ebs_auto_resize
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-changeme}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env - see .env.example}
       POSTGRES_DB: ebs_auto_resize
     volumes:
       - postgres-data:/var/lib/postgresql/data
@@ -32,8 +32,8 @@ services:
         condition: service_healthy
     environment:
       # Must match the postgres service's password above - same variable,
-      # same default, so the two never disagree without extra config.
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-changeme}
+      # so the two never disagree without extra config.
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env - see .env.example}
     # No AWS keys here - attach an IAM role to the host running this
     # container instead (see docs/SETUP.md), and boto3 picks it up
     # automatically with zero config. If no instance role is available
@@ -57,7 +57,7 @@ services:
       postgres:
         condition: service_healthy
     environment:
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-changeme}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env - see .env.example}
     ports:
       - "8089:8080"
     logging:
