@@ -40,6 +40,7 @@ class DiscoveryConfig:
 class SchedulerConfig:
     interval_seconds: int = 300
     max_concurrent_resizes: int = 5
+    scan_log_retention_days: int = 7
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> SchedulerConfig:
@@ -47,6 +48,7 @@ class SchedulerConfig:
         return cls(
             interval_seconds=data.get("interval_seconds", d.interval_seconds),
             max_concurrent_resizes=data.get("max_concurrent_resizes", d.max_concurrent_resizes),
+            scan_log_retention_days=data.get("scan_log_retention_days", d.scan_log_retention_days),
         )
 
 

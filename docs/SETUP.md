@@ -111,6 +111,7 @@ Not a `config.yaml` field - the state backend is always the bundled Postgres con
 |---|---|---|
 | `interval_seconds` | `300` | How often a full discovery-and-check cycle runs. |
 | `max_concurrent_resizes` | `5` | Size of the thread pool processing volumes in parallel each cycle. Raise for a larger fleet. |
+| `scan_log_retention_days` | `7` | How long the dashboard's scan-history table (Postgres `scan_log`) keeps rows before a row older than this gets pruned, once per cycle. Pure observability data, unrelated to `resize_state`. |
 
 ### `resize`
 

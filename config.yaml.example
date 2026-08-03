@@ -48,6 +48,10 @@ default_threshold_percent: 80
 scheduler:
   interval_seconds: 300
   max_concurrent_resizes: 5
+  # How long the dashboard's scan-history table keeps rows before they're
+  # pruned. Purely observability (what the controller looked at, and its
+  # decision) - independent of resize_state, which isn't pruned.
+  scan_log_retention_days: 7
 
 # --- Resize behavior / safety limits ---
 resize:
