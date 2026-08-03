@@ -7,7 +7,7 @@ from dataclasses import replace
 from datetime import UTC, datetime
 
 from controller.connections.base import CommandResult, ConnectionTarget, Connector
-from controller.state.base import TERMINAL_STATUSES, ResizeRecord, ResizeStatus, StateBackend
+from controller.state.base import TERMINAL_STATUSES, ResizeRecord, ResizeStatus, ScanRecord, StateBackend
 
 
 class FakeConnector(Connector):
@@ -39,6 +39,8 @@ class InMemoryStateBackend(StateBackend):
         self._lock = threading.Lock()
         self._records: dict[str, ResizeRecord] = {}
         self._modifications: dict[str, list[datetime]] = {}
+        self._scans: list[ScanRecord] = []
+        self._next_scan_id = 1
 
     def create_if_absent(
         self, volume_id: str, instance_id: str, from_size_gb: int, to_size_gb: int
@@ -92,6 +94,39 @@ class InMemoryStateBackend(StateBackend):
 
     def modification_count_since(self, volume_id: str, since: datetime) -> int:
         return sum(1 for requested_at in self._modifications.get(volume_id, []) if requested_at >= since)
+
+    def record_scan(
+        self,
+        region: str,
+        volume_id: str,
+        instance_id: str,
+        size_gb: int,
+        threshold_percent: int,
+        percent_used: float | None,
+        decision: str,
+    ) -> None:
+        with self._lock:
+            self._scans.append(
+                ScanRecord(
+                    id=self._next_scan_id,
+                    timestamp=datetime.now(UTC),
+                    region=region,
+                    volume_id=volume_id,
+                    instance_id=instance_id,
+                    size_gb=size_gb,
+                    threshold_percent=threshold_percent,
+                    percent_used=percent_used,
+                    decision=decision,
+                )
+            )
+            self._next_scan_id += 1
+
+    def list_scans(self, limit: int = 200) -> list[ScanRecord]:
+        return sorted(self._scans, key=lambda s: s.timestamp, reverse=True)[:limit]
+
+    def prune_scan_log(self, older_than: datetime) -> None:
+        with self._lock:
+            self._scans = [s for s in self._scans if s.timestamp >= older_than]
 
     def close(self) -> None:
         pass

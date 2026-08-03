@@ -18,7 +18,7 @@ from datetime import UTC, datetime
 import psycopg2
 import psycopg2.pool
 
-from controller.state.base import TERMINAL_STATUSES, ResizeRecord, ResizeStatus, StateBackend
+from controller.state.base import TERMINAL_STATUSES, ResizeRecord, ResizeStatus, ScanRecord, StateBackend
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS resize_state (
@@ -40,6 +40,20 @@ CREATE TABLE IF NOT EXISTS modification_history (
 
 CREATE INDEX IF NOT EXISTS idx_modification_history_volume_id
     ON modification_history (volume_id, requested_at);
+
+CREATE TABLE IF NOT EXISTS scan_log (
+    id                SERIAL PRIMARY KEY,
+    timestamp         TIMESTAMPTZ NOT NULL,
+    region            TEXT NOT NULL,
+    volume_id         TEXT NOT NULL,
+    instance_id       TEXT NOT NULL,
+    size_gb           INTEGER NOT NULL,
+    threshold_percent INTEGER NOT NULL,
+    percent_used      REAL,
+    decision          TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_scan_log_timestamp ON scan_log (timestamp DESC);
 """
 
 _TERMINAL_STATUS_VALUES = [s.value for s in TERMINAL_STATUSES]
@@ -169,6 +183,37 @@ class PostgresStateBackend(StateBackend):
                 (volume_id, since),
             )
             return cur.fetchone()[0]
+
+    def record_scan(
+        self,
+        region: str,
+        volume_id: str,
+        instance_id: str,
+        size_gb: int,
+        threshold_percent: int,
+        percent_used: float | None,
+        decision: str,
+    ) -> None:
+        with self._cursor(commit=True) as cur:
+            cur.execute(
+                """
+                INSERT INTO scan_log
+                    (timestamp, region, volume_id, instance_id, size_gb, threshold_percent, percent_used, decision)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                """,
+                (datetime.now(UTC), region, volume_id, instance_id, size_gb, threshold_percent, percent_used, decision),
+            )
+
+    def list_scans(self, limit: int = 200) -> list[ScanRecord]:
+        with self._cursor() as cur:
+            cur.execute("SELECT * FROM scan_log ORDER BY timestamp DESC LIMIT %s", (limit,))
+            rows = cur.fetchall()
+            columns = [desc[0] for desc in cur.description]
+        return [ScanRecord(**dict(zip(columns, row, strict=True))) for row in rows]
+
+    def prune_scan_log(self, older_than: datetime) -> None:
+        with self._cursor(commit=True) as cur:
+            cur.execute("DELETE FROM scan_log WHERE timestamp < %s", (older_than,))
 
     def close(self) -> None:
         self._pool.closeall()

@@ -44,6 +44,29 @@ class ResizeRecord:
     updated_at: datetime
 
 
+@dataclass
+class ScanRecord:
+    """One volume-check result from a single scheduler cycle.
+
+    Pure observability ("what is the controller looking at, and what did it
+    decide") - independent of the resize_state machine above, which only
+    tracks volumes with an actual resize in flight. decision is one of:
+    ssm_not_ready, extend_retry_waiting, extend_retry_attempted,
+    needs_attention, below_threshold, would_resize, resize_triggered,
+    resize_skipped.
+    """
+
+    id: int
+    timestamp: datetime
+    region: str
+    volume_id: str
+    instance_id: str
+    size_gb: int
+    threshold_percent: int
+    percent_used: float | None
+    decision: str
+
+
 class StateBackend(abc.ABC):
     """Persists and queries per-volume resize state."""
 
@@ -99,6 +122,36 @@ class StateBackend(abc.ABC):
     @abc.abstractmethod
     def modification_count_since(self, volume_id: str, since: datetime) -> int:
         """Count modify-volume calls made for volume_id since `since`."""
+
+    @abc.abstractmethod
+    def record_scan(
+        self,
+        region: str,
+        volume_id: str,
+        instance_id: str,
+        size_gb: int,
+        threshold_percent: int,
+        percent_used: float | None,
+        decision: str,
+    ) -> None:
+        """Append one scan result - called once per volume per scheduler cycle.
+
+        Independent of the resize state machine: this runs regardless of
+        dry_run or whether a resize was actually triggered, purely for the
+        dashboard's "what is being scanned" view.
+        """
+
+    @abc.abstractmethod
+    def list_scans(self, limit: int = 200) -> list[ScanRecord]:
+        """Return the most recent scan results, newest first."""
+
+    @abc.abstractmethod
+    def prune_scan_log(self, older_than: datetime) -> None:
+        """Delete scan results older than `older_than`.
+
+        Keeps the scan log bounded for a long-running controller - called
+        once per cycle by the scheduler using scheduler.scan_log_retention_days.
+        """
 
     @abc.abstractmethod
     def close(self) -> None:

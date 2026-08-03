@@ -60,3 +60,21 @@ def test_list_all():
     backend.create_if_absent("vol-1", "i-1", 100, 150)
     backend.create_if_absent("vol-2", "i-2", 200, 250)
     assert {r.volume_id for r in backend.list_all()} == {"vol-1", "vol-2"}
+
+
+def test_record_scan_and_list_scans_newest_first():
+    backend = InMemoryStateBackend()
+    backend.record_scan("us-east-1", "vol-1", "i-1", 100, 80, 50.0, "below_threshold")
+    backend.record_scan("us-east-1", "vol-2", "i-2", 100, 80, None, "ssm_not_ready")
+
+    scans = backend.list_scans()
+    assert [s.volume_id for s in scans] == ["vol-2", "vol-1"]
+    assert scans[0].decision == "ssm_not_ready"
+    assert scans[0].percent_used is None
+
+
+def test_prune_scan_log_removes_old_entries():
+    backend = InMemoryStateBackend()
+    backend.record_scan("us-east-1", "vol-1", "i-1", 100, 80, 50.0, "below_threshold")
+    backend.prune_scan_log(datetime.now(UTC) + timedelta(seconds=1))
+    assert backend.list_scans() == []

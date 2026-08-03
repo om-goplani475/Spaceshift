@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import os
 from concurrent.futures import ThreadPoolExecutor
+from datetime import UTC, datetime, timedelta
 
 import pytest
 
@@ -27,7 +28,7 @@ def postgres_state():
     backend = PostgresStateBackend(os.environ["EBS_AUTO_RESIZE_TEST_POSTGRES_DSN"])
     yield backend
     with backend._cursor(commit=True) as cur:
-        cur.execute("TRUNCATE resize_state, modification_history")
+        cur.execute("TRUNCATE resize_state, modification_history, scan_log")
     backend.close()
 
 
@@ -62,3 +63,18 @@ def test_list_all(postgres_state):
     postgres_state.create_if_absent("vol-2", "i-2", 200, 250)
     records = postgres_state.list_all()
     assert {r.volume_id for r in records} == {"vol-1", "vol-2"}
+
+
+def test_record_scan_and_list_scans_newest_first(postgres_state):
+    postgres_state.record_scan("us-east-1", "vol-1", "i-1", 100, 80, 50.0, "below_threshold")
+    postgres_state.record_scan("us-east-1", "vol-2", "i-2", 100, 80, None, "ssm_not_ready")
+
+    scans = postgres_state.list_scans()
+    assert [s.volume_id for s in scans] == ["vol-2", "vol-1"]
+    assert scans[0].percent_used is None
+
+
+def test_prune_scan_log_removes_old_entries(postgres_state):
+    postgres_state.record_scan("us-east-1", "vol-1", "i-1", 100, 80, 50.0, "below_threshold")
+    postgres_state.prune_scan_log(datetime.now(UTC) + timedelta(seconds=1))
+    assert postgres_state.list_scans() == []
