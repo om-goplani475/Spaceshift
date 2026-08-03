@@ -103,7 +103,7 @@ Copy the example first: `cp config.yaml.example config.yaml`. Every field below 
 
 ### State backend (Postgres)
 
-Not a `config.yaml` field - the state backend is always the bundled Postgres container (`docker-compose.yml`'s `postgres` service) and its named volume (`postgres-data`), not something you point elsewhere. The only thing you can change is its password, via the `POSTGRES_PASSWORD` environment variable (e.g. `POSTGRES_PASSWORD=<something-strong> docker compose up`, or exported in your shell/CI) - both the `postgres` and `controller` services read the same variable, so they always agree on it with nothing to configure twice. It defaults to `changeme`, which is fine for local testing but should be overridden for anything longer-lived.
+Not a `config.yaml` field - the state backend is always the bundled Postgres container (`docker-compose.yml`'s `postgres` service) and its named volume (`postgres-data`), not something you point elsewhere. The only thing you can change is its password, via the `POSTGRES_PASSWORD` environment variable - `postgres`, `controller`, and `dashboard` all read the same variable, so they always agree on it with nothing to configure twice. **There is no default** - copy [`.env.example`](../.env.example) to `.env` and set a real value, or `docker compose up` refuses to start (`docker-compose.yml` uses Compose's `${VAR:?error}` syntax specifically so a missing password fails loudly instead of silently falling back to something guessable that anyone could find in this public repo).
 
 ### `scheduler`
 
@@ -139,5 +139,6 @@ Not a `config.yaml` field - the state backend is always the bundled Postgres con
 4. Slack bot token + channel ID, if using `notifications.method: slack` (2).
 5. Docker + Docker Compose installed; IMDSv2 hop limit raised if the controller itself is on EC2 (3).
 6. `config.yaml` copied from the example and adjusted (4) - leave `dry_run: true`.
-7. `docker compose up`, watch the logs, confirm the dry-run output matches what you expect.
-8. Only then, flip `dry_run: false`.
+7. `.env` copied from `.env.example` with a real `POSTGRES_PASSWORD` set - `docker compose up` refuses to start without it.
+8. `docker compose up`, watch the logs, confirm the dry-run output matches what you expect.
+9. Only then, flip `dry_run: false`.

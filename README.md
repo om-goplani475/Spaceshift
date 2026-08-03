@@ -21,10 +21,11 @@ v1 supports **Amazon Linux + Ubuntu, ext4 + XFS**. LVM-based volumes are out of 
 git clone <this-repo>
 cd ebs-auto-resize
 cp config.yaml.example config.yaml
+cp .env.example .env   # set a real POSTGRES_PASSWORD in it - no default is shipped
 docker compose up
 ```
 
-This starts two containers: the controller, and a Postgres container it uses to track resize state (no separate database setup needed — the controller connects to it automatically, no config required).
+This starts two containers: the controller, and a Postgres container it uses to track resize state (no separate database setup needed — the controller connects to it automatically using the password from `.env`). `docker compose up` refuses to start if `.env`/`POSTGRES_PASSWORD` is missing, rather than silently running with a guessable password.
 
 By default `config.yaml` has `dry_run: true` — the controller will log what it *would* resize without ever calling `modify-volume` or running a mutating remote command. Confirm the logs show what you expect against your own AWS account before flipping `dry_run: false`.
 
