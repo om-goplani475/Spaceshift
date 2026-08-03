@@ -82,20 +82,25 @@ class Scheduler:
 
         with ThreadPoolExecutor(max_workers=self._config.scheduler.max_concurrent_resizes) as pool:
             for volume in volumes:
-                pool.submit(self._process_volume, ec2, ssm, connector, volume)
+                pool.submit(self._process_volume, ec2, ssm, connector, volume, region)
 
-    def _process_volume(self, ec2, ssm, connector: Connector, volume: EligibleVolume) -> None:
+        cutoff = datetime.now(UTC) - timedelta(days=self._config.scheduler.scan_log_retention_days)
+        self._state.prune_scan_log(cutoff)
+
+    def _process_volume(self, ec2, ssm, connector: Connector, volume: EligibleVolume, region: str) -> None:
         # Each volume gets its own try/except so one bad volume can never
         # pause fleet-wide monitoring (fault isolation).
         try:
             target = self._resolve_target(ssm, volume.instance_id)
             if target is None:
+                self._record_scan(volume, region, "ssm_not_ready")
                 return  # SSM not ready yet; already alerted/logged inside _resolve_target
 
             record = self._state.get(volume.volume_id)
 
             if record is not None and record.status in (ResizeStatus.MODIFY_COMPLETED, ResizeStatus.EXTEND_FAILED):
                 if should_retry_extend_now(record, self._config.resize.extend_retry.backoff_seconds):
+                    self._record_scan(volume, region, "extend_retry_attempted")
                     attempt_extend(
                         connector,
                         self._state,
@@ -105,14 +110,17 @@ class Scheduler:
                         volume.volume_id,
                         volume.device_name,
                     )
+                else:
+                    self._record_scan(volume, region, "extend_retry_waiting")
                 return
 
             if record is not None and record.status == ResizeStatus.EXTEND_FAILED_NEEDS_ATTENTION:
+                self._record_scan(volume, region, "needs_attention")
                 return  # already alerted; needs a human, not another tick
 
             usage = check_disk_usage(connector, target, volume.device_name)
             if usage.percent_used >= volume.threshold_percent:
-                start_resize(
+                started = start_resize(
                     ec2,
                     self._state,
                     self._notifier,
@@ -121,8 +129,33 @@ class Scheduler:
                     volume.instance_id,
                     volume.size_gb,
                 )
+                if not started:
+                    decision = "resize_skipped"
+                elif self._config.dry_run:
+                    decision = "would_resize"
+                else:
+                    decision = "resize_triggered"
+                self._record_scan(volume, region, decision, percent_used=usage.percent_used)
+            else:
+                self._record_scan(volume, region, "below_threshold", percent_used=usage.percent_used)
         except Exception:
             logger.exception("Error processing volume %s (instance %s)", volume.volume_id, volume.instance_id)
+
+    def _record_scan(
+        self, volume: EligibleVolume, region: str, decision: str, percent_used: float | None = None
+    ) -> None:
+        try:
+            self._state.record_scan(
+                region,
+                volume.volume_id,
+                volume.instance_id,
+                volume.size_gb,
+                volume.threshold_percent,
+                percent_used,
+                decision,
+            )
+        except Exception:
+            logger.exception("Failed to record scan result for %s", volume.volume_id)
 
     def _resolve_target(self, ssm, instance_id: str) -> ConnectionTarget | None:
         if not is_ssm_ready(ssm, instance_id):
