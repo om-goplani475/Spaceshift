@@ -59,7 +59,7 @@ services:
     environment:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-changeme}
     ports:
-      - "8080:8080"
+      - "8089:8080"
     logging:
       driver: json-file
       options:
