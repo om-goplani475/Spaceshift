@@ -29,20 +29,20 @@ This starts two containers: the controller, and a Postgres container it uses to 
 
 By default `config.yaml` has `dry_run: true` — the controller will log what it *would* resize without ever calling `modify-volume` or running a mutating remote command. Confirm the logs show what you expect against your own AWS account before flipping `dry_run: false`.
 
-Mark a volume (or the instance it's attached to) as eligible - the first cycle syncs everything it can see into Postgres, but nothing is watched until this is set:
+Mark a volume (or the instance it's attached to) as eligible - the first cycle syncs everything it can see into Postgres, but nothing is watched until this is set. The dashboard (below) is the easiest way to do this - flip the `Autoresize` toggle next to the volume/instance on its **Instances**/**Volumes** tab. Without the dashboard, it's a direct `UPDATE`:
 
 ```bash
 docker compose exec postgres psql -U ebs_auto_resize -d ebs_auto_resize \
   -c "UPDATE volumes SET autoresize = true WHERE volume_id = 'vol-xxxxxxxx';"
 ```
 
-### Optional status dashboard
+### Status dashboard
 
 ```bash
 docker compose --profile dashboard up
 ```
 
-Serves a read-only status page at `http://localhost:8080` showing recent resize activity (also available as JSON at `/api/status`).
+Serves a status page at `http://localhost:8080` with **Instances** and **Volumes** tabs (browse everything discovered, toggle `Autoresize` per resource - this is how you mark things eligible) plus resize activity and scan history below. JSON also available at `/api/status`, `/api/scans`, `/api/instances`, `/api/volumes`. No authentication - only run this where you trust who's on the network.
 
 ## Setup and configuration
 

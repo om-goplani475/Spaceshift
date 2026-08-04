@@ -37,7 +37,7 @@ The controller checks this automatically before attempting a disk check - an ins
 
 Eligibility isn't an AWS tag or a `config.yaml` setting - it's a column in Postgres. Every instance and volume the controller can see gets synced into the `instances`/`volumes` tables **every cycle, regardless of eligibility** (that's the point - see `docs/PLAN.md`'s note on why tag-based discovery was replaced). Nothing is actually resized until its `autoresize` column is `true`.
 
-The dashboard's toggle UI is the intended way to flip this (see the README once that ships); until then, or if you'd rather script it, it's a plain `UPDATE`:
+The easiest way to flip this is the dashboard (`docker compose --profile dashboard up`, then `localhost:8080`'s **Instances**/**Volumes** tabs - each row has an `Autoresize` toggle). If you'd rather script it, it's a plain `UPDATE`:
 
 ```bash
 docker compose exec postgres psql -U ebs_auto_resize -d ebs_auto_resize \
