@@ -11,13 +11,27 @@
 # env var (see docs/SETUP.md's config reference) - not a config.yaml field,
 # since both the postgres container and the controller need to agree on it.
 
-# AWS regions to scan. The controller checks every region in this list on each cycle.
-regions:
-  - us-east-1
-
-# Optional: assume a role in another account before making any AWS calls.
-# Leave unset to use the controller's own credentials/instance role directly.
-# assume_role_arn: "arn:aws:iam::123456789012:role/ebs-auto-resize"
+# --- Accounts ---
+# One entry per AWS account the controller manages. Every account
+# authenticates through the same base identity below (credentials.*) - what
+# makes each entry a *different* account is its own assume_role_arn, so one
+# controller process can centrally manage several accounts at once.
+#
+# The single-account case is just a list with one entry, as below. Add more
+# entries (each with its own assume_role_arn and regions) to manage
+# additional accounts from the same controller.
+accounts:
+  - name: default
+    # Optional: assume a role in this account before making any AWS calls.
+    # Leave unset to use the base identity directly (its own account).
+    # assume_role_arn: "arn:aws:iam::123456789012:role/ebs-auto-resize"
+    regions:
+      - us-east-1
+  # - name: prod-secondary
+  #   assume_role_arn: "arn:aws:iam::210987654321:role/ebs-auto-resize"
+  #   regions:
+  #     - us-east-1
+  #     - eu-west-1
 
 # --- Credentials ---
 # "role" (default): use the controller's own default credential chain - an

@@ -85,6 +85,28 @@ class NotificationsConfig:
 
 
 @dataclass
+class AccountConfig:
+    # One entry per AWS account the controller centrally manages. Every
+    # account authenticates through the same base credentials.* identity;
+    # assume_role_arn (per-account, not global) is what actually lets one
+    # controller process manage several accounts at once.
+    name: str
+    assume_role_arn: str | None = None
+    regions: list[str] = field(default_factory=lambda: ["us-east-1"])
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> AccountConfig:
+        if not data.get("name"):
+            raise ValueError("each entry in accounts: must have a non-empty name")
+        d = cls(name=data["name"])
+        return cls(
+            name=data["name"],
+            assume_role_arn=data.get("assume_role_arn", d.assume_role_arn),
+            regions=data.get("regions", d.regions),
+        )
+
+
+@dataclass
 class CredentialsConfig:
     # "role" (default): use the controller's own default credential chain -
     # an EC2 instance role, typically. "static": authenticate with the
@@ -108,8 +130,7 @@ class CredentialsConfig:
 
 @dataclass
 class Config:
-    regions: list[str] = field(default_factory=lambda: ["us-east-1"])
-    assume_role_arn: str | None = None
+    accounts: list[AccountConfig] = field(default_factory=lambda: [AccountConfig(name="default")])
     credentials: CredentialsConfig = field(default_factory=CredentialsConfig)
     default_threshold_percent: int = 80
     scheduler: SchedulerConfig = field(default_factory=SchedulerConfig)
@@ -118,6 +139,14 @@ class Config:
     notifications: NotificationsConfig = field(default_factory=NotificationsConfig)
 
     def __post_init__(self) -> None:
+        if not self.accounts:
+            raise ValueError("accounts: must have at least one entry")
+        names = [a.name for a in self.accounts]
+        if len(names) != len(set(names)):
+            raise ValueError(f"accounts: names must be unique, got {names}")
+        for account in self.accounts:
+            if not account.regions:
+                raise ValueError(f"accounts: {account.name!r} must have at least one region")
         if self.credentials.mode not in _VALID_CREDENTIALS_MODES:
             raise ValueError(
                 f"credentials.mode must be one of {sorted(_VALID_CREDENTIALS_MODES)}, got {self.credentials.mode!r}"
@@ -145,9 +174,14 @@ class Config:
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> Config:
         defaults_source = _RAW_DEFAULTS
+        accounts_data = data.get("accounts")
+        accounts = (
+            [AccountConfig(name="default")]
+            if accounts_data is None
+            else [AccountConfig.from_dict(a) for a in accounts_data]
+        )
         return cls(
-            regions=data.get("regions", defaults_source["regions"]),
-            assume_role_arn=data.get("assume_role_arn", defaults_source["assume_role_arn"]),
+            accounts=accounts,
             credentials=CredentialsConfig.from_dict(data.get("credentials", {})),
             default_threshold_percent=data.get(
                 "default_threshold_percent", defaults_source["default_threshold_percent"]
@@ -160,8 +194,6 @@ class Config:
 
 
 _RAW_DEFAULTS = {
-    "regions": ["us-east-1"],
-    "assume_role_arn": None,
     "default_threshold_percent": 80,
     "dry_run": True,
 }
