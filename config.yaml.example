@@ -33,15 +33,13 @@ credentials:
   # aws_secret_access_key: ""
   # aws_session_token: ""  # only for temporary credentials
 
-# --- Discovery ---
-# Tag key/value that marks a volume or instance as eligible for auto-resize.
-discovery:
-  eligibility_tag_key: "AutoResize"
-  eligibility_tag_value: "true"
-  threshold_tag_key: "DiskThreshold"
+# Eligibility isn't a config.yaml setting or an AWS tag - every instance and
+# volume the controller can see gets synced into Postgres each cycle, and
+# eligibility is an `autoresize` column you toggle from the dashboard. See
+# docs/SETUP.md.
 
-# Fallback threshold (percent full) used when neither the volume nor its
-# attached instance carries a DiskThreshold tag.
+# Fallback threshold (percent full) used when neither a volume nor its
+# attached instance has its own threshold set (via the dashboard).
 default_threshold_percent: 80
 
 # --- Scheduler ---

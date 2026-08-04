@@ -21,22 +21,6 @@ _VALID_CREDENTIALS_MODES = {"role", "static"}
 
 
 @dataclass
-class DiscoveryConfig:
-    eligibility_tag_key: str = "AutoResize"
-    eligibility_tag_value: str = "true"
-    threshold_tag_key: str = "DiskThreshold"
-
-    @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> DiscoveryConfig:
-        d = cls()
-        return cls(
-            eligibility_tag_key=data.get("eligibility_tag_key", d.eligibility_tag_key),
-            eligibility_tag_value=data.get("eligibility_tag_value", d.eligibility_tag_value),
-            threshold_tag_key=data.get("threshold_tag_key", d.threshold_tag_key),
-        )
-
-
-@dataclass
 class SchedulerConfig:
     interval_seconds: int = 300
     max_concurrent_resizes: int = 5
@@ -127,7 +111,6 @@ class Config:
     regions: list[str] = field(default_factory=lambda: ["us-east-1"])
     assume_role_arn: str | None = None
     credentials: CredentialsConfig = field(default_factory=CredentialsConfig)
-    discovery: DiscoveryConfig = field(default_factory=DiscoveryConfig)
     default_threshold_percent: int = 80
     scheduler: SchedulerConfig = field(default_factory=SchedulerConfig)
     resize: ResizeConfig = field(default_factory=ResizeConfig)
@@ -166,7 +149,6 @@ class Config:
             regions=data.get("regions", defaults_source["regions"]),
             assume_role_arn=data.get("assume_role_arn", defaults_source["assume_role_arn"]),
             credentials=CredentialsConfig.from_dict(data.get("credentials", {})),
-            discovery=DiscoveryConfig.from_dict(data.get("discovery", {})),
             default_threshold_percent=data.get(
                 "default_threshold_percent", defaults_source["default_threshold_percent"]
             ),
