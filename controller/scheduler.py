@@ -12,12 +12,12 @@ from __future__ import annotations
 import logging
 import time
 from concurrent.futures import ThreadPoolExecutor
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from controller.aws_session import RETRY_CONFIG, build_account_session, build_base_session
-from controller.config import Config
+from controller.config import Config, refresh_config_from_db
 from controller.connections.base import ConnectionTarget, Connector
 from controller.connections.ssm_connector import SsmConnector
 from controller.discovery import EligibleVolume, discover_eligible_volumes, is_ssm_ready
@@ -49,6 +49,13 @@ class Scheduler:
         self._config = config
         self._state = state
         self._notifier = notifier
+
+        # config.yaml's own values, fully resolved (every dataclass default
+        # already filled in by Config.from_dict()) - the fixed base that
+        # app_config is overlaid onto every cycle in run_once(). Captured
+        # once here rather than re-reading config.yaml, since the file
+        # itself is never re-read after startup - only app_config is live.
+        self._base_config_dict = asdict(config)
 
         # One base identity shared by every account, then one session per
         # account (assumed-role or the base identity itself) - assume_role_arn
@@ -85,6 +92,7 @@ class Scheduler:
         Path(HEARTBEAT_PATH).write_text(datetime.now(UTC).isoformat())
 
     def run_once(self) -> None:
+        self._config = refresh_config_from_db(self._base_config_dict, self._state, self._config)
         for account in self._config.accounts:
             for region in account.regions:
                 self._run_region(account.name, region)

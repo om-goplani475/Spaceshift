@@ -184,6 +184,29 @@ def test_ssm_not_ready_alert_keyed_per_account(config, state, notifier):
     assert sent == ["Instance not ready for SSM", "Instance not ready for SSM"]
 
 
+# --- config-in-DB hot reload ---------------------------------------------------
+
+
+def test_run_once_applies_live_app_config(scheduler, state):
+    assert scheduler._config.dry_run is True
+    state.set_config("dry_run", "false")
+
+    with patch("controller.scheduler.discover_eligible_volumes", return_value=[]):
+        scheduler.run_once()
+
+    assert scheduler._config.dry_run is False
+
+
+def test_run_once_keeps_previous_config_on_invalid_app_config_value(scheduler, state):
+    original_interval = scheduler._config.scheduler.interval_seconds
+    state.set_config("scheduler.interval_seconds", "not-a-number")
+
+    with patch("controller.scheduler.discover_eligible_volumes", return_value=[]):
+        scheduler.run_once()
+
+    assert scheduler._config.scheduler.interval_seconds == original_interval
+
+
 # --- stale-row recovery -------------------------------------------------------
 
 
