@@ -13,15 +13,10 @@
       "Resource": "*"
     },
     {
-      "Sid": "ModifyOnlyVolumesTaggedForAutoResize",
+      "Sid": "ModifyAnyVolumeEligibilityEnforcedByAppOnly",
       "Effect": "Allow",
       "Action": "ec2:ModifyVolume",
-      "Resource": "arn:aws:ec2:*:*:volume/*",
-      "Condition": {
-        "StringEquals": {
-          "aws:ResourceTag/AutoResize": "true"
-        }
-      }
+      "Resource": "arn:aws:ec2:*:*:volume/*"
     },
     {
       "Sid": "SsmSendCommandDefaultConnectionModeOnly",
