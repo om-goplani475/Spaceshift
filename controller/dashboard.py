@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import logging
 
-from flask import Flask, jsonify, render_template_string
+from flask import Flask, jsonify, render_template_string, request
 
 from controller.state.base import TERMINAL_STATUSES, ResizeStatus, StateBackend
 
@@ -95,6 +95,32 @@ _PAGE_TEMPLATE = """
   .badge-red { background: color-mix(in srgb, var(--red) 15%, transparent); color: var(--red); }
   .badge-amber { background: color-mix(in srgb, var(--amber) 15%, transparent); color: var(--amber); }
   .badge-muted { background: color-mix(in srgb, var(--muted) 15%, transparent); color: var(--muted); }
+
+  .switch { position: relative; display: inline-block; width: 34px; height: 20px; vertical-align: middle; }
+  .switch input { opacity: 0; width: 0; height: 0; }
+  .switch .slider {
+    position: absolute; inset: 0; background: var(--border); cursor: pointer;
+    transition: background 0.15s; border-radius: 999px;
+  }
+  .switch .slider::before {
+    content: ""; position: absolute; height: 14px; width: 14px; left: 3px; bottom: 3px;
+    background: var(--panel); transition: transform 0.15s; border-radius: 50%;
+  }
+  .switch input:checked + .slider { background: var(--green); }
+  .switch input:checked + .slider::before { transform: translateX(14px); }
+  .switch input:disabled + .slider { opacity: 0.5; cursor: default; }
+
+  .tabs { display: flex; gap: 0.25rem; margin: 2rem 0 0.75rem; border-bottom: 1px solid var(--border); }
+  .tab-btn {
+    background: none; border: none; padding: 0.55rem 1rem; font-size: 0.9rem; font-weight: 600;
+    color: var(--muted); cursor: pointer; border-bottom: 2px solid transparent; margin-bottom: -1px;
+    font-family: inherit;
+  }
+  .tab-btn:hover { color: var(--text); }
+  .tab-btn.active { color: var(--text); border-bottom-color: var(--accent); }
+  .tab-panel { display: none; }
+  .tab-panel.active { display: block; }
+  .tab-panel h2 { margin-top: 0; }
 </style>
 
 <h1>ebs-auto-resize</h1>
@@ -102,11 +128,113 @@ _PAGE_TEMPLATE = """
 
 <div class="stats">
   <div class="stat"><div class="n">{{ stats.tracked }}</div><div class="l">Volumes scanned</div></div>
+  <div class="stat"><div class="n">{{ stats.autoresize_enabled }}</div><div class="l">Autoresize enabled</div></div>
   <div class="stat"><div class="n">{{ stats.completed }}</div><div class="l">Resizes completed</div></div>
   <div class="stat"><div class="n">{{ stats.in_progress }}</div><div class="l">In progress</div></div>
   <div class="stat {{ 'warn' if stats.needs_attention else '' }}">
     <div class="n">{{ stats.needs_attention }}</div><div class="l">Needs attention</div>
   </div>
+</div>
+
+<div class="tabs">
+  <button class="tab-btn active" data-tab="instances-panel">Instances</button>
+  <button class="tab-btn" data-tab="volumes-panel">Volumes</button>
+</div>
+
+<div class="tab-panel active" id="instances-panel">
+<h2>Instances <small>toggle autoresize to make an instance's volumes eligible</small></h2>
+<div class="filters">
+  <input type="text" id="instances-search" placeholder="Search instance ID...">
+  <select id="instances-region-filter">
+    <option value="">All regions</option>
+    {% for region in instance_regions %}<option value="{{ region }}">{{ region }}</option>{% endfor %}
+  </select>
+  <select id="instances-autoresize-filter">
+    <option value="">Any autoresize</option>
+    <option value="true">Enabled</option>
+    <option value="false">Disabled</option>
+  </select>
+  <span class="count" id="instances-count"></span>
+</div>
+<div class="panel">
+<table id="instances-table">
+  <thead><tr>
+    <th>Instance</th><th>Region</th><th>Type</th><th>State</th><th>Threshold</th><th>Autoresize</th><th>Last seen</th>
+  </tr></thead>
+  <tbody>
+  {% for i in instances %}
+  <tr data-volume="" data-instance="{{ i.instance_id|lower }}" data-region="{{ i.region }}"
+      data-autoresize="{{ i.autoresize|lower }}">
+    <td class="mono">{{ i.instance_id }}</td>
+    <td>{{ i.region }}</td>
+    <td>{{ i.instance_type }}</td>
+    <td>{{ i.state }}</td>
+    <td>{{ (i.threshold_percent ~ "%") if i.threshold_percent is not none else "default" }}</td>
+    <td>
+      <label class="switch">
+        <input type="checkbox" class="autoresize-toggle" data-kind="instances" data-id="{{ i.instance_id }}"
+               {{ "checked" if i.autoresize }}>
+        <span class="slider"></span>
+      </label>
+    </td>
+    <td class="ts" data-ts="{{ i.last_seen_at.isoformat() }}"></td>
+  </tr>
+  {% else %}
+  <tr><td class="empty" colspan="7">No instances discovered yet.</td></tr>
+  {% endfor %}
+  </tbody>
+</table>
+</div>
+<div class="pager" id="instances-pager"></div>
+</div>
+
+<div class="tab-panel" id="volumes-panel">
+<h2>Volumes <small>toggle autoresize per-volume, overrides its instance</small></h2>
+<div class="filters">
+  <input type="text" id="volumes-search" placeholder="Search volume or instance ID...">
+  <select id="volumes-region-filter">
+    <option value="">All regions</option>
+    {% for region in volume_regions %}<option value="{{ region }}">{{ region }}</option>{% endfor %}
+  </select>
+  <select id="volumes-autoresize-filter">
+    <option value="">Any autoresize</option>
+    <option value="true">Enabled</option>
+    <option value="false">Disabled</option>
+  </select>
+  <span class="count" id="volumes-count"></span>
+</div>
+<div class="panel">
+<table id="volumes-table">
+  <thead><tr>
+    <th>Volume</th><th>Instance</th><th>Region</th><th>Size</th><th>Device</th>
+    <th>Threshold</th><th>Autoresize</th><th>Last seen</th>
+  </tr></thead>
+  <tbody>
+  {% for v in volumes %}
+  <tr data-volume="{{ v.volume_id|lower }}" data-instance="{{ (v.instance_id or '')|lower }}"
+      data-region="{{ v.region }}" data-autoresize="{{ v.autoresize|lower }}">
+    <td class="mono">{{ v.volume_id }}</td>
+    <td class="mono">{{ v.instance_id or "-" }}</td>
+    <td>{{ v.region }}</td>
+    <td>{{ v.size_gb }}GB</td>
+    <td>{{ v.device_name or "-" }}</td>
+    <td>{{ (v.threshold_percent ~ "%") if v.threshold_percent is not none else "default" }}</td>
+    <td>
+      <label class="switch">
+        <input type="checkbox" class="autoresize-toggle" data-kind="volumes" data-id="{{ v.volume_id }}"
+               {{ "checked" if v.autoresize }}>
+        <span class="slider"></span>
+      </label>
+    </td>
+    <td class="ts" data-ts="{{ v.last_seen_at.isoformat() }}"></td>
+  </tr>
+  {% else %}
+  <tr><td class="empty" colspan="8">No volumes discovered yet.</td></tr>
+  {% endfor %}
+  </tbody>
+</table>
+</div>
+<div class="pager" id="volumes-pager"></div>
 </div>
 
 <h2>Resize activity</h2>
@@ -268,6 +396,59 @@ wireFilters(
 document.getElementById("scan-region-filter").dataset.field = "region";
 document.getElementById("scan-size-filter").dataset.field = "size";
 document.getElementById("scan-decision-filter").dataset.field = "decision";
+
+wireFilters(
+  "instances-table", "instances-search",
+  ["instances-region-filter", "instances-autoresize-filter"],
+  "instances-count", "instances-pager"
+);
+document.getElementById("instances-region-filter").dataset.field = "region";
+document.getElementById("instances-autoresize-filter").dataset.field = "autoresize";
+
+wireFilters(
+  "volumes-table", "volumes-search",
+  ["volumes-region-filter", "volumes-autoresize-filter"],
+  "volumes-count", "volumes-pager"
+);
+document.getElementById("volumes-region-filter").dataset.field = "region";
+document.getElementById("volumes-autoresize-filter").dataset.field = "autoresize";
+
+document.querySelectorAll(".autoresize-toggle").forEach(function (toggle) {
+  toggle.addEventListener("change", function () {
+    const kind = toggle.dataset.kind; // "instances" or "volumes"
+    const id = toggle.dataset.id;
+    const desired = toggle.checked;
+    toggle.disabled = true;
+    fetch("/api/" + kind + "/" + encodeURIComponent(id) + "/autoresize", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ autoresize: desired }),
+    })
+      .then(function (resp) {
+        if (!resp.ok) throw new Error("request failed");
+        return resp.json();
+      })
+      .then(function () {
+        toggle.closest("tr").dataset.autoresize = String(desired);
+      })
+      .catch(function () {
+        toggle.checked = !desired;
+        alert("Failed to update autoresize for " + id + " - try again.");
+      })
+      .finally(function () {
+        toggle.disabled = false;
+      });
+  });
+});
+
+document.querySelectorAll(".tab-btn").forEach(function (btn) {
+  btn.addEventListener("click", function () {
+    document.querySelectorAll(".tab-btn").forEach(function (b) { b.classList.remove("active"); });
+    document.querySelectorAll(".tab-panel").forEach(function (p) { p.classList.remove("active"); });
+    btn.classList.add("active");
+    document.getElementById(btn.dataset.tab).classList.add("active");
+  });
+});
 </script>
 """
 
@@ -294,9 +475,10 @@ def _decision_badge(decision: str) -> str:
     return _DECISION_BADGES.get(decision, "badge-muted")
 
 
-def _compute_stats(records, scans) -> dict[str, int]:
+def _compute_stats(records, scans, volumes) -> dict[str, int]:
     return {
         "tracked": len({s.volume_id for s in scans}),
+        "autoresize_enabled": sum(1 for v in volumes if v.autoresize),
         "completed": sum(1 for r in records if r.status == ResizeStatus.EXTEND_COMPLETED),
         "needs_attention": sum(1 for r in records if r.status == ResizeStatus.EXTEND_FAILED_NEEDS_ATTENTION),
         "in_progress": sum(1 for r in records if r.status not in TERMINAL_STATUSES),
@@ -310,18 +492,24 @@ def create_app(state: StateBackend) -> Flask:
     def index():
         records = state.list_all()
         scans = state.list_scans(limit=_SCAN_LIST_LIMIT)
+        instances = state.list_instances()
+        volumes = state.list_volumes()
         return render_template_string(
             _PAGE_TEMPLATE,
             records=records,
             scans=scans,
+            instances=instances,
+            volumes=volumes,
             scan_limit=_SCAN_LIST_LIMIT,
-            stats=_compute_stats(records, scans),
+            stats=_compute_stats(records, scans, volumes),
             status_badge=_status_badge,
             decision_badge=_decision_badge,
             resize_statuses=sorted({r.status.value for r in records}),
             scan_regions=sorted({s.region for s in scans}),
             scan_sizes=sorted({s.size_gb for s in scans}),
             scan_decisions=sorted({s.decision for s in scans}),
+            instance_regions=sorted({i.region for i in instances}),
+            volume_regions=sorted({v.region for v in volumes}),
         )
 
     @app.get("/api/status")
@@ -359,7 +547,67 @@ def create_app(state: StateBackend) -> Flask:
             ]
         )
 
+    @app.get("/api/instances")
+    def api_instances():
+        return jsonify(
+            [
+                {
+                    "instance_id": i.instance_id,
+                    "region": i.region,
+                    "instance_type": i.instance_type,
+                    "state": i.state,
+                    "autoresize": i.autoresize,
+                    "threshold_percent": i.threshold_percent,
+                    "last_seen_at": i.last_seen_at.isoformat(),
+                }
+                for i in state.list_instances()
+            ]
+        )
+
+    @app.get("/api/volumes")
+    def api_volumes():
+        return jsonify(
+            [
+                {
+                    "volume_id": v.volume_id,
+                    "instance_id": v.instance_id,
+                    "region": v.region,
+                    "size_gb": v.size_gb,
+                    "device_name": v.device_name,
+                    "autoresize": v.autoresize,
+                    "threshold_percent": v.threshold_percent,
+                    "last_seen_at": v.last_seen_at.isoformat(),
+                }
+                for v in state.list_volumes()
+            ]
+        )
+
+    @app.post("/api/instances/<instance_id>/autoresize")
+    def set_instance_autoresize(instance_id: str):
+        autoresize = _parse_autoresize_body()
+        if autoresize is None:
+            return jsonify({"error": "body must be JSON {'autoresize': true|false}"}), 400
+        if not state.set_instance_autoresize(instance_id, autoresize):
+            return jsonify({"error": f"no known instance {instance_id!r}"}), 404
+        return jsonify({"instance_id": instance_id, "autoresize": autoresize})
+
+    @app.post("/api/volumes/<volume_id>/autoresize")
+    def set_volume_autoresize(volume_id: str):
+        autoresize = _parse_autoresize_body()
+        if autoresize is None:
+            return jsonify({"error": "body must be JSON {'autoresize': true|false}"}), 400
+        if not state.set_volume_autoresize(volume_id, autoresize):
+            return jsonify({"error": f"no known volume {volume_id!r}"}), 404
+        return jsonify({"volume_id": volume_id, "autoresize": autoresize})
+
     return app
+
+
+def _parse_autoresize_body() -> bool | None:
+    body = request.get_json(silent=True)
+    if not isinstance(body, dict) or not isinstance(body.get("autoresize"), bool):
+        return None
+    return body["autoresize"]
 
 
 if __name__ == "__main__":
