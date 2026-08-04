@@ -31,15 +31,17 @@ class EligibleVolume:
     threshold_percent: int
 
 
-def discover_eligible_volumes(ec2_client, state: StateBackend, region: str, config: Config) -> list[EligibleVolume]:
-    seen_instance_ids = _sync_instances(ec2_client, state, region)
-    seen_volume_ids = _sync_volumes(ec2_client, state, region)
-    state.mark_stale(region, seen_instance_ids, seen_volume_ids)
+def discover_eligible_volumes(
+    ec2_client, state: StateBackend, account_name: str, region: str, config: Config
+) -> list[EligibleVolume]:
+    seen_instance_ids = _sync_instances(ec2_client, state, account_name, region)
+    seen_volume_ids = _sync_volumes(ec2_client, state, account_name, region)
+    state.mark_stale(account_name, region, seen_instance_ids, seen_volume_ids)
 
-    instances_by_id = {i.instance_id: i for i in state.list_instances(region=region)}
+    instances_by_id = {i.instance_id: i for i in state.list_instances(account_name=account_name, region=region)}
 
     eligible: list[EligibleVolume] = []
-    for volume in state.list_volumes(region=region):
+    for volume in state.list_volumes(account_name=account_name, region=region):
         if volume.instance_id is None or volume.device_name is None:
             continue  # unattached volume - nothing to extend the filesystem on
 
@@ -84,7 +86,7 @@ def is_ssm_ready(ssm_client, instance_id: str) -> bool:
     return bool(entries) and entries[0].get("PingStatus") == "Online"
 
 
-def _sync_instances(ec2_client, state: StateBackend, region: str) -> set[str]:
+def _sync_instances(ec2_client, state: StateBackend, account_name: str, region: str) -> set[str]:
     seen_ids: set[str] = set()
     paginator = ec2_client.get_paginator("describe_instances")
     for page in paginator.paginate():
@@ -93,6 +95,7 @@ def _sync_instances(ec2_client, state: StateBackend, region: str) -> set[str]:
                 instance_id = instance["InstanceId"]
                 seen_ids.add(instance_id)
                 state.upsert_instance(
+                    account_name=account_name,
                     instance_id=instance_id,
                     region=region,
                     instance_type=instance.get("InstanceType", ""),
@@ -101,7 +104,7 @@ def _sync_instances(ec2_client, state: StateBackend, region: str) -> set[str]:
     return seen_ids
 
 
-def _sync_volumes(ec2_client, state: StateBackend, region: str) -> set[str]:
+def _sync_volumes(ec2_client, state: StateBackend, account_name: str, region: str) -> set[str]:
     seen_ids: set[str] = set()
     paginator = ec2_client.get_paginator("describe_volumes")
     for page in paginator.paginate():
@@ -111,6 +114,7 @@ def _sync_volumes(ec2_client, state: StateBackend, region: str) -> set[str]:
             attachments = volume.get("Attachments", [])
             attachment = attachments[0] if attachments else None
             state.upsert_volume(
+                account_name=account_name,
                 volume_id=volume_id,
                 instance_id=attachment["InstanceId"] if attachment else None,
                 region=region,

@@ -8,6 +8,7 @@ from botocore.stub import Stubber
 from controller.discovery import discover_eligible_volumes, is_ssm_ready
 
 _REGION = "us-east-1"
+_ACCOUNT = "default"
 
 
 def _new_instance(ec2):
@@ -20,7 +21,7 @@ def test_full_scan_syncs_everything_but_nothing_eligible_by_default(aws, state, 
     volume_id = ec2.create_volume(AvailabilityZone="us-east-1a", Size=100)["VolumeId"]
     ec2.attach_volume(VolumeId=volume_id, InstanceId=instance_id, Device="/dev/xvdf")
 
-    results = discover_eligible_volumes(ec2, state, _REGION, config)
+    results = discover_eligible_volumes(ec2, state, _ACCOUNT, _REGION, config)
 
     # Nothing is eligible until an admin flips autoresize - but everything
     # discoverable is still synced into state regardless.
@@ -35,10 +36,10 @@ def test_volume_level_autoresize_makes_it_eligible(aws, state, config):
     volume_id = ec2.create_volume(AvailabilityZone="us-east-1a", Size=100)["VolumeId"]
     ec2.attach_volume(VolumeId=volume_id, InstanceId=instance_id, Device="/dev/xvdf")
 
-    discover_eligible_volumes(ec2, state, _REGION, config)  # first sync creates the row
+    discover_eligible_volumes(ec2, state, _ACCOUNT, _REGION, config)  # first sync creates the row
     assert state.set_volume_autoresize(volume_id, True) is True
 
-    results = discover_eligible_volumes(ec2, state, _REGION, config)
+    results = discover_eligible_volumes(ec2, state, _ACCOUNT, _REGION, config)
 
     assert len(results) == 1
     assert results[0].volume_id == volume_id
@@ -52,10 +53,10 @@ def test_instance_level_autoresize_makes_attached_volumes_eligible(aws, state, c
     volume_id = ec2.create_volume(AvailabilityZone="us-east-1a", Size=50)["VolumeId"]
     ec2.attach_volume(VolumeId=volume_id, InstanceId=instance_id, Device="/dev/nvme1n1")
 
-    discover_eligible_volumes(ec2, state, _REGION, config)
+    discover_eligible_volumes(ec2, state, _ACCOUNT, _REGION, config)
     assert state.set_instance_autoresize(instance_id, True) is True
 
-    results = discover_eligible_volumes(ec2, state, _REGION, config)
+    results = discover_eligible_volumes(ec2, state, _ACCOUNT, _REGION, config)
     by_id = {v.volume_id: v for v in results}
 
     # Setting autoresize on the instance (rather than the volume) makes
@@ -69,10 +70,10 @@ def test_unattached_volume_excluded_even_if_flagged(aws, state, config):
     ec2 = boto3.client("ec2", region_name=_REGION)
     volume_id = ec2.create_volume(AvailabilityZone="us-east-1a", Size=20)["VolumeId"]
 
-    discover_eligible_volumes(ec2, state, _REGION, config)
+    discover_eligible_volumes(ec2, state, _ACCOUNT, _REGION, config)
     state.set_volume_autoresize(volume_id, True)
 
-    assert discover_eligible_volumes(ec2, state, _REGION, config) == []
+    assert discover_eligible_volumes(ec2, state, _ACCOUNT, _REGION, config) == []
 
 
 def test_threshold_falls_back_to_config_default(aws, state, config):
@@ -81,10 +82,10 @@ def test_threshold_falls_back_to_config_default(aws, state, config):
     volume_id = ec2.create_volume(AvailabilityZone="us-east-1a", Size=20)["VolumeId"]
     ec2.attach_volume(VolumeId=volume_id, InstanceId=instance_id, Device="/dev/xvdg")
 
-    discover_eligible_volumes(ec2, state, _REGION, config)
+    discover_eligible_volumes(ec2, state, _ACCOUNT, _REGION, config)
     state.set_volume_autoresize(volume_id, True)
 
-    results = discover_eligible_volumes(ec2, state, _REGION, config)
+    results = discover_eligible_volumes(ec2, state, _ACCOUNT, _REGION, config)
 
     assert results[0].threshold_percent == config.default_threshold_percent
 
@@ -95,7 +96,7 @@ def test_volume_threshold_overrides_instance_and_default(aws, state, config):
     volume_id = ec2.create_volume(AvailabilityZone="us-east-1a", Size=20)["VolumeId"]
     ec2.attach_volume(VolumeId=volume_id, InstanceId=instance_id, Device="/dev/xvdg")
 
-    discover_eligible_volumes(ec2, state, _REGION, config)
+    discover_eligible_volumes(ec2, state, _ACCOUNT, _REGION, config)
     # Only the volume itself is eligible here (not the instance) - if the
     # instance were also flagged, its auto-created root volume would become
     # eligible too and pollute results with an entry we're not testing.
@@ -107,7 +108,7 @@ def test_volume_threshold_overrides_instance_and_default(aws, state, config):
     state._volumes[volume_id] = replace(state._volumes[volume_id], threshold_percent=42)
     state._instances[instance_id] = replace(state._instances[instance_id], threshold_percent=99)
 
-    results = discover_eligible_volumes(ec2, state, _REGION, config)
+    results = discover_eligible_volumes(ec2, state, _ACCOUNT, _REGION, config)
 
     assert len(results) == 1
     assert results[0].threshold_percent == 42
@@ -119,12 +120,12 @@ def test_stale_resource_excluded_from_eligibility(aws, state, config):
     volume_id = ec2.create_volume(AvailabilityZone="us-east-1a", Size=20)["VolumeId"]
     ec2.attach_volume(VolumeId=volume_id, InstanceId=instance_id, Device="/dev/xvdg")
 
-    discover_eligible_volumes(ec2, state, _REGION, config)
+    discover_eligible_volumes(ec2, state, _ACCOUNT, _REGION, config)
     state.set_volume_autoresize(volume_id, True)
     ec2.detach_volume(VolumeId=volume_id, InstanceId=instance_id, Force=True)
     ec2.delete_volume(VolumeId=volume_id)
 
-    results = discover_eligible_volumes(ec2, state, _REGION, config)
+    results = discover_eligible_volumes(ec2, state, _ACCOUNT, _REGION, config)
 
     assert results == []
     stale_volumes = state.list_volumes(region=_REGION, include_stale=True)
