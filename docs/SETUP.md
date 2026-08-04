@@ -17,7 +17,7 @@ What each statement in that policy is for:
 | Statement | Needed for |
 |---|---|
 | `ec2:DescribeVolumes` / `DescribeInstances` / `DescribeImages` / `DescribeVolumesModifications` | Discovery and polling resize progress. AWS requires `Resource: "*"` for these regardless of scope - that's a platform constraint, not something the policy chose to leave open. |
-| `ec2:ModifyVolume` | The actual AWS-side resize. Scoped to only volumes tagged `AutoResize=true`, matching the tool's own eligibility model - a policy typo elsewhere can't accidentally grant blanket resize rights. |
+| `ec2:ModifyVolume` | The actual AWS-side resize. **Not tag-scoped** - eligibility is enforced entirely by the controller's own code checking the `autoresize` column in Postgres, not by IAM (see section 1.3). This is a deliberate trade-off, not an oversight - see `docs/PLAN.md`'s note on why tag-based discovery was replaced. |
 | `ssm:SendCommand` / `GetCommandInvocation` / `DescribeInstanceInformation` | How the controller talks to every instance - always needed, since SSM is the only connection method. |
 | `sts:AssumeRole` | Only needed if you set `assume_role_arn` to centrally manage a different AWS account. Delete this statement for single-account use. |
 
@@ -33,16 +33,20 @@ For every instance whose volumes you want managed:
 
 The controller checks this automatically before attempting a disk check - an instance that isn't ready gets a one-time alert (not a repeated one every cycle) and is simply skipped until it's fixed, rather than silently timing out.
 
-### 1.3 Tag the volumes (or instances) you want managed
+### 1.3 Mark the volumes (or instances) you want managed
 
-Nothing is touched without this tag - it's the eligibility gate:
+Eligibility isn't an AWS tag or a `config.yaml` setting - it's a column in Postgres. Every instance and volume the controller can see gets synced into the `instances`/`volumes` tables **every cycle, regardless of eligibility** (that's the point - see `docs/PLAN.md`'s note on why tag-based discovery was replaced). Nothing is actually resized until its `autoresize` column is `true`.
+
+The dashboard's toggle UI is the intended way to flip this (see the README once that ships); until then, or if you'd rather script it, it's a plain `UPDATE`:
 
 ```bash
-aws ec2 create-tags --resources vol-xxxxxxxx \
-  --tags Key=AutoResize,Value=true Key=DiskThreshold,Value=80
+docker compose exec postgres psql -U ebs_auto_resize -d ebs_auto_resize \
+  -c "UPDATE volumes SET autoresize = true WHERE volume_id = 'vol-xxxxxxxx';"
 ```
 
-`DiskThreshold` is optional per-resource - omit it and the volume falls back to `default_threshold_percent` in `config.yaml`. The tag can live on the volume itself, or on the instance it's attached to (every volume on a tagged instance becomes eligible, including its root volume).
+Setting `autoresize` on an **instance** row instead makes every volume attached to it eligible, including its root volume - same fallback semantics the old tag model had. A volume's own `threshold_percent` (or its instance's) overrides `default_threshold_percent` from `config.yaml` if set; both default to `NULL` (falls through to the config default) until something sets them.
+
+**Security note:** because eligibility now lives in application data instead of an AWS tag, `ec2:ModifyVolume` in `docs/iam-policy.json` is no longer scoped by an IAM `Condition` - AWS itself will allow the call on any volume; only the controller's own check of the `autoresize` column stands between "eligible" and "not." See `docs/PLAN.md` for the full reasoning behind this trade-off before relying on it in a security-sensitive account.
 
 ### 1.4 Multi-account setup (optional, `assume_role_arn`)
 
@@ -83,7 +87,7 @@ Copy the example first: `cp config.yaml.example config.yaml`. Every field below 
 |---|---|---|
 | `regions` | `[us-east-1]` | List of AWS regions scanned every cycle. Add more for a multi-region fleet. |
 | `assume_role_arn` | unset | ARN of a role to assume in another account before making any AWS call. See section 1.4. Leave commented out for single-account use. |
-| `default_threshold_percent` | `80` | Fallback percent-full threshold, used only when a volume has neither its own `DiskThreshold` tag nor one on its instance. |
+| `default_threshold_percent` | `80` | Fallback percent-full threshold, used only when neither a volume nor its attached instance has its own `threshold_percent` set in Postgres (see section 1.3). |
 | `dry_run` | `true` | **The most important setting for a first run.** When true, the controller only logs what it *would* do - no `modify-volume` call, no `growpart`/`resize2fs`/`xfs_growfs`. Flip to `false` only after confirming the dry-run logs look right against your real account. |
 
 ### `credentials`
@@ -93,13 +97,6 @@ Copy the example first: `cp config.yaml.example config.yaml`. Every field below 
 | `mode` | `role` | `role` uses the controller's default credential chain (an EC2 instance role, typically) - leave this alone if the controller runs on EC2 with a role attached. `static` authenticates with the access key below instead, for deployments with no instance role available. |
 | `aws_access_key_id` / `aws_secret_access_key` | unset | An IAM **user's** access key. Required (and only used) when `mode: static` - startup fails with a clear error if either is missing while `static` is set. Ignored (with a startup warning if present) when `mode: role`. |
 | `aws_session_token` | unset | Only needed if `aws_access_key_id`/`aws_secret_access_key` are temporary credentials (e.g. from an SSO session or an AssumeRole call you made yourself, outside this tool). |
-
-### `discovery`
-
-| Field | Default | Meaning |
-|---|---|---|
-| `eligibility_tag_key` / `eligibility_tag_value` | `AutoResize` / `true` | The tag key/value that marks a resource as eligible. Change only if your org already has a conflicting tag naming convention. |
-| `threshold_tag_key` | `DiskThreshold` | The tag key holding a per-resource threshold override. |
 
 ### State backend (Postgres)
 
@@ -135,10 +132,10 @@ Not a `config.yaml` field - the state backend is always the bundled Postgres con
 
 1. IAM role attached to the host running the controller (1.1).
 2. SSM Agent + `AmazonSSMManagedInstanceCore` on every target instance (1.2).
-3. At least one volume or instance tagged `AutoResize=true` (1.3).
-4. Slack bot token + channel ID, if using `notifications.method: slack` (2).
-5. Docker + Docker Compose installed; IMDSv2 hop limit raised if the controller itself is on EC2 (3).
-6. `config.yaml` copied from the example and adjusted (4) - leave `dry_run: true`.
-7. `.env` copied from `.env.example` with a real `POSTGRES_PASSWORD` set - `docker compose up` refuses to start without it.
-8. `docker compose up`, watch the logs, confirm the dry-run output matches what you expect.
+3. Docker + Docker Compose installed; IMDSv2 hop limit raised if the controller itself is on EC2 (3).
+4. `config.yaml` copied from the example and adjusted (4) - leave `dry_run: true`.
+5. `.env` copied from `.env.example` with a real `POSTGRES_PASSWORD` set - `docker compose up` refuses to start without it.
+6. `docker compose up`, watch the logs - the first cycle syncs every instance/volume it can see into Postgres, but nothing is eligible yet.
+7. At least one volume or instance's `autoresize` column set to `true` (1.3) - confirm the next cycle's dry-run output matches what you expect.
+8. Slack bot token + channel ID, if using `notifications.method: slack` (2).
 9. Only then, flip `dry_run: false`.

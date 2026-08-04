@@ -4,11 +4,11 @@ Self-hosted controller that watches EC2/EBS disk usage across a fleet and automa
 
 ## Why
 
-Resizing an EBS volume is a two-step process (grow the volume via the EC2 API, then extend the partition/filesystem on the instance), and there's no built-in AWS service that does both steps for you automatically based on real OS-level disk usage. This tool closes that gap: tag a volume or instance, and it gets monitored and resized on its own.
+Resizing an EBS volume is a two-step process (grow the volume via the EC2 API, then extend the partition/filesystem on the instance), and there's no built-in AWS service that does both steps for you automatically based on real OS-level disk usage. This tool closes that gap: flip a volume or instance to eligible, and it gets monitored and resized on its own.
 
 ## How it works
 
-1. **Discovery** — finds volumes tagged `AutoResize=true` (directly, or via the instance they're attached to), with an optional `DiskThreshold` tag for a per-volume threshold.
+1. **Discovery** — every instance and volume the controller can see gets synced into Postgres each cycle; a volume is only actually watched once its (or its instance's) `autoresize` column is set, with an optional per-resource `threshold_percent` override.
 2. **Disk check** — connects to the instance via SSM Send-Command and checks real filesystem usage. There's no AWS API for this — CloudWatch doesn't report it natively either.
 3. **Resize** — if usage crosses the threshold, calls `modify-volume`, waits for AWS to complete it, then runs `growpart` + `resize2fs`/`xfs_growfs` remotely to actually extend the filesystem.
 4. **State tracking** — every resize attempt is tracked through a state machine in Postgres (its own container, started alongside the controller) so partial failures retry safely, duplicate triggers are prevented, and the AWS 4-modification/24h limit is respected.
@@ -29,10 +29,11 @@ This starts two containers: the controller, and a Postgres container it uses to 
 
 By default `config.yaml` has `dry_run: true` — the controller will log what it *would* resize without ever calling `modify-volume` or running a mutating remote command. Confirm the logs show what you expect against your own AWS account before flipping `dry_run: false`.
 
-Tag a volume (or the instance it's attached to) to make it eligible:
+Mark a volume (or the instance it's attached to) as eligible - the first cycle syncs everything it can see into Postgres, but nothing is watched until this is set:
 
 ```bash
-aws ec2 create-tags --resources vol-xxxxxxxx --tags Key=AutoResize,Value=true Key=DiskThreshold,Value=80
+docker compose exec postgres psql -U ebs_auto_resize -d ebs_auto_resize \
+  -c "UPDATE volumes SET autoresize = true WHERE volume_id = 'vol-xxxxxxxx';"
 ```
 
 ### Optional status dashboard
@@ -45,7 +46,7 @@ Serves a read-only status page at `http://localhost:8080` showing recent resize 
 
 ## Setup and configuration
 
-Before running this against a real AWS account, see **[docs/SETUP.md](docs/SETUP.md)** for the full prerequisites (IAM role, SSM-managed instances, tagging, IMDSv2 gotcha) and a field-by-field reference for every option in [config.yaml.example](config.yaml.example).
+Before running this against a real AWS account, see **[docs/SETUP.md](docs/SETUP.md)** for the full prerequisites (IAM role, SSM-managed instances, marking resources eligible, IMDSv2 gotcha) and a field-by-field reference for every option in [config.yaml.example](config.yaml.example).
 
 ## Required AWS permissions
 
