@@ -1,6 +1,13 @@
 # Copy this file to config.yaml and adjust as needed.
 # Every option below shows its default value.
 #
+# This file is deliberately narrow: identity (accounts/credentials) and
+# secrets (notifications) only. Everything else - default_threshold_percent,
+# dry_run, scheduler.*, resize.* - lives in Postgres's app_config table
+# instead, editable live without a restart. See docs/SETUP.md's
+# "Live-editable settings" section for the full list, defaults, and how to
+# change them (direct SQL for now; a dashboard Settings tab is planned).
+#
 # The controller talks to instances exclusively via SSM Send-Command - no
 # inbound port, no SSH keys to manage. Target instances need the SSM Agent
 # running and AmazonSSMManagedInstanceCore on their own instance profile;
@@ -52,34 +59,10 @@ credentials:
 # eligibility is an `autoresize` column you toggle from the dashboard. See
 # docs/SETUP.md.
 
-# Fallback threshold (percent full) used when neither a volume nor its
-# attached instance has its own threshold set (via the dashboard).
-default_threshold_percent: 80
-
-# --- Scheduler ---
-scheduler:
-  interval_seconds: 300
-  max_concurrent_resizes: 5
-  # How long the dashboard's scan-history table keeps rows before they're
-  # pruned. Purely observability (what the controller looked at, and its
-  # decision) - independent of resize_state, which isn't pruned.
-  scan_log_retention_days: 7
-
-# --- Resize behavior / safety limits ---
-resize:
-  # Hard ceiling per volume; the tool refuses to grow a volume past this size
-  # and alerts for manual review instead.
-  max_volume_size_gb: 500
-  # How much bigger to make a volume each time it crosses its threshold.
-  growth_increment_percent: 20
-  extend_retry:
-    max_attempts: 3
-    backoff_seconds: 60
-  stale_lock_timeout_minutes: 45
-
-# If true, the controller logs what it *would* do (current size -> target size)
-# without calling modify-volume or running any remote command.
-dry_run: true
+# default_threshold_percent, dry_run, scheduler.*, and resize.* used to live
+# here. They're now Postgres app_config keys instead (same defaults, see
+# docs/SETUP.md) - nothing to set in this file to get those defaults, and
+# changing them takes effect on the controller's next cycle, no restart.
 
 # --- Notifications ---
 notifications:

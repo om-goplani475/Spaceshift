@@ -27,7 +27,7 @@ docker compose up
 
 This starts two containers: the controller, and a Postgres container it uses to track resize state (no separate database setup needed — the controller connects to it automatically using the password from `.env`). `docker compose up` refuses to start if `.env`/`POSTGRES_PASSWORD` is missing, rather than silently running with a guessable password.
 
-By default `config.yaml` has `dry_run: true` — the controller will log what it *would* resize without ever calling `modify-volume` or running a mutating remote command. Confirm the logs show what you expect against your own AWS account before flipping `dry_run: false`.
+`dry_run` defaults to `true` — the controller will log what it *would* resize without ever calling `modify-volume` or running a mutating remote command. Confirm the logs show what you expect against your own AWS account before flipping it off (it's a live-editable setting in Postgres, not a `config.yaml` field — see [docs/SETUP.md](docs/SETUP.md) section 5).
 
 Mark a volume (or the instance it's attached to) as eligible - the first cycle syncs everything it can see into Postgres, but nothing is watched until this is set. The dashboard (below) is the easiest way to do this - flip the `Autoresize` toggle next to the volume/instance on its **Instances**/**Volumes** tab. Without the dashboard, it's a direct `UPDATE`:
 
@@ -46,7 +46,7 @@ Serves a status page at `http://localhost:8080` with **Instances** and **Volumes
 
 ## Setup and configuration
 
-Before running this against a real AWS account, see **[docs/SETUP.md](docs/SETUP.md)** for the full prerequisites (IAM role, SSM-managed instances, marking resources eligible, IMDSv2 gotcha) and a field-by-field reference for every option in [config.yaml.example](config.yaml.example).
+Before running this against a real AWS account, see **[docs/SETUP.md](docs/SETUP.md)** for the full prerequisites (IAM role, SSM-managed instances, marking resources eligible, IMDSv2 gotcha) and a field-by-field reference for every option in [config.yaml.example](config.yaml.example), plus the settings that live in Postgres instead and can be changed without a restart.
 
 ## Required AWS permissions
 

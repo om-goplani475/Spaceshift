@@ -1,6 +1,6 @@
 # Setup Guide
 
-This covers everything that needs to exist **before** the controller can run, and explains every option in [`config.yaml.example`](../config.yaml.example). See the main [README](../README.md) for the quickstart commands themselves.
+This covers everything that needs to exist **before** the controller can run, and explains every option in [`config.yaml.example`](../config.yaml.example) plus the live-editable settings in Postgres (section 5). See the main [README](../README.md) for the quickstart commands themselves.
 
 ## 1. AWS prerequisites
 
@@ -44,7 +44,7 @@ docker compose exec postgres psql -U ebs_auto_resize -d ebs_auto_resize \
   -c "UPDATE volumes SET autoresize = true WHERE volume_id = 'vol-xxxxxxxx';"
 ```
 
-Setting `autoresize` on an **instance** row instead makes every volume attached to it eligible, including its root volume - same fallback semantics the old tag model had. A volume's own `threshold_percent` (or its instance's) overrides `default_threshold_percent` from `config.yaml` if set; both default to `NULL` (falls through to the config default) until something sets them.
+Setting `autoresize` on an **instance** row instead makes every volume attached to it eligible, including its root volume - same fallback semantics the old tag model had. A volume's own `threshold_percent` (or its instance's) overrides the `default_threshold_percent` app_config setting (section 5) if set; both default to `NULL` (falls through to the config default) until something sets them.
 
 **Security note:** because eligibility now lives in application data instead of an AWS tag, `ec2:ModifyVolume` in `docs/iam-policy.json` is no longer scoped by an IAM `Condition` - AWS itself will allow the call on any volume; only the controller's own check of the `autoresize` column stands between "eligible" and "not." See `docs/PLAN.md` for the full reasoning behind this trade-off before relying on it in a security-sensitive account.
 
@@ -83,15 +83,13 @@ Both values are secrets (the bot token especially) - they belong in `config.yaml
 
 ## 4. `config.yaml` reference
 
-Copy the example first: `cp config.yaml.example config.yaml`. Every field below shows its default.
+Copy the example first: `cp config.yaml.example config.yaml`. Every field below shows its default. This file is deliberately narrow - identity (`accounts`, `credentials`) and secrets (`notifications`) only. Everything else that used to live here (`default_threshold_percent`, `dry_run`, `scheduler.*`, `resize.*`) is now a Postgres `app_config` setting instead - see section 5.
 
 ### Top level
 
 | Field | Default | Meaning |
 |---|---|---|
 | `accounts` | one entry, `name: default`, `regions: [us-east-1]` | List of AWS accounts to manage - one entry per account, each with its own `name`, optional `assume_role_arn`, and `regions`. See section 1.4. |
-| `default_threshold_percent` | `80` | Fallback percent-full threshold, used only when neither a volume nor its attached instance has its own `threshold_percent` set in Postgres (see section 1.3). |
-| `dry_run` | `true` | **The most important setting for a first run.** When true, the controller only logs what it *would* do - no `modify-volume` call, no `growpart`/`resize2fs`/`xfs_growfs`. Flip to `false` only after confirming the dry-run logs look right against your real account. |
 
 ### `accounts` (each entry)
 
@@ -113,24 +111,6 @@ Copy the example first: `cp config.yaml.example config.yaml`. Every field below 
 
 Not a `config.yaml` field - the state backend is always the bundled Postgres container (`docker-compose.yml`'s `postgres` service) and its named volume (`postgres-data`), not something you point elsewhere. The only thing you can change is its password, via the `POSTGRES_PASSWORD` environment variable - `postgres`, `controller`, and `dashboard` all read the same variable, so they always agree on it with nothing to configure twice. **There is no default** - copy [`.env.example`](../.env.example) to `.env` and set a real value, or `docker compose up` refuses to start (`docker-compose.yml` uses Compose's `${VAR:?error}` syntax specifically so a missing password fails loudly instead of silently falling back to something guessable that anyone could find in this public repo).
 
-### `scheduler`
-
-| Field | Default | Meaning |
-|---|---|---|
-| `interval_seconds` | `300` | How often a full discovery-and-check cycle runs. |
-| `max_concurrent_resizes` | `5` | Size of the thread pool processing volumes in parallel each cycle. Raise for a larger fleet. |
-| `scan_log_retention_days` | `7` | How long the dashboard's scan-history table (Postgres `scan_log`) keeps rows before a row older than this gets pruned, once per cycle. Pure observability data, unrelated to `resize_state`. |
-
-### `resize`
-
-| Field | Default | Meaning |
-|---|---|---|
-| `max_volume_size_gb` | `500` | Hard per-volume ceiling. Crossing it stops auto-resize for that volume and sends a "needs manual review" alert instead of continuing - the guardrail against a runaway log file quietly costing you money forever. |
-| `growth_increment_percent` | `20` | How much bigger each resize makes the volume (e.g. 100GB → 120GB), not the target size itself. |
-| `extend_retry.max_attempts` | `3` | How many times to retry the OS-side extend step (`growpart`/`resize2fs`/`xfs_growfs`) before giving up and alerting. Never re-triggers the AWS-side `modify-volume` call. |
-| `extend_retry.backoff_seconds` | `60` | Minimum wait between extend retries. |
-| `stale_lock_timeout_minutes` | `45` | If the controller crashes mid-resize, how long before a stuck row gets checked against AWS's real state instead of being retried blindly forever. |
-
 ### `notifications`
 
 | Field | Default | Meaning |
@@ -139,14 +119,41 @@ Not a `config.yaml` field - the state backend is always the bundled Postgres con
 | `slack_bot_token` | unset | Bot User OAuth Token (`xoxb-...`). Required (and only used) when `method: slack`. See section 2 for how to get one. |
 | `slack_channel_id` | unset | Target channel's ID (e.g. `C0123456789`), not its name. Required (and only used) when `method: slack`. |
 
-## 5. First-run checklist
+## 5. Live-editable settings (Postgres `app_config`)
+
+Everything in this section used to be a `config.yaml` field. It's now a row in Postgres's `app_config` table instead - a plain `key`/`value` pair, checked fresh **every scheduler cycle**, so a change here takes effect on the controller's next cycle with no restart, no redeploy. A key that's never been set just falls through to the default below - an empty `app_config` table behaves exactly like the old `config.yaml` defaults did.
+
+Change one with a direct `UPDATE`/`INSERT` (same pattern as flipping `autoresize` in section 1.3 - a dashboard **Settings** tab for this is planned but not built yet):
+
+```bash
+docker compose exec postgres psql -U ebs_auto_resize -d ebs_auto_resize \
+  -c "INSERT INTO app_config (key, value, updated_at) VALUES ('dry_run', 'false', now())
+      ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = EXCLUDED.updated_at;"
+```
+
+Values are parsed as YAML scalars (so `false`, `true`, `300` parse as bool/int - no quotes needed). **An invalid value (wrong type, out of range) is logged as a warning and ignored that cycle** - the controller keeps running on its last-known-good config rather than crashing, unlike `config.yaml` itself, which still fails loudly at startup if it's broken (see `docs/PLAN.md` for why the two follow different failure philosophies).
+
+| Key | Default | Meaning |
+|---|---|---|
+| `default_threshold_percent` | `80` | Fallback percent-full threshold, used only when neither a volume nor its attached instance has its own `threshold_percent` set in Postgres (see section 1.3). |
+| `dry_run` | `true` | **The most important setting for a first run.** When true, the controller only logs what it *would* do - no `modify-volume` call, no `growpart`/`resize2fs`/`xfs_growfs`. Flip to `false` only after confirming the dry-run logs look right against your real account. |
+| `scheduler.interval_seconds` | `300` | How often a full discovery-and-check cycle runs. |
+| `scheduler.max_concurrent_resizes` | `5` | Size of the thread pool processing volumes in parallel each cycle. Raise for a larger fleet. |
+| `scheduler.scan_log_retention_days` | `7` | How long the dashboard's scan-history table (Postgres `scan_log`) keeps rows before a row older than this gets pruned, once per cycle. Pure observability data, unrelated to `resize_state`. |
+| `resize.max_volume_size_gb` | `500` | Hard per-volume ceiling. Crossing it stops auto-resize for that volume and sends a "needs manual review" alert instead of continuing - the guardrail against a runaway log file quietly costing you money forever. |
+| `resize.growth_increment_percent` | `20` | How much bigger each resize makes the volume (e.g. 100GB → 120GB), not the target size itself. |
+| `resize.extend_retry.max_attempts` | `3` | How many times to retry the OS-side extend step (`growpart`/`resize2fs`/`xfs_growfs`) before giving up and alerting. Never re-triggers the AWS-side `modify-volume` call. |
+| `resize.extend_retry.backoff_seconds` | `60` | Minimum wait between extend retries. |
+| `resize.stale_lock_timeout_minutes` | `45` | If the controller crashes mid-resize, how long before a stuck row gets checked against AWS's real state instead of being retried blindly forever. |
+
+## 6. First-run checklist
 
 1. IAM role attached to the host running the controller (1.1).
 2. SSM Agent + `AmazonSSMManagedInstanceCore` on every target instance (1.2).
 3. Docker + Docker Compose installed; IMDSv2 hop limit raised if the controller itself is on EC2 (3).
-4. `config.yaml` copied from the example and adjusted (4) - leave `dry_run: true`.
+4. `config.yaml` copied from the example and adjusted (4) - `accounts`, `credentials`, and `notifications` only.
 5. `.env` copied from `.env.example` with a real `POSTGRES_PASSWORD` set - `docker compose up` refuses to start without it.
-6. `docker compose up`, watch the logs - the first cycle syncs every instance/volume it can see into Postgres, but nothing is eligible yet.
+6. `docker compose up`, watch the logs - the first cycle syncs every instance/volume it can see into Postgres, but nothing is eligible yet. `dry_run` defaults to `true` until you set it otherwise (5) - nothing gets resized for real yet either way.
 7. At least one volume or instance's `autoresize` column set to `true` (1.3) - confirm the next cycle's dry-run output matches what you expect.
 8. Slack bot token + channel ID, if using `notifications.method: slack` (2).
-9. Only then, flip `dry_run: false`.
+9. Only then, set `dry_run` to `false` in `app_config` (5).
