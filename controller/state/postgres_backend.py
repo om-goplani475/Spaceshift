@@ -90,6 +90,18 @@ CREATE TABLE IF NOT EXISTS volumes (
 
 CREATE INDEX IF NOT EXISTS idx_volumes_region ON volumes (region);
 CREATE INDEX IF NOT EXISTS idx_volumes_instance_id ON volumes (instance_id);
+
+-- account_name didn't exist before multi-account support - added via ALTER
+-- rather than the CREATE TABLE above so it also lands on a database that
+-- was created before this column existed. Existing rows backfill to ''
+-- (single-account, "default"-shaped setups) until next refreshed by a
+-- discovery cycle, which is harmless - it's a display/filter field only.
+ALTER TABLE instances ADD COLUMN IF NOT EXISTS account_name TEXT NOT NULL DEFAULT '';
+ALTER TABLE volumes ADD COLUMN IF NOT EXISTS account_name TEXT NOT NULL DEFAULT '';
+ALTER TABLE scan_log ADD COLUMN IF NOT EXISTS account_name TEXT NOT NULL DEFAULT '';
+
+CREATE INDEX IF NOT EXISTS idx_instances_account_name ON instances (account_name);
+CREATE INDEX IF NOT EXISTS idx_volumes_account_name ON volumes (account_name);
 """
 
 _TERMINAL_STATUS_VALUES = [s.value for s in TERMINAL_STATUSES]
@@ -222,6 +234,7 @@ class PostgresStateBackend(StateBackend):
 
     def record_scan(
         self,
+        account_name: str,
         region: str,
         volume_id: str,
         instance_id: str,
@@ -234,10 +247,21 @@ class PostgresStateBackend(StateBackend):
             cur.execute(
                 """
                 INSERT INTO scan_log
-                    (timestamp, region, volume_id, instance_id, size_gb, threshold_percent, percent_used, decision)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                    (timestamp, account_name, region, volume_id, instance_id, size_gb, threshold_percent,
+                     percent_used, decision)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
                 """,
-                (datetime.now(UTC), region, volume_id, instance_id, size_gb, threshold_percent, percent_used, decision),
+                (
+                    datetime.now(UTC),
+                    account_name,
+                    region,
+                    volume_id,
+                    instance_id,
+                    size_gb,
+                    threshold_percent,
+                    percent_used,
+                    decision,
+                ),
             )
 
     def list_scans(self, limit: int = 200) -> list[ScanRecord]:
@@ -251,55 +275,77 @@ class PostgresStateBackend(StateBackend):
         with self._cursor(commit=True) as cur:
             cur.execute("DELETE FROM scan_log WHERE timestamp < %s", (older_than,))
 
-    def upsert_instance(self, instance_id: str, region: str, instance_type: str, state: str) -> None:
+    def upsert_instance(self, account_name: str, instance_id: str, region: str, instance_type: str, state: str) -> None:
         with self._cursor(commit=True) as cur:
             cur.execute(
                 """
-                INSERT INTO instances (instance_id, region, instance_type, state, last_seen_at, is_stale)
-                VALUES (%s, %s, %s, %s, %s, FALSE)
+                INSERT INTO instances (instance_id, account_name, region, instance_type, state, last_seen_at, is_stale)
+                VALUES (%s, %s, %s, %s, %s, %s, FALSE)
                 ON CONFLICT (instance_id) DO UPDATE SET
+                    account_name  = EXCLUDED.account_name,
                     region        = EXCLUDED.region,
                     instance_type = EXCLUDED.instance_type,
                     state         = EXCLUDED.state,
                     last_seen_at  = EXCLUDED.last_seen_at,
                     is_stale      = FALSE
                 """,
-                (instance_id, region, instance_type, state, datetime.now(UTC)),
+                (instance_id, account_name, region, instance_type, state, datetime.now(UTC)),
             )
 
     def upsert_volume(
-        self, volume_id: str, instance_id: str | None, region: str, size_gb: int, device_name: str | None
+        self,
+        account_name: str,
+        volume_id: str,
+        instance_id: str | None,
+        region: str,
+        size_gb: int,
+        device_name: str | None,
     ) -> None:
         with self._cursor(commit=True) as cur:
             cur.execute(
                 """
-                INSERT INTO volumes (volume_id, instance_id, region, size_gb, device_name, last_seen_at, is_stale)
-                VALUES (%s, %s, %s, %s, %s, %s, FALSE)
+                INSERT INTO volumes
+                    (volume_id, instance_id, account_name, region, size_gb, device_name, last_seen_at, is_stale)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, FALSE)
                 ON CONFLICT (volume_id) DO UPDATE SET
                     instance_id  = EXCLUDED.instance_id,
+                    account_name = EXCLUDED.account_name,
                     region       = EXCLUDED.region,
                     size_gb      = EXCLUDED.size_gb,
                     device_name  = EXCLUDED.device_name,
                     last_seen_at = EXCLUDED.last_seen_at,
                     is_stale     = FALSE
                 """,
-                (volume_id, instance_id, region, size_gb, device_name, datetime.now(UTC)),
+                (volume_id, instance_id, account_name, region, size_gb, device_name, datetime.now(UTC)),
             )
 
-    def mark_stale(self, region: str, seen_instance_ids: set[str], seen_volume_ids: set[str]) -> None:
+    def mark_stale(
+        self, account_name: str, region: str, seen_instance_ids: set[str], seen_volume_ids: set[str]
+    ) -> None:
         with self._cursor(commit=True) as cur:
             cur.execute(
-                "UPDATE instances SET is_stale = TRUE WHERE region = %s AND instance_id != ALL(%s)",
-                (region, list(seen_instance_ids)),
+                """
+                UPDATE instances SET is_stale = TRUE
+                WHERE account_name = %s AND region = %s AND instance_id != ALL(%s)
+                """,
+                (account_name, region, list(seen_instance_ids)),
             )
             cur.execute(
-                "UPDATE volumes SET is_stale = TRUE WHERE region = %s AND volume_id != ALL(%s)",
-                (region, list(seen_volume_ids)),
+                """
+                UPDATE volumes SET is_stale = TRUE
+                WHERE account_name = %s AND region = %s AND volume_id != ALL(%s)
+                """,
+                (account_name, region, list(seen_volume_ids)),
             )
 
-    def list_instances(self, region: str | None = None, include_stale: bool = False) -> list[InstanceRecord]:
+    def list_instances(
+        self, account_name: str | None = None, region: str | None = None, include_stale: bool = False
+    ) -> list[InstanceRecord]:
         query = "SELECT * FROM instances WHERE TRUE"
         params: list = []
+        if account_name is not None:
+            query += " AND account_name = %s"
+            params.append(account_name)
         if region is not None:
             query += " AND region = %s"
             params.append(region)
@@ -312,9 +358,14 @@ class PostgresStateBackend(StateBackend):
             columns = [desc[0] for desc in cur.description]
         return [InstanceRecord(**dict(zip(columns, row, strict=True))) for row in rows]
 
-    def list_volumes(self, region: str | None = None, include_stale: bool = False) -> list[VolumeRecord]:
+    def list_volumes(
+        self, account_name: str | None = None, region: str | None = None, include_stale: bool = False
+    ) -> list[VolumeRecord]:
         query = "SELECT * FROM volumes WHERE TRUE"
         params: list = []
+        if account_name is not None:
+            query += " AND account_name = %s"
+            params.append(account_name)
         if region is not None:
             query += " AND region = %s"
             params.append(region)

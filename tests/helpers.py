@@ -107,6 +107,7 @@ class InMemoryStateBackend(StateBackend):
 
     def record_scan(
         self,
+        account_name: str,
         region: str,
         volume_id: str,
         instance_id: str,
@@ -120,6 +121,7 @@ class InMemoryStateBackend(StateBackend):
                 ScanRecord(
                     id=self._next_scan_id,
                     timestamp=datetime.now(UTC),
+                    account_name=account_name,
                     region=region,
                     volume_id=volume_id,
                     instance_id=instance_id,
@@ -138,11 +140,12 @@ class InMemoryStateBackend(StateBackend):
         with self._lock:
             self._scans = [s for s in self._scans if s.timestamp >= older_than]
 
-    def upsert_instance(self, instance_id: str, region: str, instance_type: str, state: str) -> None:
+    def upsert_instance(self, account_name: str, instance_id: str, region: str, instance_type: str, state: str) -> None:
         with self._lock:
             existing = self._instances.get(instance_id)
             self._instances[instance_id] = InstanceRecord(
                 instance_id=instance_id,
+                account_name=account_name,
                 region=region,
                 instance_type=instance_type,
                 state=state,
@@ -153,13 +156,20 @@ class InMemoryStateBackend(StateBackend):
             )
 
     def upsert_volume(
-        self, volume_id: str, instance_id: str | None, region: str, size_gb: int, device_name: str | None
+        self,
+        account_name: str,
+        volume_id: str,
+        instance_id: str | None,
+        region: str,
+        size_gb: int,
+        device_name: str | None,
     ) -> None:
         with self._lock:
             existing = self._volumes.get(volume_id)
             self._volumes[volume_id] = VolumeRecord(
                 volume_id=volume_id,
                 instance_id=instance_id,
+                account_name=account_name,
                 region=region,
                 size_gb=size_gb,
                 device_name=device_name,
@@ -169,31 +179,43 @@ class InMemoryStateBackend(StateBackend):
                 is_stale=False,
             )
 
-    def mark_stale(self, region: str, seen_instance_ids: set[str], seen_volume_ids: set[str]) -> None:
+    def mark_stale(
+        self, account_name: str, region: str, seen_instance_ids: set[str], seen_volume_ids: set[str]
+    ) -> None:
         with self._lock:
             for instance_id, record in self._instances.items():
-                if record.region == region and instance_id not in seen_instance_ids:
+                same_scope = record.account_name == account_name and record.region == region
+                if same_scope and instance_id not in seen_instance_ids:
                     self._instances[instance_id] = replace(record, is_stale=True)
             for volume_id, record in self._volumes.items():
-                if record.region == region and volume_id not in seen_volume_ids:
+                same_scope = record.account_name == account_name and record.region == region
+                if same_scope and volume_id not in seen_volume_ids:
                     self._volumes[volume_id] = replace(record, is_stale=True)
 
-    def list_instances(self, region: str | None = None, include_stale: bool = False) -> list[InstanceRecord]:
+    def list_instances(
+        self, account_name: str | None = None, region: str | None = None, include_stale: bool = False
+    ) -> list[InstanceRecord]:
         return sorted(
             (
                 r
                 for r in self._instances.values()
-                if (region is None or r.region == region) and (include_stale or not r.is_stale)
+                if (account_name is None or r.account_name == account_name)
+                and (region is None or r.region == region)
+                and (include_stale or not r.is_stale)
             ),
             key=lambda r: r.instance_id,
         )
 
-    def list_volumes(self, region: str | None = None, include_stale: bool = False) -> list[VolumeRecord]:
+    def list_volumes(
+        self, account_name: str | None = None, region: str | None = None, include_stale: bool = False
+    ) -> list[VolumeRecord]:
         return sorted(
             (
                 r
                 for r in self._volumes.values()
-                if (region is None or r.region == region) and (include_stale or not r.is_stale)
+                if (account_name is None or r.account_name == account_name)
+                and (region is None or r.region == region)
+                and (include_stale or not r.is_stale)
             ),
             key=lambda r: r.volume_id,
         )

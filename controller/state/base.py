@@ -58,6 +58,7 @@ class ScanRecord:
 
     id: int
     timestamp: datetime
+    account_name: str
     region: str
     volume_id: str
     instance_id: str
@@ -78,6 +79,7 @@ class InstanceRecord:
     """
 
     instance_id: str
+    account_name: str
     region: str
     instance_type: str
     state: str
@@ -94,6 +96,7 @@ class VolumeRecord:
 
     volume_id: str
     instance_id: str | None
+    account_name: str
     region: str
     size_gb: int
     device_name: str | None
@@ -162,6 +165,7 @@ class StateBackend(abc.ABC):
     @abc.abstractmethod
     def record_scan(
         self,
+        account_name: str,
         region: str,
         volume_id: str,
         instance_id: str,
@@ -190,36 +194,52 @@ class StateBackend(abc.ABC):
         """
 
     @abc.abstractmethod
-    def upsert_instance(self, instance_id: str, region: str, instance_type: str, state: str) -> None:
+    def upsert_instance(self, account_name: str, instance_id: str, region: str, instance_type: str, state: str) -> None:
         """Insert or refresh one instance row from a discovery scan.
 
-        Only touches AWS-observed fields (instance_type, state,
-        last_seen_at, is_stale=False) - never autoresize/threshold_percent,
-        which are exclusively admin-controlled via set_instance_autoresize.
+        Only touches AWS-observed fields (account_name, instance_type,
+        state, last_seen_at, is_stale=False) - never autoresize/
+        threshold_percent, which are exclusively admin-controlled via
+        set_instance_autoresize.
         """
 
     @abc.abstractmethod
     def upsert_volume(
-        self, volume_id: str, instance_id: str | None, region: str, size_gb: int, device_name: str | None
+        self,
+        account_name: str,
+        volume_id: str,
+        instance_id: str | None,
+        region: str,
+        size_gb: int,
+        device_name: str | None,
     ) -> None:
         """Insert or refresh one volume row from a discovery scan. Same
         admin-controlled-fields contract as upsert_instance."""
 
     @abc.abstractmethod
-    def mark_stale(self, region: str, seen_instance_ids: set[str], seen_volume_ids: set[str]) -> None:
-        """Flag every instance/volume in `region` NOT present in the given
-        seen-ID sets as stale (is_stale=True), without deleting the row -
-        preserves any autoresize history in case the resource reappears
-        (e.g. after a transient Describe* error skipped it for one cycle).
+    def mark_stale(
+        self, account_name: str, region: str, seen_instance_ids: set[str], seen_volume_ids: set[str]
+    ) -> None:
+        """Flag every instance/volume in `account_name`/`region` NOT present
+        in the given seen-ID sets as stale (is_stale=True), without deleting
+        the row - preserves any autoresize history in case the resource
+        reappears (e.g. after a transient Describe* error skipped it for one
+        cycle). Scoped to account_name as well as region so two accounts
+        that happen to share a region's discovery cycle never mark each
+        other's resources stale.
         """
 
     @abc.abstractmethod
-    def list_instances(self, region: str | None = None, include_stale: bool = False) -> list[InstanceRecord]:
-        """Return known instances, optionally filtered to one region."""
+    def list_instances(
+        self, account_name: str | None = None, region: str | None = None, include_stale: bool = False
+    ) -> list[InstanceRecord]:
+        """Return known instances, optionally filtered to one account and/or region."""
 
     @abc.abstractmethod
-    def list_volumes(self, region: str | None = None, include_stale: bool = False) -> list[VolumeRecord]:
-        """Return known volumes, optionally filtered to one region."""
+    def list_volumes(
+        self, account_name: str | None = None, region: str | None = None, include_stale: bool = False
+    ) -> list[VolumeRecord]:
+        """Return known volumes, optionally filtered to one account and/or region."""
 
     @abc.abstractmethod
     def set_instance_autoresize(self, instance_id: str, autoresize: bool) -> bool:

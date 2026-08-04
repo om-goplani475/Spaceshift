@@ -9,6 +9,8 @@ from datetime import UTC, datetime, timedelta
 from controller.state.base import ResizeStatus
 from tests.helpers import InMemoryStateBackend
 
+_ACCOUNT = "default"
+
 
 def test_create_if_absent_new_row():
     backend = InMemoryStateBackend()
@@ -64,41 +66,44 @@ def test_list_all():
 
 def test_record_scan_and_list_scans_newest_first():
     backend = InMemoryStateBackend()
-    backend.record_scan("us-east-1", "vol-1", "i-1", 100, 80, 50.0, "below_threshold")
-    backend.record_scan("us-east-1", "vol-2", "i-2", 100, 80, None, "ssm_not_ready")
+    backend.record_scan(_ACCOUNT, "us-east-1", "vol-1", "i-1", 100, 80, 50.0, "below_threshold")
+    backend.record_scan(_ACCOUNT, "us-east-1", "vol-2", "i-2", 100, 80, None, "ssm_not_ready")
 
     scans = backend.list_scans()
     assert [s.volume_id for s in scans] == ["vol-2", "vol-1"]
     assert scans[0].decision == "ssm_not_ready"
     assert scans[0].percent_used is None
+    assert scans[0].account_name == _ACCOUNT
 
 
 def test_prune_scan_log_removes_old_entries():
     backend = InMemoryStateBackend()
-    backend.record_scan("us-east-1", "vol-1", "i-1", 100, 80, 50.0, "below_threshold")
+    backend.record_scan(_ACCOUNT, "us-east-1", "vol-1", "i-1", 100, 80, 50.0, "below_threshold")
     backend.prune_scan_log(datetime.now(UTC) + timedelta(seconds=1))
     assert backend.list_scans() == []
 
 
 def test_upsert_instance_then_volume_and_list():
     backend = InMemoryStateBackend()
-    backend.upsert_instance("i-1", "us-east-1", "t3.micro", "running")
-    backend.upsert_volume("vol-1", "i-1", "us-east-1", 100, "/dev/xvdf")
+    backend.upsert_instance(_ACCOUNT, "i-1", "us-east-1", "t3.micro", "running")
+    backend.upsert_volume(_ACCOUNT, "vol-1", "i-1", "us-east-1", 100, "/dev/xvdf")
 
     instances = backend.list_instances(region="us-east-1")
     volumes = backend.list_volumes(region="us-east-1")
     assert [i.instance_id for i in instances] == ["i-1"]
     assert [v.volume_id for v in volumes] == ["vol-1"]
     assert instances[0].autoresize is False
+    assert instances[0].account_name == _ACCOUNT
     assert volumes[0].autoresize is False
+    assert volumes[0].account_name == _ACCOUNT
 
 
 def test_upsert_never_overwrites_autoresize():
     backend = InMemoryStateBackend()
-    backend.upsert_instance("i-1", "us-east-1", "t3.micro", "running")
+    backend.upsert_instance(_ACCOUNT, "i-1", "us-east-1", "t3.micro", "running")
     backend.set_instance_autoresize("i-1", True)
 
-    backend.upsert_instance("i-1", "us-east-1", "t3.micro", "stopped")  # re-synced, e.g. next cycle
+    backend.upsert_instance(_ACCOUNT, "i-1", "us-east-1", "t3.micro", "stopped")  # re-synced, e.g. next cycle
 
     instance = backend.list_instances(region="us-east-1")[0]
     assert instance.autoresize is True
@@ -113,11 +118,11 @@ def test_set_autoresize_returns_false_for_unknown_id():
 
 def test_mark_stale_flags_unseen_resources_without_deleting():
     backend = InMemoryStateBackend()
-    backend.upsert_instance("i-1", "us-east-1", "t3.micro", "running")
-    backend.upsert_volume("vol-1", "i-1", "us-east-1", 100, "/dev/xvdf")
+    backend.upsert_instance(_ACCOUNT, "i-1", "us-east-1", "t3.micro", "running")
+    backend.upsert_volume(_ACCOUNT, "vol-1", "i-1", "us-east-1", 100, "/dev/xvdf")
     backend.set_volume_autoresize("vol-1", True)
 
-    backend.mark_stale("us-east-1", seen_instance_ids=set(), seen_volume_ids=set())
+    backend.mark_stale(_ACCOUNT, "us-east-1", seen_instance_ids=set(), seen_volume_ids=set())
 
     assert backend.list_instances(region="us-east-1") == []  # excluded by default
     stale_volumes = backend.list_volumes(region="us-east-1", include_stale=True)
@@ -127,6 +132,30 @@ def test_mark_stale_flags_unseen_resources_without_deleting():
 
 def test_mark_stale_leaves_seen_resources_alone():
     backend = InMemoryStateBackend()
-    backend.upsert_volume("vol-1", "i-1", "us-east-1", 100, "/dev/xvdf")
-    backend.mark_stale("us-east-1", seen_instance_ids=set(), seen_volume_ids={"vol-1"})
+    backend.upsert_volume(_ACCOUNT, "vol-1", "i-1", "us-east-1", 100, "/dev/xvdf")
+    backend.mark_stale(_ACCOUNT, "us-east-1", seen_instance_ids=set(), seen_volume_ids={"vol-1"})
     assert backend.list_volumes(region="us-east-1")[0].is_stale is False
+
+
+def test_mark_stale_scoped_to_account_does_not_affect_other_accounts():
+    backend = InMemoryStateBackend()
+    backend.upsert_volume("account-a", "vol-a", "i-a", "us-east-1", 100, "/dev/xvdf")
+    backend.upsert_volume("account-b", "vol-b", "i-b", "us-east-1", 100, "/dev/xvdf")
+
+    # account-a's discovery cycle runs and sees nothing - must not mark
+    # account-b's same-region volume stale, since account-b's own cycle
+    # simply hasn't run yet this tick.
+    backend.mark_stale("account-a", "us-east-1", seen_instance_ids=set(), seen_volume_ids=set())
+
+    assert backend.list_volumes(account_name="account-a", region="us-east-1", include_stale=True)[0].is_stale is True
+    assert backend.list_volumes(account_name="account-b", region="us-east-1")[0].is_stale is False
+
+
+def test_list_instances_and_volumes_filtered_by_account():
+    backend = InMemoryStateBackend()
+    backend.upsert_instance("account-a", "i-a", "us-east-1", "t3.micro", "running")
+    backend.upsert_instance("account-b", "i-b", "us-east-1", "t3.micro", "running")
+
+    assert [i.instance_id for i in backend.list_instances(account_name="account-a")] == ["i-a"]
+    assert [i.instance_id for i in backend.list_instances(account_name="account-b")] == ["i-b"]
+    assert {i.instance_id for i in backend.list_instances()} == {"i-a", "i-b"}

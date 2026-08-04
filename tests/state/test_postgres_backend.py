@@ -20,6 +20,8 @@ pytestmark = pytest.mark.skipif(
     reason="set EBS_AUTO_RESIZE_TEST_POSTGRES_DSN to a real Postgres DSN to run these tests",
 )
 
+_ACCOUNT = "default"
+
 
 @pytest.fixture
 def postgres_state():
@@ -66,36 +68,38 @@ def test_list_all(postgres_state):
 
 
 def test_record_scan_and_list_scans_newest_first(postgres_state):
-    postgres_state.record_scan("us-east-1", "vol-1", "i-1", 100, 80, 50.0, "below_threshold")
-    postgres_state.record_scan("us-east-1", "vol-2", "i-2", 100, 80, None, "ssm_not_ready")
+    postgres_state.record_scan(_ACCOUNT, "us-east-1", "vol-1", "i-1", 100, 80, 50.0, "below_threshold")
+    postgres_state.record_scan(_ACCOUNT, "us-east-1", "vol-2", "i-2", 100, 80, None, "ssm_not_ready")
 
     scans = postgres_state.list_scans()
     assert [s.volume_id for s in scans] == ["vol-2", "vol-1"]
     assert scans[0].percent_used is None
+    assert scans[0].account_name == _ACCOUNT
 
 
 def test_prune_scan_log_removes_old_entries(postgres_state):
-    postgres_state.record_scan("us-east-1", "vol-1", "i-1", 100, 80, 50.0, "below_threshold")
+    postgres_state.record_scan(_ACCOUNT, "us-east-1", "vol-1", "i-1", 100, 80, 50.0, "below_threshold")
     postgres_state.prune_scan_log(datetime.now(UTC) + timedelta(seconds=1))
     assert postgres_state.list_scans() == []
 
 
 def test_upsert_instance_then_volume_and_list(postgres_state):
-    postgres_state.upsert_instance("i-1", "us-east-1", "t3.micro", "running")
-    postgres_state.upsert_volume("vol-1", "i-1", "us-east-1", 100, "/dev/xvdf")
+    postgres_state.upsert_instance(_ACCOUNT, "i-1", "us-east-1", "t3.micro", "running")
+    postgres_state.upsert_volume(_ACCOUNT, "vol-1", "i-1", "us-east-1", 100, "/dev/xvdf")
 
     instances = postgres_state.list_instances(region="us-east-1")
     volumes = postgres_state.list_volumes(region="us-east-1")
     assert [i.instance_id for i in instances] == ["i-1"]
     assert [v.volume_id for v in volumes] == ["vol-1"]
     assert instances[0].autoresize is False
+    assert instances[0].account_name == _ACCOUNT
 
 
 def test_upsert_never_overwrites_autoresize(postgres_state):
-    postgres_state.upsert_instance("i-1", "us-east-1", "t3.micro", "running")
+    postgres_state.upsert_instance(_ACCOUNT, "i-1", "us-east-1", "t3.micro", "running")
     postgres_state.set_instance_autoresize("i-1", True)
 
-    postgres_state.upsert_instance("i-1", "us-east-1", "t3.micro", "stopped")
+    postgres_state.upsert_instance(_ACCOUNT, "i-1", "us-east-1", "t3.micro", "stopped")
 
     instance = postgres_state.list_instances(region="us-east-1")[0]
     assert instance.autoresize is True
@@ -108,13 +112,32 @@ def test_set_autoresize_returns_false_for_unknown_id(postgres_state):
 
 
 def test_mark_stale_flags_unseen_resources_without_deleting(postgres_state):
-    postgres_state.upsert_instance("i-1", "us-east-1", "t3.micro", "running")
-    postgres_state.upsert_volume("vol-1", "i-1", "us-east-1", 100, "/dev/xvdf")
+    postgres_state.upsert_instance(_ACCOUNT, "i-1", "us-east-1", "t3.micro", "running")
+    postgres_state.upsert_volume(_ACCOUNT, "vol-1", "i-1", "us-east-1", 100, "/dev/xvdf")
     postgres_state.set_volume_autoresize("vol-1", True)
 
-    postgres_state.mark_stale("us-east-1", seen_instance_ids=set(), seen_volume_ids=set())
+    postgres_state.mark_stale(_ACCOUNT, "us-east-1", seen_instance_ids=set(), seen_volume_ids=set())
 
     assert postgres_state.list_instances(region="us-east-1") == []
     stale_volumes = postgres_state.list_volumes(region="us-east-1", include_stale=True)
     assert stale_volumes[0].is_stale is True
     assert stale_volumes[0].autoresize is True
+
+
+def test_mark_stale_scoped_to_account_does_not_affect_other_accounts(postgres_state):
+    postgres_state.upsert_volume("account-a", "vol-a", "i-a", "us-east-1", 100, "/dev/xvdf")
+    postgres_state.upsert_volume("account-b", "vol-b", "i-b", "us-east-1", 100, "/dev/xvdf")
+
+    postgres_state.mark_stale("account-a", "us-east-1", seen_instance_ids=set(), seen_volume_ids=set())
+
+    stale_a = postgres_state.list_volumes(account_name="account-a", region="us-east-1", include_stale=True)
+    assert stale_a[0].is_stale is True
+    assert postgres_state.list_volumes(account_name="account-b", region="us-east-1")[0].is_stale is False
+
+
+def test_list_instances_and_volumes_filtered_by_account(postgres_state):
+    postgres_state.upsert_instance("account-a", "i-a", "us-east-1", "t3.micro", "running")
+    postgres_state.upsert_instance("account-b", "i-b", "us-east-1", "t3.micro", "running")
+
+    assert [i.instance_id for i in postgres_state.list_instances(account_name="account-a")] == ["i-a"]
+    assert [i.instance_id for i in postgres_state.list_instances(account_name="account-b")] == ["i-b"]
