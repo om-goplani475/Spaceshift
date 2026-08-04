@@ -15,7 +15,7 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
-from controller.aws_session import build_boto3_session
+from controller.aws_session import RETRY_CONFIG, build_boto3_session
 from controller.config import Config
 from controller.connections.base import ConnectionTarget, Connector
 from controller.connections.ssm_connector import SsmConnector
@@ -44,8 +44,12 @@ class Scheduler:
         # through it, not just some of the clients.
         self._session = build_boto3_session(config)
 
-        self._ec2_clients = {region: self._session.client("ec2", region_name=region) for region in config.regions}
-        self._ssm_clients = {region: self._session.client("ssm", region_name=region) for region in config.regions}
+        self._ec2_clients = {
+            region: self._session.client("ec2", region_name=region, config=RETRY_CONFIG) for region in config.regions
+        }
+        self._ssm_clients = {
+            region: self._session.client("ssm", region_name=region, config=RETRY_CONFIG) for region in config.regions
+        }
         self._connectors: dict[str, Connector] = {
             region: SsmConnector(region=region, session=self._session) for region in config.regions
         }
@@ -77,7 +81,7 @@ class Scheduler:
         ssm = self._ssm_clients[region]
         connector = self._connectors[region]
 
-        volumes = discover_eligible_volumes(ec2, self._config)
+        volumes = discover_eligible_volumes(ec2, self._state, region, self._config)
         self._recover_stale_rows(ec2)
 
         with ThreadPoolExecutor(max_workers=self._config.scheduler.max_concurrent_resizes) as pool:

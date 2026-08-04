@@ -2,7 +2,7 @@
 
 import boto3
 
-from controller.aws_session import build_boto3_session
+from controller.aws_session import RETRY_CONFIG, build_boto3_session
 from controller.config import Config
 
 
@@ -47,3 +47,16 @@ def test_role_mode_with_stray_keys_logs_warning_and_ignores_them(aws, caplog):
         session = build_boto3_session(config)
     assert "will be ignored" in caplog.text
     assert session.get_credentials().get_frozen_credentials().access_key != "AKIASTALE"
+
+
+def test_retry_config_is_adaptive_mode():
+    # Full-account scans (no tag filter to narrow the request volume
+    # server-side) make request rate scale with account size, not just
+    # managed-resource count - every client must self-throttle.
+    assert RETRY_CONFIG.retries["mode"] == "adaptive"
+
+
+def test_clients_built_with_retry_config_use_adaptive_mode(aws):
+    session = build_boto3_session(Config.from_dict({}))
+    ec2 = session.client("ec2", region_name="us-east-1", config=RETRY_CONFIG)
+    assert ec2.meta.config.retries["mode"] == "adaptive"

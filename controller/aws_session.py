@@ -11,6 +11,7 @@ import logging
 
 import boto3
 import botocore.session
+from botocore.config import Config as BotoConfig
 from botocore.credentials import RefreshableCredentials
 
 from controller.config import Config
@@ -18,6 +19,15 @@ from controller.config import Config
 logger = logging.getLogger(__name__)
 
 _ASSUME_ROLE_SESSION_NAME = "ebs-auto-resize"
+
+# Every client() call in the codebase (EC2, SSM, STS) should pass this.
+# Discovery now scans every instance/volume in the account each cycle (no
+# tag filter to narrow it server-side), so request volume scales with
+# account size, not just managed-resource count - adaptive mode makes every
+# client self-throttle based on real throttling responses from AWS, rather
+# than relying on boto3's default ("legacy") retry mode, which retries
+# individual calls but has no sense of overall request rate.
+RETRY_CONFIG = BotoConfig(retries={"mode": "adaptive", "max_attempts": 10})
 
 
 def build_boto3_session(config: Config) -> boto3.Session:
@@ -63,7 +73,7 @@ def _build_refreshable_assume_role_session(role_arn: str, base_session: boto3.Se
     default session duration) - unacceptable for a process meant to run
     forever.
     """
-    sts_client = base_session.client("sts")
+    sts_client = base_session.client("sts", config=RETRY_CONFIG)
 
     def refresh() -> dict:
         response = sts_client.assume_role(RoleArn=role_arn, RoleSessionName=_ASSUME_ROLE_SESSION_NAME)

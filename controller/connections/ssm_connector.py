@@ -11,6 +11,7 @@ import time
 
 import boto3
 
+from controller.aws_session import RETRY_CONFIG
 from controller.connections.base import CommandResult, ConnectionTarget, Connector
 
 _TERMINAL_STATUSES = {"Success", "Failed", "Cancelled", "TimedOut"}
@@ -24,7 +25,7 @@ class SsmConnector(Connector):
         # would silently authenticate as the controller's own identity even
         # when discovery/resize are correctly running under an assumed role.
         client_factory = session if session is not None else boto3
-        self._client = client_factory.client("ssm", region_name=region)
+        self._client = client_factory.client("ssm", region_name=region, config=RETRY_CONFIG)
 
     def run_command(self, target: ConnectionTarget, command: str, timeout_seconds: int = 120) -> CommandResult:
         send_response = self._client.send_command(
