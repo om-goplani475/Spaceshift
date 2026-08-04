@@ -19,7 +19,7 @@ What each statement in that policy is for:
 | `ec2:DescribeVolumes` / `DescribeInstances` / `DescribeImages` / `DescribeVolumesModifications` | Discovery and polling resize progress. AWS requires `Resource: "*"` for these regardless of scope - that's a platform constraint, not something the policy chose to leave open. |
 | `ec2:ModifyVolume` | The actual AWS-side resize. **Not tag-scoped** - eligibility is enforced entirely by the controller's own code checking the `autoresize` column in Postgres, not by IAM (see section 1.3). This is a deliberate trade-off, not an oversight - see `docs/PLAN.md`'s note on why tag-based discovery was replaced. |
 | `ssm:SendCommand` / `GetCommandInvocation` / `DescribeInstanceInformation` | How the controller talks to every instance - always needed, since SSM is the only connection method. |
-| `sts:AssumeRole` | Only needed if you set `assume_role_arn` to centrally manage a different AWS account. Delete this statement for single-account use. |
+| `sts:AssumeRole` | Only needed if any entry in `accounts:` sets `assume_role_arn` to centrally manage a different AWS account. Delete this statement if every account entry omits it. |
 
 ### 1.2 SSM-managed target instances
 
@@ -48,13 +48,17 @@ Setting `autoresize` on an **instance** row instead makes every volume attached 
 
 **Security note:** because eligibility now lives in application data instead of an AWS tag, `ec2:ModifyVolume` in `docs/iam-policy.json` is no longer scoped by an IAM `Condition` - AWS itself will allow the call on any volume; only the controller's own check of the `autoresize` column stands between "eligible" and "not." See `docs/PLAN.md` for the full reasoning behind this trade-off before relying on it in a security-sensitive account.
 
-### 1.4 Multi-account setup (optional, `assume_role_arn`)
+### 1.4 Multi-account setup (optional, `accounts:`)
 
-If centrally managing another AWS account:
+One controller process can centrally manage several AWS accounts at once. `config.yaml`'s `accounts:` is a list - one entry per account, each with its own `name`, optional `assume_role_arn`, and `regions`. Every account authenticates through the same base identity (`credentials.*`, section 4) - what makes each entry a genuinely different account is its own `assume_role_arn`.
+
+The single-account case is just a one-entry list (see `config.yaml.example`) - nothing else about setup changes. To add a second account:
 
 - Create a role in the **target** account (e.g. named `ebs-auto-resize`) with the permissions above.
 - That role's **trust policy** must explicitly allow the controller's own identity (its instance role, typically) to assume it - this is configured on the target account's side, not something the controller's own IAM policy can grant by itself.
-- Set `assume_role_arn` in `config.yaml` to that role's ARN.
+- Add an entry to `accounts:` with that role's ARN as `assume_role_arn` and the regions to scan in that account.
+
+An account entry with no `assume_role_arn` scans the base identity's own account directly - useful if the controller's home account is itself one of the accounts being managed, alongside others reached via `assume_role_arn`.
 
 ## 2. Slack prerequisites (optional, `notifications.method: slack`)
 
@@ -85,10 +89,17 @@ Copy the example first: `cp config.yaml.example config.yaml`. Every field below 
 
 | Field | Default | Meaning |
 |---|---|---|
-| `regions` | `[us-east-1]` | List of AWS regions scanned every cycle. Add more for a multi-region fleet. |
-| `assume_role_arn` | unset | ARN of a role to assume in another account before making any AWS call. See section 1.4. Leave commented out for single-account use. |
+| `accounts` | one entry, `name: default`, `regions: [us-east-1]` | List of AWS accounts to manage - one entry per account, each with its own `name`, optional `assume_role_arn`, and `regions`. See section 1.4. |
 | `default_threshold_percent` | `80` | Fallback percent-full threshold, used only when neither a volume nor its attached instance has its own `threshold_percent` set in Postgres (see section 1.3). |
 | `dry_run` | `true` | **The most important setting for a first run.** When true, the controller only logs what it *would* do - no `modify-volume` call, no `growpart`/`resize2fs`/`xfs_growfs`. Flip to `false` only after confirming the dry-run logs look right against your real account. |
+
+### `accounts` (each entry)
+
+| Field | Default | Meaning |
+|---|---|---|
+| `name` | required | A label for this account - shown on the dashboard's account filter and in scan history. Must be unique across entries. |
+| `assume_role_arn` | unset | ARN of a role to assume in this account before making any AWS call for it. Leave unset to scan the base identity's own account directly. See section 1.4. |
+| `regions` | `[us-east-1]` | List of AWS regions scanned every cycle, for this account. |
 
 ### `credentials`
 
