@@ -123,7 +123,9 @@ Not a `config.yaml` field - the state backend is always the bundled Postgres con
 
 Everything in this section used to be a `config.yaml` field. It's now a row in Postgres's `app_config` table instead - a plain `key`/`value` pair, checked fresh **every scheduler cycle**, so a change here takes effect on the controller's next cycle with no restart, no redeploy. A key that's never been set just falls through to the default below - an empty `app_config` table behaves exactly like the old `config.yaml` defaults did.
 
-Change one with a direct `UPDATE`/`INSERT` (same pattern as flipping `autoresize` in section 1.3 - a dashboard **Settings** tab for this is planned but not built yet):
+The easiest way to change one is the dashboard's **Settings** tab (`docker compose --profile dashboard up`, then `localhost:8080` - `dry_run` is a toggle switch like `autoresize`; everything else is a text field with a **Save** button, pre-filled with its current override if any, showing its default as a placeholder otherwise). An invalid value is rejected right there with an error message, before it's ever written.
+
+If you'd rather script it, it's the same direct `UPDATE`/`INSERT` pattern as flipping `autoresize` in section 1.3:
 
 ```bash
 docker compose exec postgres psql -U ebs_auto_resize -d ebs_auto_resize \
@@ -131,7 +133,7 @@ docker compose exec postgres psql -U ebs_auto_resize -d ebs_auto_resize \
       ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = EXCLUDED.updated_at;"
 ```
 
-Values are parsed as YAML scalars (so `false`, `true`, `300` parse as bool/int - no quotes needed). **An invalid value (wrong type, out of range) is logged as a warning and ignored that cycle** - the controller keeps running on its last-known-good config rather than crashing, unlike `config.yaml` itself, which still fails loudly at startup if it's broken (see `docs/PLAN.md` for why the two follow different failure philosophies).
+Values are parsed as YAML scalars (so `false`, `true`, `300` parse as bool/int - no quotes needed). **An invalid value (wrong type, out of range) written this way is logged as a warning and ignored that cycle** - the controller keeps running on its last-known-good config rather than crashing, unlike `config.yaml` itself, which still fails loudly at startup if it's broken (see `docs/PLAN.md` for why the two follow different failure philosophies). The dashboard catches the same invalid values immediately instead - direct SQL is the only path where that warn-and-ignore fallback actually gets exercised.
 
 | Key | Default | Meaning |
 |---|---|---|

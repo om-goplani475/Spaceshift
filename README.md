@@ -42,7 +42,7 @@ docker compose exec postgres psql -U ebs_auto_resize -d ebs_auto_resize \
 docker compose --profile dashboard up
 ```
 
-Serves a status page at `http://localhost:8080` with **Instances** and **Volumes** tabs (browse everything discovered, toggle `Autoresize` per resource - this is how you mark things eligible) plus resize activity and scan history below. Managing more than one AWS account (see [docs/SETUP.md](docs/SETUP.md) section 1.4)? Every table is filterable by account alongside region. JSON also available at `/api/status`, `/api/scans`, `/api/instances`, `/api/volumes`. No authentication - only run this where you trust who's on the network.
+Serves a status page at `http://localhost:8080` with **Instances** and **Volumes** tabs (browse everything discovered, toggle `Autoresize` per resource - this is how you mark things eligible), a **Settings** tab (edit `dry_run` and every other live-editable setting - see [docs/SETUP.md](docs/SETUP.md) section 5 - without touching SQL or restarting anything), plus resize activity and scan history below. Managing more than one AWS account (see [docs/SETUP.md](docs/SETUP.md) section 1.4)? Every table is filterable by account alongside region. JSON also available at `/api/status`, `/api/scans`, `/api/instances`, `/api/volumes`, `/api/config`. No authentication - only run this where you trust who's on the network.
 
 ## Setup and configuration
 
