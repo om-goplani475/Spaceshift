@@ -12,10 +12,11 @@ from __future__ import annotations
 import logging
 import time
 from concurrent.futures import ThreadPoolExecutor
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
-from controller.aws_session import RETRY_CONFIG, build_boto3_session
+from controller.aws_session import RETRY_CONFIG, build_account_session, build_base_session
 from controller.config import Config
 from controller.connections.base import ConnectionTarget, Connector
 from controller.connections.ssm_connector import SsmConnector
@@ -32,32 +33,43 @@ logger = logging.getLogger(__name__)
 HEARTBEAT_PATH = "/tmp/ebs-auto-resize-heartbeat"
 
 
+@dataclass
+class _AccountClients:
+    """Per-account, per-region AWS clients - one of these per entry in
+    config.accounts, all authenticated through that account's own session
+    (see build_account_session)."""
+
+    ec2_clients: dict[str, object]
+    ssm_clients: dict[str, object]
+    connectors: dict[str, Connector]
+
+
 class Scheduler:
     def __init__(self, config: Config, state: StateBackend, notifier: Notifier) -> None:
         self._config = config
         self._state = state
         self._notifier = notifier
 
-        # A single session, used for every AWS client this scheduler builds
-        # (including the SSM connectors) - assume_role_arn only actually
-        # provides multi-account support if *everything* authenticates
-        # through it, not just some of the clients.
-        self._session = build_boto3_session(config)
-
-        self._ec2_clients = {
-            region: self._session.client("ec2", region_name=region, config=RETRY_CONFIG) for region in config.regions
-        }
-        self._ssm_clients = {
-            region: self._session.client("ssm", region_name=region, config=RETRY_CONFIG) for region in config.regions
-        }
-        self._connectors: dict[str, Connector] = {
-            region: SsmConnector(region=region, session=self._session) for region in config.regions
-        }
+        # One base identity shared by every account, then one session per
+        # account (assumed-role or the base identity itself) - assume_role_arn
+        # only actually provides multi-account support if *everything* for
+        # that account, including the SSM connector, authenticates through it.
+        base_session = build_base_session(config)
+        self._accounts: dict[str, _AccountClients] = {}
+        for account in config.accounts:
+            session = build_account_session(base_session, account)
+            self._accounts[account.name] = _AccountClients(
+                ec2_clients={r: session.client("ec2", region_name=r, config=RETRY_CONFIG) for r in account.regions},
+                ssm_clients={r: session.client("ssm", region_name=r, config=RETRY_CONFIG) for r in account.regions},
+                connectors={r: SsmConnector(region=r, session=session) for r in account.regions},
+            )
 
         # In-memory, not state-backed: a controller restart may repeat one
         # alert, which is an acceptable trade-off for "don't spam every
-        # tick" without needing a persisted table for it.
-        self._ssm_not_ready_alerted: set[str] = set()
+        # tick" without needing a persisted table for it. Keyed by
+        # (account_name, instance_id), not instance_id alone, in case two
+        # different accounts' instance IDs ever collide.
+        self._ssm_not_ready_alerted: set[tuple[str, str]] = set()
 
     def run_forever(self) -> None:
         while True:
@@ -73,38 +85,42 @@ class Scheduler:
         Path(HEARTBEAT_PATH).write_text(datetime.now(UTC).isoformat())
 
     def run_once(self) -> None:
-        for region in self._config.regions:
-            self._run_region(region)
+        for account in self._config.accounts:
+            for region in account.regions:
+                self._run_region(account.name, region)
 
-    def _run_region(self, region: str) -> None:
-        ec2 = self._ec2_clients[region]
-        ssm = self._ssm_clients[region]
-        connector = self._connectors[region]
+    def _run_region(self, account_name: str, region: str) -> None:
+        clients = self._accounts[account_name]
+        ec2 = clients.ec2_clients[region]
+        ssm = clients.ssm_clients[region]
+        connector = clients.connectors[region]
 
-        volumes = discover_eligible_volumes(ec2, self._state, region, self._config)
+        volumes = discover_eligible_volumes(ec2, self._state, account_name, region, self._config)
         self._recover_stale_rows(ec2)
 
         with ThreadPoolExecutor(max_workers=self._config.scheduler.max_concurrent_resizes) as pool:
             for volume in volumes:
-                pool.submit(self._process_volume, ec2, ssm, connector, volume, region)
+                pool.submit(self._process_volume, account_name, ec2, ssm, connector, volume, region)
 
         cutoff = datetime.now(UTC) - timedelta(days=self._config.scheduler.scan_log_retention_days)
         self._state.prune_scan_log(cutoff)
 
-    def _process_volume(self, ec2, ssm, connector: Connector, volume: EligibleVolume, region: str) -> None:
+    def _process_volume(
+        self, account_name: str, ec2, ssm, connector: Connector, volume: EligibleVolume, region: str
+    ) -> None:
         # Each volume gets its own try/except so one bad volume can never
         # pause fleet-wide monitoring (fault isolation).
         try:
-            target = self._resolve_target(ssm, volume.instance_id)
+            target = self._resolve_target(account_name, ssm, volume.instance_id)
             if target is None:
-                self._record_scan(volume, region, "ssm_not_ready")
+                self._record_scan(account_name, volume, region, "ssm_not_ready")
                 return  # SSM not ready yet; already alerted/logged inside _resolve_target
 
             record = self._state.get(volume.volume_id)
 
             if record is not None and record.status in (ResizeStatus.MODIFY_COMPLETED, ResizeStatus.EXTEND_FAILED):
                 if should_retry_extend_now(record, self._config.resize.extend_retry.backoff_seconds):
-                    self._record_scan(volume, region, "extend_retry_attempted")
+                    self._record_scan(account_name, volume, region, "extend_retry_attempted")
                     attempt_extend(
                         connector,
                         self._state,
@@ -115,11 +131,11 @@ class Scheduler:
                         volume.device_name,
                     )
                 else:
-                    self._record_scan(volume, region, "extend_retry_waiting")
+                    self._record_scan(account_name, volume, region, "extend_retry_waiting")
                 return
 
             if record is not None and record.status == ResizeStatus.EXTEND_FAILED_NEEDS_ATTENTION:
-                self._record_scan(volume, region, "needs_attention")
+                self._record_scan(account_name, volume, region, "needs_attention")
                 return  # already alerted; needs a human, not another tick
 
             usage = check_disk_usage(connector, target, volume.device_name)
@@ -139,17 +155,18 @@ class Scheduler:
                     decision = "would_resize"
                 else:
                     decision = "resize_triggered"
-                self._record_scan(volume, region, decision, percent_used=usage.percent_used)
+                self._record_scan(account_name, volume, region, decision, percent_used=usage.percent_used)
             else:
-                self._record_scan(volume, region, "below_threshold", percent_used=usage.percent_used)
+                self._record_scan(account_name, volume, region, "below_threshold", percent_used=usage.percent_used)
         except Exception:
             logger.exception("Error processing volume %s (instance %s)", volume.volume_id, volume.instance_id)
 
     def _record_scan(
-        self, volume: EligibleVolume, region: str, decision: str, percent_used: float | None = None
+        self, account_name: str, volume: EligibleVolume, region: str, decision: str, percent_used: float | None = None
     ) -> None:
         try:
             self._state.record_scan(
+                account_name,
                 region,
                 volume.volume_id,
                 volume.instance_id,
@@ -161,17 +178,18 @@ class Scheduler:
         except Exception:
             logger.exception("Failed to record scan result for %s", volume.volume_id)
 
-    def _resolve_target(self, ssm, instance_id: str) -> ConnectionTarget | None:
+    def _resolve_target(self, account_name: str, ssm, instance_id: str) -> ConnectionTarget | None:
+        alert_key = (account_name, instance_id)
         if not is_ssm_ready(ssm, instance_id):
-            if instance_id not in self._ssm_not_ready_alerted:
-                self._ssm_not_ready_alerted.add(instance_id)
+            if alert_key not in self._ssm_not_ready_alerted:
+                self._ssm_not_ready_alerted.add(alert_key)
                 self._notifier.send(
                     "Instance not ready for SSM",
                     f"{instance_id} is not registered with SSM or not online yet - disk checks "
                     f"are skipped until it is. Re-checked every discovery cycle.",
                 )
             return None
-        self._ssm_not_ready_alerted.discard(instance_id)
+        self._ssm_not_ready_alerted.discard(alert_key)
         return ConnectionTarget(instance_id=instance_id)
 
     def _recover_stale_rows(self, ec2) -> None:
