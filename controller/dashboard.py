@@ -6,12 +6,35 @@ process; run it only if you want visibility beyond the logs.
 from __future__ import annotations
 
 import logging
+from dataclasses import asdict
 
 from flask import Flask, jsonify, render_template_string, request
 
+from controller.config import DB_CONFIG_KEYS, Config, apply_db_overrides
 from controller.state.base import TERMINAL_STATUSES, ResizeStatus, StateBackend
 
 _SCAN_LIST_LIMIT = 200
+
+# Dataclass defaults only (no config.yaml involved - the dashboard doesn't
+# load it) - used purely to show "what applies if this key is unset" next
+# to each app_config setting, and as the base dict app_config overrides are
+# validated against before being persisted. See docs/SETUP.md section 5 for
+# why config.yaml itself no longer carries these fields.
+_DEFAULT_CONFIG_DICT = asdict(Config.from_dict({}))
+
+
+def _default_config_value(key: str) -> str:
+    value = _DEFAULT_CONFIG_DICT
+    for part in DB_CONFIG_KEYS[key]:
+        value = value[part]
+    # Stringified the same way it'd be typed as an app_config value (lower-
+    # case true/false, not Python's True/False) - consistent with how it's
+    # displayed and compared against s.value (always a string, or None) in
+    # the template above.
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    return str(value)
+
 
 _PAGE_TEMPLATE = """
 <!doctype html>
@@ -121,6 +144,19 @@ _PAGE_TEMPLATE = """
   .tab-panel { display: none; }
   .tab-panel.active { display: block; }
   .tab-panel h2 { margin-top: 0; }
+
+  .config-value-input {
+    background: var(--panel); color: var(--text); border: 1px solid var(--border);
+    border-radius: 8px; padding: 0.3rem 0.55rem; font-size: 0.85rem; font-family: inherit; width: 8rem;
+  }
+  .config-save-btn {
+    background: var(--panel); color: var(--text); border: 1px solid var(--border);
+    border-radius: 8px; padding: 0.3rem 0.7rem; font-size: 0.82rem; font-family: inherit; cursor: pointer;
+  }
+  .config-save-btn:disabled { opacity: 0.5; cursor: default; }
+  .config-status { font-size: 0.8rem; margin-left: 0.5rem; }
+  .config-status.ok { color: var(--green); }
+  .config-status.error { color: var(--red); }
 </style>
 
 <h1>ebs-auto-resize</h1>
@@ -139,6 +175,7 @@ _PAGE_TEMPLATE = """
 <div class="tabs">
   <button class="tab-btn active" data-tab="instances-panel">Instances</button>
   <button class="tab-btn" data-tab="volumes-panel">Volumes</button>
+  <button class="tab-btn" data-tab="settings-panel">Settings</button>
 </div>
 
 <div class="tab-panel active" id="instances-panel">
@@ -246,6 +283,38 @@ _PAGE_TEMPLATE = """
 </table>
 </div>
 <div class="pager" id="volumes-pager"></div>
+</div>
+
+<div class="tab-panel" id="settings-panel">
+<h2>Settings <small>live-editable - takes effect on the controller's next cycle, no restart</small></h2>
+<div class="panel">
+<table id="settings-table">
+  <thead><tr><th>Key</th><th>Value</th><th>Default</th><th></th></tr></thead>
+  <tbody>
+  {% for s in settings %}
+  <tr data-key="{{ s.key }}">
+    <td class="mono">{{ s.key }}</td>
+    <td>
+      {% if s.key == "dry_run" %}
+      <label class="switch">
+        <input type="checkbox" class="config-bool-toggle" data-key="{{ s.key }}"
+               {{ "checked" if (s.value if s.value is not none else s.default) == "true" }}>
+        <span class="slider"></span>
+      </label>
+      {% else %}
+      <input type="text" class="config-value-input" value="{{ s.value if s.value is not none else '' }}"
+             placeholder="{{ s.default }}">
+      <button class="config-save-btn" data-key="{{ s.key }}">Save</button>
+      <span class="config-status"></span>
+      {% endif %}
+    </td>
+    <td class="mono">{{ s.default }}</td>
+    <td>{{ "override set" if s.value is not none else "using default" }}</td>
+  </tr>
+  {% endfor %}
+  </tbody>
+</table>
+</div>
 </div>
 
 <h2>Resize activity</h2>
@@ -462,6 +531,62 @@ document.querySelectorAll(".autoresize-toggle").forEach(function (toggle) {
   });
 });
 
+document.querySelectorAll(".config-bool-toggle").forEach(function (toggle) {
+  toggle.addEventListener("change", function () {
+    const key = toggle.dataset.key;
+    const desired = toggle.checked;
+    toggle.disabled = true;
+    fetch("/api/config/" + encodeURIComponent(key), {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ value: desired ? "true" : "false" }),
+    })
+      .then(function (resp) {
+        if (!resp.ok) throw new Error("request failed");
+        return resp.json();
+      })
+      .catch(function () {
+        toggle.checked = !desired;
+        alert("Failed to update " + key + " - try again.");
+      })
+      .finally(function () {
+        toggle.disabled = false;
+      });
+  });
+});
+
+document.querySelectorAll(".config-save-btn").forEach(function (btn) {
+  btn.addEventListener("click", function () {
+    const row = btn.closest("tr");
+    const key = btn.dataset.key;
+    const input = row.querySelector(".config-value-input");
+    const statusEl = row.querySelector(".config-status");
+    const value = input.value.trim();
+    btn.disabled = true;
+    statusEl.textContent = "";
+    statusEl.className = "config-status";
+    fetch("/api/config/" + encodeURIComponent(key), {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ value: value }),
+    })
+      .then(function (resp) {
+        return resp.json().then(function (data) { return { ok: resp.ok, data: data }; });
+      })
+      .then(function (result) {
+        statusEl.textContent = result.ok ? "Saved" : (result.data.error || "Invalid value");
+        statusEl.className = "config-status " + (result.ok ? "ok" : "error");
+      })
+      .catch(function () {
+        statusEl.textContent = "Request failed";
+        statusEl.className = "config-status error";
+      })
+      .finally(function () {
+        btn.disabled = false;
+      });
+  });
+});
+
 document.querySelectorAll(".tab-btn").forEach(function (btn) {
   btn.addEventListener("click", function () {
     document.querySelectorAll(".tab-btn").forEach(function (b) { b.classList.remove("active"); });
@@ -506,6 +631,11 @@ def _compute_stats(records, scans, volumes) -> dict[str, int]:
     }
 
 
+def _list_settings(state: StateBackend) -> list[dict]:
+    overrides = state.list_config()
+    return [{"key": key, "value": overrides.get(key), "default": _default_config_value(key)} for key in DB_CONFIG_KEYS]
+
+
 def create_app(state: StateBackend) -> Flask:
     app = Flask(__name__)
 
@@ -521,6 +651,7 @@ def create_app(state: StateBackend) -> Flask:
             scans=scans,
             instances=instances,
             volumes=volumes,
+            settings=_list_settings(state),
             scan_limit=_SCAN_LIST_LIMIT,
             stats=_compute_stats(records, scans, volumes),
             status_badge=_status_badge,
@@ -609,6 +740,10 @@ def create_app(state: StateBackend) -> Flask:
             ]
         )
 
+    @app.get("/api/config")
+    def api_config():
+        return jsonify(_list_settings(state))
+
     @app.post("/api/instances/<instance_id>/autoresize")
     def set_instance_autoresize(instance_id: str):
         autoresize = _parse_autoresize_body()
@@ -626,6 +761,30 @@ def create_app(state: StateBackend) -> Flask:
         if not state.set_volume_autoresize(volume_id, autoresize):
             return jsonify({"error": f"no known volume {volume_id!r}"}), 404
         return jsonify({"volume_id": volume_id, "autoresize": autoresize})
+
+    @app.post("/api/config/<key>")
+    def set_app_config(key: str):
+        if key not in DB_CONFIG_KEYS:
+            return jsonify({"error": f"unknown config key {key!r}"}), 404
+        body = request.get_json(silent=True)
+        if not isinstance(body, dict) or not isinstance(body.get("value"), str):
+            return jsonify({"error": "body must be JSON {'value': '<string>'}"}), 400
+        value = body["value"]
+
+        # Validate against every *other* current override too, not just this
+        # key in isolation - the same merge refresh_config_from_db does each
+        # scheduler cycle - so a bad value is rejected here with a clear
+        # error instead of being silently ignored on the controller's next
+        # cycle (its own fallback, a good last resort but a poor first UX).
+        overrides = state.list_config()
+        overrides[key] = value
+        try:
+            Config.from_dict(apply_db_overrides(_DEFAULT_CONFIG_DICT, overrides))
+        except (ValueError, TypeError) as exc:
+            return jsonify({"error": str(exc)}), 400
+
+        state.set_config(key, value)
+        return jsonify({"key": key, "value": value})
 
     return app
 

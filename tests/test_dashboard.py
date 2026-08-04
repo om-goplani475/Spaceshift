@@ -144,3 +144,103 @@ def test_toggle_with_invalid_body_returns_400(state):
     response = client.post("/api/instances/i-1/autoresize", json={"autoresize": "not-a-bool"})
 
     assert response.status_code == 400
+
+
+# --- Settings tab (config-in-DB) ---------------------------------------------
+
+
+def test_index_renders_settings_tab(state):
+    client = create_app(state).test_client()
+    response = client.get("/")
+
+    assert response.status_code == 200
+    assert b"Settings" in response.data
+    assert b"dry_run" in response.data
+    assert b"scheduler.interval_seconds" in response.data
+
+
+def test_api_config_lists_all_known_keys_with_defaults(state):
+    client = create_app(state).test_client()
+    response = client.get("/api/config")
+
+    assert response.status_code == 200
+    data = response.get_json()
+    by_key = {row["key"]: row for row in data}
+    assert by_key["dry_run"] == {"key": "dry_run", "value": None, "default": "true"}
+    assert by_key["default_threshold_percent"]["default"] == "80"
+    assert by_key["scheduler.interval_seconds"]["default"] == "300"
+
+
+def test_api_config_reflects_current_override(state):
+    state.set_config("dry_run", "false")
+    client = create_app(state).test_client()
+
+    response = client.get("/api/config")
+
+    by_key = {row["key"]: row for row in response.get_json()}
+    assert by_key["dry_run"]["value"] == "false"
+
+
+def test_set_config_valid_value_persists(state):
+    client = create_app(state).test_client()
+
+    response = client.post("/api/config/dry_run", json={"value": "false"})
+
+    assert response.status_code == 200
+    assert response.get_json() == {"key": "dry_run", "value": "false"}
+    assert state.get_config("dry_run") == "false"
+
+
+def test_set_config_invalid_value_rejected_and_not_persisted(state):
+    client = create_app(state).test_client()
+
+    response = client.post("/api/config/scheduler.interval_seconds", json={"value": "not-a-number"})
+
+    assert response.status_code == 400
+    assert "error" in response.get_json()
+    assert state.get_config("scheduler.interval_seconds") is None
+
+
+def test_set_config_out_of_range_value_rejected(state):
+    client = create_app(state).test_client()
+
+    response = client.post("/api/config/default_threshold_percent", json={"value": "150"})
+
+    assert response.status_code == 400
+    assert state.get_config("default_threshold_percent") is None
+
+
+def test_set_config_unknown_key_returns_404(state):
+    client = create_app(state).test_client()
+
+    response = client.post("/api/config/credentials.mode", json={"value": "static"})
+
+    assert response.status_code == 404
+
+
+def test_set_config_invalid_body_returns_400(state):
+    client = create_app(state).test_client()
+
+    response = client.post("/api/config/dry_run", json={"value": 123})
+
+    assert response.status_code == 400
+
+
+def test_set_config_does_not_clobber_other_overrides(state):
+    client = create_app(state).test_client()
+
+    client.post("/api/config/dry_run", json={"value": "false"})
+    client.post("/api/config/scheduler.interval_seconds", json={"value": "60"})
+
+    assert state.get_config("dry_run") == "false"
+    assert state.get_config("scheduler.interval_seconds") == "60"
+
+
+def test_set_config_overwrites_existing_value(state):
+    client = create_app(state).test_client()
+
+    client.post("/api/config/dry_run", json={"value": "false"})
+    response = client.post("/api/config/dry_run", json={"value": "true"})
+
+    assert response.status_code == 200
+    assert state.get_config("dry_run") == "true"
