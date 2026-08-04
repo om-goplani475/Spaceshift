@@ -7,6 +7,8 @@ need to change.
 
 from __future__ import annotations
 
+import copy
+import logging
 import os
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -14,10 +16,48 @@ from typing import Any
 
 import yaml
 
+from controller.state.base import StateBackend
+
+logger = logging.getLogger(__name__)
+
 DEFAULT_CONFIG_PATH = Path(os.environ.get("EBS_AUTO_RESIZE_CONFIG", "config.yaml"))
 
 _VALID_NOTIFICATION_METHODS = {"none", "slack", "email"}
 _VALID_CREDENTIALS_MODES = {"role", "static"}
+
+
+def _require_int(label: str, value: Any, *, minimum: int) -> None:
+    """Validate an integer field, rejecting bool (a subclass of int in
+    Python) and anything below `minimum`. Every integer setting below has
+    gone through only a YAML file until now - a stray typo there was rare
+    and would've been caught on review. Now that the same fields are
+    live-editable as arbitrary text via app_config (see
+    controller.state.base.StateBackend.set_config), a bad value must fail
+    loudly here so refresh_config_from_db can catch it and fall back to the
+    last-known-good config instead of silently running with a broken value.
+    """
+    if isinstance(value, bool) or not isinstance(value, int) or value < minimum:
+        raise ValueError(f"{label} must be an integer >= {minimum}, got {value!r}")
+
+
+# Dotted app_config key -> the nested path into the dict shape
+# Config.from_dict() expects. Everything else config.yaml can set
+# (credentials, accounts, notifications) is deliberately not in this table -
+# those stay file-only identity/secrets, never DB-overridable. This is also
+# the canonical list of which settings are live-editable via app_config -
+# see docs/SETUP.md.
+DB_CONFIG_KEYS: dict[str, tuple[str, ...]] = {
+    "default_threshold_percent": ("default_threshold_percent",),
+    "dry_run": ("dry_run",),
+    "scheduler.interval_seconds": ("scheduler", "interval_seconds"),
+    "scheduler.max_concurrent_resizes": ("scheduler", "max_concurrent_resizes"),
+    "scheduler.scan_log_retention_days": ("scheduler", "scan_log_retention_days"),
+    "resize.max_volume_size_gb": ("resize", "max_volume_size_gb"),
+    "resize.growth_increment_percent": ("resize", "growth_increment_percent"),
+    "resize.extend_retry.max_attempts": ("resize", "extend_retry", "max_attempts"),
+    "resize.extend_retry.backoff_seconds": ("resize", "extend_retry", "backoff_seconds"),
+    "resize.stale_lock_timeout_minutes": ("resize", "stale_lock_timeout_minutes"),
+}
 
 
 @dataclass
@@ -162,14 +202,19 @@ class Config:
                 f"notifications.method must be one of {sorted(_VALID_NOTIFICATION_METHODS)}, "
                 f"got {self.notifications.method!r}"
             )
-        if not 0 <= self.default_threshold_percent <= 100:
+        _require_int("default_threshold_percent", self.default_threshold_percent, minimum=0)
+        if self.default_threshold_percent > 100:
             raise ValueError(
                 f"default_threshold_percent must be between 0 and 100, got {self.default_threshold_percent}"
             )
-        if self.resize.growth_increment_percent <= 0:
-            raise ValueError(
-                f"resize.growth_increment_percent must be positive, got {self.resize.growth_increment_percent}"
-            )
+        _require_int("scheduler.interval_seconds", self.scheduler.interval_seconds, minimum=1)
+        _require_int("scheduler.max_concurrent_resizes", self.scheduler.max_concurrent_resizes, minimum=1)
+        _require_int("scheduler.scan_log_retention_days", self.scheduler.scan_log_retention_days, minimum=0)
+        _require_int("resize.max_volume_size_gb", self.resize.max_volume_size_gb, minimum=1)
+        _require_int("resize.growth_increment_percent", self.resize.growth_increment_percent, minimum=1)
+        _require_int("resize.extend_retry.max_attempts", self.resize.extend_retry.max_attempts, minimum=1)
+        _require_int("resize.extend_retry.backoff_seconds", self.resize.extend_retry.backoff_seconds, minimum=0)
+        _require_int("resize.stale_lock_timeout_minutes", self.resize.stale_lock_timeout_minutes, minimum=1)
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> Config:
@@ -212,3 +257,59 @@ def load_config(path: str | Path | None = None) -> Config:
     else:
         raw = {}
     return Config.from_dict(raw)
+
+
+def apply_db_overrides(base: dict[str, Any], overrides: dict[str, str]) -> dict[str, Any]:
+    """Return a copy of `base` (already in the nested shape Config.from_dict()
+    expects - see refresh_config_from_db) with every recognized key in
+    `overrides` applied on top. Values are stored as plain text in
+    app_config and parsed as YAML scalars here (so "300" -> int, "true" ->
+    bool, etc, reusing the same parser config.yaml itself is read with,
+    rather than writing a second ad-hoc type-coercion path). Unrecognized
+    keys are ignored - app_config is meant to be edited via this tool's own
+    dashboard/SQL examples (docs/SETUP.md), but nothing stops a stray or
+    outdated row from existing.
+    """
+    merged = copy.deepcopy(base)
+    for key, path in DB_CONFIG_KEYS.items():
+        if key not in overrides:
+            continue
+        try:
+            value = yaml.safe_load(overrides[key])
+        except yaml.YAMLError:
+            logger.warning("app_config[%r] = %r is not a valid value - ignoring it this cycle", key, overrides[key])
+            continue
+        target = merged
+        for part in path[:-1]:
+            target = target.setdefault(part, {})
+        target[path[-1]] = value
+    return merged
+
+
+def refresh_config_from_db(base: dict[str, Any], state: StateBackend, previous: Config) -> Config:
+    """Re-resolve the effective config for one scheduler cycle.
+
+    `base` is config.yaml's own dict (fixed for the life of the process -
+    typically dataclasses.asdict() of the Config built at startup, which is
+    just as good a "file defaults resolved" snapshot as the raw YAML dict
+    since Config.from_dict() already filled in every default once),
+    overlaid with whatever is currently in the app_config table.
+
+    On any problem - a DB error, or an overridden value that fails Config's
+    own validation (__post_init__) - logs a warning and returns `previous`
+    unchanged rather than raising. This is a deliberate departure from
+    load_config()'s fail-fast-at-startup behavior: app_config is a live,
+    externally-editable source that the scheduler must keep running through,
+    not a one-time boot-time check where crashing loudly is the right call.
+    """
+    try:
+        overrides = state.list_config()
+    except Exception:
+        logger.exception("Failed to read app_config from the database - keeping previous config this cycle")
+        return previous
+    merged = apply_db_overrides(base, overrides)
+    try:
+        return Config.from_dict(merged)
+    except (ValueError, TypeError) as exc:
+        logger.warning("Invalid value(s) in app_config - keeping previous config this cycle: %s", exc)
+        return previous

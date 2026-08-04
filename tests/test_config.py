@@ -1,8 +1,11 @@
 """Tests for controller.config."""
 
+from dataclasses import asdict
+
 import pytest
 
-from controller.config import Config, load_config
+from controller.config import Config, apply_db_overrides, load_config, refresh_config_from_db
+from tests.helpers import InMemoryStateBackend
 
 
 def test_defaults_match_config_yaml_example():
@@ -105,3 +108,93 @@ def test_account_with_empty_regions_rejected():
 def test_empty_accounts_list_rejected():
     with pytest.raises(ValueError, match="accounts"):
         Config.from_dict({"accounts": []})
+
+
+# --- apply_db_overrides / refresh_config_from_db (config-in-DB) --------------
+
+
+def test_asdict_roundtrip_with_no_overrides_reconstructs_equivalent_config():
+    # The base dict refresh_config_from_db overlays onto is
+    # dataclasses.asdict(config), not the raw config.yaml dict - this locks
+    # down that Config.from_dict(asdict(config)) is a faithful roundtrip,
+    # which the whole hot-reload design leans on.
+    config = load_config("config.yaml.example")
+    roundtripped = Config.from_dict(apply_db_overrides(asdict(config), {}))
+    assert roundtripped == config
+
+
+def test_apply_db_overrides_sets_top_level_key():
+    base = asdict(Config.from_dict({}))
+    merged = apply_db_overrides(base, {"dry_run": "false"})
+    assert Config.from_dict(merged).dry_run is False
+
+
+def test_apply_db_overrides_sets_nested_key():
+    base = asdict(Config.from_dict({}))
+    merged = apply_db_overrides(base, {"scheduler.interval_seconds": "60"})
+    assert Config.from_dict(merged).scheduler.interval_seconds == 60
+
+
+def test_apply_db_overrides_sets_doubly_nested_key():
+    base = asdict(Config.from_dict({}))
+    merged = apply_db_overrides(base, {"resize.extend_retry.max_attempts": "5"})
+    assert Config.from_dict(merged).resize.extend_retry.max_attempts == 5
+
+
+def test_apply_db_overrides_ignores_unrecognized_key():
+    base = asdict(Config.from_dict({}))
+    merged = apply_db_overrides(base, {"credentials.mode": "static"})
+    # Not in DB_CONFIG_KEYS - identity/secrets stay file-only, never DB-overridable.
+    assert Config.from_dict(merged).credentials.mode == "role"
+
+
+def test_apply_db_overrides_ignores_unparseable_value(caplog):
+    base = asdict(Config.from_dict({}))
+    with caplog.at_level("WARNING"):
+        merged = apply_db_overrides(base, {"scheduler.interval_seconds": "["})
+    assert Config.from_dict(merged).scheduler.interval_seconds == 300  # untouched default
+    assert "not a valid value" in caplog.text
+
+
+def test_refresh_config_from_db_applies_valid_override():
+    state = InMemoryStateBackend()
+    state.set_config("dry_run", "false")
+    previous = Config.from_dict({})
+    updated = refresh_config_from_db(asdict(previous), state, previous)
+    assert updated.dry_run is False
+
+
+def test_refresh_config_from_db_keeps_previous_on_invalid_override(caplog):
+    state = InMemoryStateBackend()
+    state.set_config("default_threshold_percent", "150")  # out of range, fails __post_init__
+    previous = Config.from_dict({})
+    with caplog.at_level("WARNING"):
+        updated = refresh_config_from_db(asdict(previous), state, previous)
+    assert updated is previous
+    assert "keeping previous config" in caplog.text
+
+
+def test_refresh_config_from_db_keeps_previous_on_state_error(caplog):
+    class BrokenState(InMemoryStateBackend):
+        def list_config(self):
+            raise RuntimeError("connection lost")
+
+    previous = Config.from_dict({})
+    with caplog.at_level("WARNING"):
+        updated = refresh_config_from_db(asdict(previous), BrokenState(), previous)
+    assert updated is previous
+    assert "keeping previous config" in caplog.text
+
+
+def test_refresh_config_from_db_reverts_when_db_row_removed():
+    state = InMemoryStateBackend()
+    state.set_config("dry_run", "false")
+    previous = Config.from_dict({})
+    updated = refresh_config_from_db(asdict(previous), state, previous)
+    assert updated.dry_run is False
+
+    # The row disappearing (e.g. an admin deletes it) falls back to the
+    # base dict's own value, not whatever the previous effective config had.
+    state._app_config.pop("dry_run")
+    reverted = refresh_config_from_db(asdict(previous), state, updated)
+    assert reverted.dry_run is True
