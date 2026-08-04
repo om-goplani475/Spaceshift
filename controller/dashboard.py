@@ -145,6 +145,10 @@ _PAGE_TEMPLATE = """
 <h2>Instances <small>toggle autoresize to make an instance's volumes eligible</small></h2>
 <div class="filters">
   <input type="text" id="instances-search" placeholder="Search instance ID...">
+  <select id="instances-account-filter">
+    <option value="">All accounts</option>
+    {% for account in instance_accounts %}<option value="{{ account }}">{{ account }}</option>{% endfor %}
+  </select>
   <select id="instances-region-filter">
     <option value="">All regions</option>
     {% for region in instance_regions %}<option value="{{ region }}">{{ region }}</option>{% endfor %}
@@ -159,13 +163,15 @@ _PAGE_TEMPLATE = """
 <div class="panel">
 <table id="instances-table">
   <thead><tr>
-    <th>Instance</th><th>Region</th><th>Type</th><th>State</th><th>Threshold</th><th>Autoresize</th><th>Last seen</th>
+    <th>Instance</th><th>Account</th><th>Region</th><th>Type</th><th>State</th><th>Threshold</th>
+    <th>Autoresize</th><th>Last seen</th>
   </tr></thead>
   <tbody>
   {% for i in instances %}
-  <tr data-volume="" data-instance="{{ i.instance_id|lower }}" data-region="{{ i.region }}"
-      data-autoresize="{{ i.autoresize|lower }}">
+  <tr data-volume="" data-instance="{{ i.instance_id|lower }}" data-account="{{ i.account_name }}"
+      data-region="{{ i.region }}" data-autoresize="{{ i.autoresize|lower }}">
     <td class="mono">{{ i.instance_id }}</td>
+    <td>{{ i.account_name }}</td>
     <td>{{ i.region }}</td>
     <td>{{ i.instance_type }}</td>
     <td>{{ i.state }}</td>
@@ -180,7 +186,7 @@ _PAGE_TEMPLATE = """
     <td class="ts" data-ts="{{ i.last_seen_at.isoformat() }}"></td>
   </tr>
   {% else %}
-  <tr><td class="empty" colspan="7">No instances discovered yet.</td></tr>
+  <tr><td class="empty" colspan="8">No instances discovered yet.</td></tr>
   {% endfor %}
   </tbody>
 </table>
@@ -192,6 +198,10 @@ _PAGE_TEMPLATE = """
 <h2>Volumes <small>toggle autoresize per-volume, overrides its instance</small></h2>
 <div class="filters">
   <input type="text" id="volumes-search" placeholder="Search volume or instance ID...">
+  <select id="volumes-account-filter">
+    <option value="">All accounts</option>
+    {% for account in volume_accounts %}<option value="{{ account }}">{{ account }}</option>{% endfor %}
+  </select>
   <select id="volumes-region-filter">
     <option value="">All regions</option>
     {% for region in volume_regions %}<option value="{{ region }}">{{ region }}</option>{% endfor %}
@@ -206,15 +216,16 @@ _PAGE_TEMPLATE = """
 <div class="panel">
 <table id="volumes-table">
   <thead><tr>
-    <th>Volume</th><th>Instance</th><th>Region</th><th>Size</th><th>Device</th>
+    <th>Volume</th><th>Instance</th><th>Account</th><th>Region</th><th>Size</th><th>Device</th>
     <th>Threshold</th><th>Autoresize</th><th>Last seen</th>
   </tr></thead>
   <tbody>
   {% for v in volumes %}
   <tr data-volume="{{ v.volume_id|lower }}" data-instance="{{ (v.instance_id or '')|lower }}"
-      data-region="{{ v.region }}" data-autoresize="{{ v.autoresize|lower }}">
+      data-account="{{ v.account_name }}" data-region="{{ v.region }}" data-autoresize="{{ v.autoresize|lower }}">
     <td class="mono">{{ v.volume_id }}</td>
     <td class="mono">{{ v.instance_id or "-" }}</td>
+    <td>{{ v.account_name }}</td>
     <td>{{ v.region }}</td>
     <td>{{ v.size_gb }}GB</td>
     <td>{{ v.device_name or "-" }}</td>
@@ -229,7 +240,7 @@ _PAGE_TEMPLATE = """
     <td class="ts" data-ts="{{ v.last_seen_at.isoformat() }}"></td>
   </tr>
   {% else %}
-  <tr><td class="empty" colspan="8">No volumes discovered yet.</td></tr>
+  <tr><td class="empty" colspan="9">No volumes discovered yet.</td></tr>
   {% endfor %}
   </tbody>
 </table>
@@ -273,6 +284,10 @@ _PAGE_TEMPLATE = """
 <h2>Scan history <small>most recent {{ scan_limit }} scans, newest first</small></h2>
 <div class="filters">
   <input type="text" id="scan-search" placeholder="Search volume or instance...">
+  <select id="scan-account-filter">
+    <option value="">All accounts</option>
+    {% for account in scan_accounts %}<option value="{{ account }}">{{ account }}</option>{% endfor %}
+  </select>
   <select id="scan-region-filter">
     <option value="">All regions</option>
     {% for region in scan_regions %}<option value="{{ region }}">{{ region }}</option>{% endfor %}
@@ -290,14 +305,17 @@ _PAGE_TEMPLATE = """
 <div class="panel">
 <table id="scan-table">
   <thead><tr>
-    <th>Volume</th><th>Instance</th><th>Region</th><th>Size</th><th>Usage</th><th>Threshold</th><th>Decision</th><th>Checked</th>
+    <th>Volume</th><th>Instance</th><th>Account</th><th>Region</th><th>Size</th><th>Usage</th>
+    <th>Threshold</th><th>Decision</th><th>Checked</th>
   </tr></thead>
   <tbody>
   {% for s in scans %}
   <tr data-volume="{{ s.volume_id|lower }}" data-instance="{{ s.instance_id|lower }}"
-      data-region="{{ s.region }}" data-size="{{ s.size_gb }}" data-decision="{{ s.decision }}">
+      data-account="{{ s.account_name }}" data-region="{{ s.region }}" data-size="{{ s.size_gb }}"
+      data-decision="{{ s.decision }}">
     <td class="mono">{{ s.volume_id }}</td>
     <td class="mono">{{ s.instance_id }}</td>
+    <td>{{ s.account_name }}</td>
     <td>{{ s.region }}</td>
     <td>{{ s.size_gb }}GB</td>
     <td>{{ (s.percent_used ~ "%") if s.percent_used is not none else "-" }}</td>
@@ -306,7 +324,7 @@ _PAGE_TEMPLATE = """
     <td class="ts" data-ts="{{ s.timestamp.isoformat() }}"></td>
   </tr>
   {% else %}
-  <tr><td class="empty" colspan="8">No scans recorded yet.</td></tr>
+  <tr><td class="empty" colspan="9">No scans recorded yet.</td></tr>
   {% endfor %}
   </tbody>
 </table>
@@ -390,26 +408,29 @@ document.getElementById("resize-status-filter").dataset.field = "status";
 
 wireFilters(
   "scan-table", "scan-search",
-  ["scan-region-filter", "scan-size-filter", "scan-decision-filter"],
+  ["scan-account-filter", "scan-region-filter", "scan-size-filter", "scan-decision-filter"],
   "scan-count", "scan-pager"
 );
+document.getElementById("scan-account-filter").dataset.field = "account";
 document.getElementById("scan-region-filter").dataset.field = "region";
 document.getElementById("scan-size-filter").dataset.field = "size";
 document.getElementById("scan-decision-filter").dataset.field = "decision";
 
 wireFilters(
   "instances-table", "instances-search",
-  ["instances-region-filter", "instances-autoresize-filter"],
+  ["instances-account-filter", "instances-region-filter", "instances-autoresize-filter"],
   "instances-count", "instances-pager"
 );
+document.getElementById("instances-account-filter").dataset.field = "account";
 document.getElementById("instances-region-filter").dataset.field = "region";
 document.getElementById("instances-autoresize-filter").dataset.field = "autoresize";
 
 wireFilters(
   "volumes-table", "volumes-search",
-  ["volumes-region-filter", "volumes-autoresize-filter"],
+  ["volumes-account-filter", "volumes-region-filter", "volumes-autoresize-filter"],
   "volumes-count", "volumes-pager"
 );
+document.getElementById("volumes-account-filter").dataset.field = "account";
 document.getElementById("volumes-region-filter").dataset.field = "region";
 document.getElementById("volumes-autoresize-filter").dataset.field = "autoresize";
 
@@ -505,10 +526,13 @@ def create_app(state: StateBackend) -> Flask:
             status_badge=_status_badge,
             decision_badge=_decision_badge,
             resize_statuses=sorted({r.status.value for r in records}),
+            scan_accounts=sorted({s.account_name for s in scans}),
             scan_regions=sorted({s.region for s in scans}),
             scan_sizes=sorted({s.size_gb for s in scans}),
             scan_decisions=sorted({s.decision for s in scans}),
+            instance_accounts=sorted({i.account_name for i in instances}),
             instance_regions=sorted({i.region for i in instances}),
+            volume_accounts=sorted({v.account_name for v in volumes}),
             volume_regions=sorted({v.region for v in volumes}),
         )
 
@@ -535,6 +559,7 @@ def create_app(state: StateBackend) -> Flask:
             [
                 {
                     "timestamp": s.timestamp.isoformat(),
+                    "account_name": s.account_name,
                     "region": s.region,
                     "volume_id": s.volume_id,
                     "instance_id": s.instance_id,
@@ -553,6 +578,7 @@ def create_app(state: StateBackend) -> Flask:
             [
                 {
                     "instance_id": i.instance_id,
+                    "account_name": i.account_name,
                     "region": i.region,
                     "instance_type": i.instance_type,
                     "state": i.state,
@@ -571,6 +597,7 @@ def create_app(state: StateBackend) -> Flask:
                 {
                     "volume_id": v.volume_id,
                     "instance_id": v.instance_id,
+                    "account_name": v.account_name,
                     "region": v.region,
                     "size_gb": v.size_gb,
                     "device_name": v.device_name,
