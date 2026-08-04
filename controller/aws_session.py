@@ -14,7 +14,7 @@ import botocore.session
 from botocore.config import Config as BotoConfig
 from botocore.credentials import RefreshableCredentials
 
-from controller.config import Config
+from controller.config import AccountConfig, Config
 
 logger = logging.getLogger(__name__)
 
@@ -30,22 +30,33 @@ _ASSUME_ROLE_SESSION_NAME = "ebs-auto-resize"
 RETRY_CONFIG = BotoConfig(retries={"mode": "adaptive", "max_attempts": 10})
 
 
-def build_boto3_session(config: Config) -> boto3.Session:
-    """Return the session every AWS client should be built from.
+def build_base_session(config: Config) -> boto3.Session:
+    """Return the one base identity every account session is built from.
 
     With credentials.mode "role" (default), this is the controller's own
     default credential chain (an EC2 instance role, typically). With
     "static", it authenticates with the access key in config.yaml instead -
-    for deployments with no instance role available. With assume_role_arn
-    also set, every client - EC2, SSM, and the SSM connector - then
-    authenticates as the assumed role on top of whichever base credentials
-    were resolved, which is what makes multi-account central management
-    actually work.
+    for deployments with no instance role available. This is a single
+    shared identity across every account in accounts: - what actually
+    varies per account is whether (and which) role gets assumed on top of
+    it, see build_account_session().
     """
-    base_session = _build_base_session(config)
-    if not config.assume_role_arn:
+    return _build_base_session(config)
+
+
+def build_account_session(base_session: boto3.Session, account: AccountConfig) -> boto3.Session:
+    """Return the session to use for one entry in accounts:.
+
+    With no assume_role_arn set, this is just base_session itself - meaning
+    "scan the base identity's own account directly." With assume_role_arn
+    set, every client for this account - EC2, SSM, and the SSM connector -
+    authenticates as that assumed role instead, which is what makes central
+    multi-account management actually work: one controller process, N
+    accounts, each via its own role.
+    """
+    if not account.assume_role_arn:
         return base_session
-    return boto3.Session(botocore_session=_build_refreshable_assume_role_session(config.assume_role_arn, base_session))
+    return boto3.Session(botocore_session=_build_refreshable_assume_role_session(account.assume_role_arn, base_session))
 
 
 def _build_base_session(config: Config) -> boto3.Session:
