@@ -78,3 +78,55 @@ def test_prune_scan_log_removes_old_entries():
     backend.record_scan("us-east-1", "vol-1", "i-1", 100, 80, 50.0, "below_threshold")
     backend.prune_scan_log(datetime.now(UTC) + timedelta(seconds=1))
     assert backend.list_scans() == []
+
+
+def test_upsert_instance_then_volume_and_list():
+    backend = InMemoryStateBackend()
+    backend.upsert_instance("i-1", "us-east-1", "t3.micro", "running")
+    backend.upsert_volume("vol-1", "i-1", "us-east-1", 100, "/dev/xvdf")
+
+    instances = backend.list_instances(region="us-east-1")
+    volumes = backend.list_volumes(region="us-east-1")
+    assert [i.instance_id for i in instances] == ["i-1"]
+    assert [v.volume_id for v in volumes] == ["vol-1"]
+    assert instances[0].autoresize is False
+    assert volumes[0].autoresize is False
+
+
+def test_upsert_never_overwrites_autoresize():
+    backend = InMemoryStateBackend()
+    backend.upsert_instance("i-1", "us-east-1", "t3.micro", "running")
+    backend.set_instance_autoresize("i-1", True)
+
+    backend.upsert_instance("i-1", "us-east-1", "t3.micro", "stopped")  # re-synced, e.g. next cycle
+
+    instance = backend.list_instances(region="us-east-1")[0]
+    assert instance.autoresize is True
+    assert instance.state == "stopped"
+
+
+def test_set_autoresize_returns_false_for_unknown_id():
+    backend = InMemoryStateBackend()
+    assert backend.set_instance_autoresize("i-nonexistent", True) is False
+    assert backend.set_volume_autoresize("vol-nonexistent", True) is False
+
+
+def test_mark_stale_flags_unseen_resources_without_deleting():
+    backend = InMemoryStateBackend()
+    backend.upsert_instance("i-1", "us-east-1", "t3.micro", "running")
+    backend.upsert_volume("vol-1", "i-1", "us-east-1", 100, "/dev/xvdf")
+    backend.set_volume_autoresize("vol-1", True)
+
+    backend.mark_stale("us-east-1", seen_instance_ids=set(), seen_volume_ids=set())
+
+    assert backend.list_instances(region="us-east-1") == []  # excluded by default
+    stale_volumes = backend.list_volumes(region="us-east-1", include_stale=True)
+    assert stale_volumes[0].is_stale is True
+    assert stale_volumes[0].autoresize is True  # preserved, not deleted
+
+
+def test_mark_stale_leaves_seen_resources_alone():
+    backend = InMemoryStateBackend()
+    backend.upsert_volume("vol-1", "i-1", "us-east-1", 100, "/dev/xvdf")
+    backend.mark_stale("us-east-1", seen_instance_ids=set(), seen_volume_ids={"vol-1"})
+    assert backend.list_volumes(region="us-east-1")[0].is_stale is False

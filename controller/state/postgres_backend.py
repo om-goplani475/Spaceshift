@@ -18,7 +18,15 @@ from datetime import UTC, datetime
 import psycopg2
 import psycopg2.pool
 
-from controller.state.base import TERMINAL_STATUSES, ResizeRecord, ResizeStatus, ScanRecord, StateBackend
+from controller.state.base import (
+    TERMINAL_STATUSES,
+    InstanceRecord,
+    ResizeRecord,
+    ResizeStatus,
+    ScanRecord,
+    StateBackend,
+    VolumeRecord,
+)
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS resize_state (
@@ -54,6 +62,34 @@ CREATE TABLE IF NOT EXISTS scan_log (
 );
 
 CREATE INDEX IF NOT EXISTS idx_scan_log_timestamp ON scan_log (timestamp DESC);
+
+CREATE TABLE IF NOT EXISTS instances (
+    instance_id       TEXT PRIMARY KEY,
+    region            TEXT NOT NULL,
+    instance_type     TEXT NOT NULL,
+    state             TEXT NOT NULL,
+    autoresize        BOOLEAN NOT NULL DEFAULT FALSE,
+    threshold_percent INTEGER,
+    last_seen_at      TIMESTAMPTZ NOT NULL,
+    is_stale          BOOLEAN NOT NULL DEFAULT FALSE
+);
+
+CREATE INDEX IF NOT EXISTS idx_instances_region ON instances (region);
+
+CREATE TABLE IF NOT EXISTS volumes (
+    volume_id         TEXT PRIMARY KEY,
+    instance_id       TEXT,
+    region            TEXT NOT NULL,
+    size_gb           INTEGER NOT NULL,
+    device_name       TEXT,
+    autoresize        BOOLEAN NOT NULL DEFAULT FALSE,
+    threshold_percent INTEGER,
+    last_seen_at      TIMESTAMPTZ NOT NULL,
+    is_stale          BOOLEAN NOT NULL DEFAULT FALSE
+);
+
+CREATE INDEX IF NOT EXISTS idx_volumes_region ON volumes (region);
+CREATE INDEX IF NOT EXISTS idx_volumes_instance_id ON volumes (instance_id);
 """
 
 _TERMINAL_STATUS_VALUES = [s.value for s in TERMINAL_STATUSES]
@@ -214,6 +250,98 @@ class PostgresStateBackend(StateBackend):
     def prune_scan_log(self, older_than: datetime) -> None:
         with self._cursor(commit=True) as cur:
             cur.execute("DELETE FROM scan_log WHERE timestamp < %s", (older_than,))
+
+    def upsert_instance(self, instance_id: str, region: str, instance_type: str, state: str) -> None:
+        with self._cursor(commit=True) as cur:
+            cur.execute(
+                """
+                INSERT INTO instances (instance_id, region, instance_type, state, last_seen_at, is_stale)
+                VALUES (%s, %s, %s, %s, %s, FALSE)
+                ON CONFLICT (instance_id) DO UPDATE SET
+                    region        = EXCLUDED.region,
+                    instance_type = EXCLUDED.instance_type,
+                    state         = EXCLUDED.state,
+                    last_seen_at  = EXCLUDED.last_seen_at,
+                    is_stale      = FALSE
+                """,
+                (instance_id, region, instance_type, state, datetime.now(UTC)),
+            )
+
+    def upsert_volume(
+        self, volume_id: str, instance_id: str | None, region: str, size_gb: int, device_name: str | None
+    ) -> None:
+        with self._cursor(commit=True) as cur:
+            cur.execute(
+                """
+                INSERT INTO volumes (volume_id, instance_id, region, size_gb, device_name, last_seen_at, is_stale)
+                VALUES (%s, %s, %s, %s, %s, %s, FALSE)
+                ON CONFLICT (volume_id) DO UPDATE SET
+                    instance_id  = EXCLUDED.instance_id,
+                    region       = EXCLUDED.region,
+                    size_gb      = EXCLUDED.size_gb,
+                    device_name  = EXCLUDED.device_name,
+                    last_seen_at = EXCLUDED.last_seen_at,
+                    is_stale     = FALSE
+                """,
+                (volume_id, instance_id, region, size_gb, device_name, datetime.now(UTC)),
+            )
+
+    def mark_stale(self, region: str, seen_instance_ids: set[str], seen_volume_ids: set[str]) -> None:
+        with self._cursor(commit=True) as cur:
+            cur.execute(
+                "UPDATE instances SET is_stale = TRUE WHERE region = %s AND instance_id != ALL(%s)",
+                (region, list(seen_instance_ids)),
+            )
+            cur.execute(
+                "UPDATE volumes SET is_stale = TRUE WHERE region = %s AND volume_id != ALL(%s)",
+                (region, list(seen_volume_ids)),
+            )
+
+    def list_instances(self, region: str | None = None, include_stale: bool = False) -> list[InstanceRecord]:
+        query = "SELECT * FROM instances WHERE TRUE"
+        params: list = []
+        if region is not None:
+            query += " AND region = %s"
+            params.append(region)
+        if not include_stale:
+            query += " AND is_stale = FALSE"
+        query += " ORDER BY instance_id"
+        with self._cursor() as cur:
+            cur.execute(query, params)
+            rows = cur.fetchall()
+            columns = [desc[0] for desc in cur.description]
+        return [InstanceRecord(**dict(zip(columns, row, strict=True))) for row in rows]
+
+    def list_volumes(self, region: str | None = None, include_stale: bool = False) -> list[VolumeRecord]:
+        query = "SELECT * FROM volumes WHERE TRUE"
+        params: list = []
+        if region is not None:
+            query += " AND region = %s"
+            params.append(region)
+        if not include_stale:
+            query += " AND is_stale = FALSE"
+        query += " ORDER BY volume_id"
+        with self._cursor() as cur:
+            cur.execute(query, params)
+            rows = cur.fetchall()
+            columns = [desc[0] for desc in cur.description]
+        return [VolumeRecord(**dict(zip(columns, row, strict=True))) for row in rows]
+
+    def set_instance_autoresize(self, instance_id: str, autoresize: bool) -> bool:
+        with self._cursor(commit=True) as cur:
+            cur.execute(
+                "UPDATE instances SET autoresize = %s WHERE instance_id = %s",
+                (autoresize, instance_id),
+            )
+            return cur.rowcount > 0
+
+    def set_volume_autoresize(self, volume_id: str, autoresize: bool) -> bool:
+        with self._cursor(commit=True) as cur:
+            cur.execute(
+                "UPDATE volumes SET autoresize = %s WHERE volume_id = %s",
+                (autoresize, volume_id),
+            )
+            return cur.rowcount > 0
 
     def close(self) -> None:
         self._pool.closeall()

@@ -67,6 +67,42 @@ class ScanRecord:
     decision: str
 
 
+@dataclass
+class InstanceRecord:
+    """One EC2 instance seen by a discovery scan.
+
+    autoresize/threshold_percent are admin-controlled (set via the
+    dashboard toggle), never overwritten by upsert_instance - discovery
+    only refreshes the AWS-observed fields (instance_type, state,
+    last_seen_at) and never touches the eligibility flag itself.
+    """
+
+    instance_id: str
+    region: str
+    instance_type: str
+    state: str
+    autoresize: bool
+    threshold_percent: int | None
+    last_seen_at: datetime
+    is_stale: bool
+
+
+@dataclass
+class VolumeRecord:
+    """One EBS volume seen by a discovery scan. Same admin-controlled
+    autoresize/threshold_percent contract as InstanceRecord."""
+
+    volume_id: str
+    instance_id: str | None
+    region: str
+    size_gb: int
+    device_name: str | None
+    autoresize: bool
+    threshold_percent: int | None
+    last_seen_at: datetime
+    is_stale: bool
+
+
 class StateBackend(abc.ABC):
     """Persists and queries per-volume resize state."""
 
@@ -152,6 +188,49 @@ class StateBackend(abc.ABC):
         Keeps the scan log bounded for a long-running controller - called
         once per cycle by the scheduler using scheduler.scan_log_retention_days.
         """
+
+    @abc.abstractmethod
+    def upsert_instance(self, instance_id: str, region: str, instance_type: str, state: str) -> None:
+        """Insert or refresh one instance row from a discovery scan.
+
+        Only touches AWS-observed fields (instance_type, state,
+        last_seen_at, is_stale=False) - never autoresize/threshold_percent,
+        which are exclusively admin-controlled via set_instance_autoresize.
+        """
+
+    @abc.abstractmethod
+    def upsert_volume(
+        self, volume_id: str, instance_id: str | None, region: str, size_gb: int, device_name: str | None
+    ) -> None:
+        """Insert or refresh one volume row from a discovery scan. Same
+        admin-controlled-fields contract as upsert_instance."""
+
+    @abc.abstractmethod
+    def mark_stale(self, region: str, seen_instance_ids: set[str], seen_volume_ids: set[str]) -> None:
+        """Flag every instance/volume in `region` NOT present in the given
+        seen-ID sets as stale (is_stale=True), without deleting the row -
+        preserves any autoresize history in case the resource reappears
+        (e.g. after a transient Describe* error skipped it for one cycle).
+        """
+
+    @abc.abstractmethod
+    def list_instances(self, region: str | None = None, include_stale: bool = False) -> list[InstanceRecord]:
+        """Return known instances, optionally filtered to one region."""
+
+    @abc.abstractmethod
+    def list_volumes(self, region: str | None = None, include_stale: bool = False) -> list[VolumeRecord]:
+        """Return known volumes, optionally filtered to one region."""
+
+    @abc.abstractmethod
+    def set_instance_autoresize(self, instance_id: str, autoresize: bool) -> bool:
+        """Set instance_id's eligibility flag. Returns False if no such
+        instance is known (e.g. a stale dashboard page for a since-removed
+        instance), True if updated."""
+
+    @abc.abstractmethod
+    def set_volume_autoresize(self, volume_id: str, autoresize: bool) -> bool:
+        """Set volume_id's eligibility flag. Same return contract as
+        set_instance_autoresize."""
 
     @abc.abstractmethod
     def close(self) -> None:
