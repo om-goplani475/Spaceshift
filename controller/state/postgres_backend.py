@@ -102,6 +102,17 @@ ALTER TABLE scan_log ADD COLUMN IF NOT EXISTS account_name TEXT NOT NULL DEFAULT
 
 CREATE INDEX IF NOT EXISTS idx_instances_account_name ON instances (account_name);
 CREATE INDEX IF NOT EXISTS idx_volumes_account_name ON volumes (account_name);
+
+-- Live-editable settings (default_threshold_percent, dry_run, scheduler.*,
+-- resize.*) - a flat key-value table rather than typed columns, so a new
+-- setting never needs a schema migration to become DB-editable. A missing
+-- key means "use config.yaml's value / its built-in default," not an error
+-- - see controller/config.py's refresh_config_from_db.
+CREATE TABLE IF NOT EXISTS app_config (
+    key         TEXT PRIMARY KEY,
+    value       TEXT NOT NULL,
+    updated_at  TIMESTAMPTZ NOT NULL
+);
 """
 
 _TERMINAL_STATUS_VALUES = [s.value for s in TERMINAL_STATUSES]
@@ -393,6 +404,29 @@ class PostgresStateBackend(StateBackend):
                 (autoresize, volume_id),
             )
             return cur.rowcount > 0
+
+    def get_config(self, key: str) -> str | None:
+        with self._cursor() as cur:
+            cur.execute("SELECT value FROM app_config WHERE key = %s", (key,))
+            row = cur.fetchone()
+            return row[0] if row is not None else None
+
+    def set_config(self, key: str, value: str) -> None:
+        with self._cursor(commit=True) as cur:
+            cur.execute(
+                """
+                INSERT INTO app_config (key, value, updated_at)
+                VALUES (%s, %s, %s)
+                ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = EXCLUDED.updated_at
+                """,
+                (key, value, datetime.now(UTC)),
+            )
+
+    def list_config(self) -> dict[str, str]:
+        with self._cursor() as cur:
+            cur.execute("SELECT key, value FROM app_config")
+            rows = cur.fetchall()
+        return dict(rows)
 
     def close(self) -> None:
         self._pool.closeall()

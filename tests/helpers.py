@@ -51,6 +51,7 @@ class InMemoryStateBackend(StateBackend):
         self._next_scan_id = 1
         self._instances: dict[str, InstanceRecord] = {}
         self._volumes: dict[str, VolumeRecord] = {}
+        self._app_config: dict[str, str] = {}
 
     def create_if_absent(
         self, volume_id: str, instance_id: str, from_size_gb: int, to_size_gb: int
@@ -235,6 +236,16 @@ class InMemoryStateBackend(StateBackend):
                 return False
             self._volumes[volume_id] = replace(record, autoresize=autoresize)
             return True
+
+    def get_config(self, key: str) -> str | None:
+        return self._app_config.get(key)
+
+    def set_config(self, key: str, value: str) -> None:
+        with self._lock:
+            self._app_config[key] = value
+
+    def list_config(self) -> dict[str, str]:
+        return dict(self._app_config)
 
     def close(self) -> None:
         pass

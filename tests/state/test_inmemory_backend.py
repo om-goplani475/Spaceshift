@@ -159,3 +159,36 @@ def test_list_instances_and_volumes_filtered_by_account():
     assert [i.instance_id for i in backend.list_instances(account_name="account-a")] == ["i-a"]
     assert [i.instance_id for i in backend.list_instances(account_name="account-b")] == ["i-b"]
     assert {i.instance_id for i in backend.list_instances()} == {"i-a", "i-b"}
+
+
+# --- app_config (config-in-DB) -----------------------------------------------
+
+
+def test_get_config_returns_none_when_unset():
+    backend = InMemoryStateBackend()
+    assert backend.get_config("dry_run") is None
+
+
+def test_set_then_get_config():
+    backend = InMemoryStateBackend()
+    backend.set_config("dry_run", "false")
+    assert backend.get_config("dry_run") == "false"
+
+
+def test_set_config_overwrites_existing_value():
+    backend = InMemoryStateBackend()
+    backend.set_config("dry_run", "false")
+    backend.set_config("dry_run", "true")
+    assert backend.get_config("dry_run") == "true"
+
+
+def test_list_config_returns_all_keys():
+    backend = InMemoryStateBackend()
+    backend.set_config("dry_run", "false")
+    backend.set_config("scheduler.interval_seconds", "60")
+    assert backend.list_config() == {"dry_run": "false", "scheduler.interval_seconds": "60"}
+
+
+def test_list_config_empty_by_default():
+    backend = InMemoryStateBackend()
+    assert backend.list_config() == {}

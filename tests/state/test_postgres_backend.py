@@ -30,7 +30,7 @@ def postgres_state():
     backend = PostgresStateBackend(os.environ["EBS_AUTO_RESIZE_TEST_POSTGRES_DSN"])
     yield backend
     with backend._cursor(commit=True) as cur:
-        cur.execute("TRUNCATE resize_state, modification_history, scan_log, instances, volumes")
+        cur.execute("TRUNCATE resize_state, modification_history, scan_log, instances, volumes, app_config")
     backend.close()
 
 
@@ -141,3 +141,27 @@ def test_list_instances_and_volumes_filtered_by_account(postgres_state):
 
     assert [i.instance_id for i in postgres_state.list_instances(account_name="account-a")] == ["i-a"]
     assert [i.instance_id for i in postgres_state.list_instances(account_name="account-b")] == ["i-b"]
+
+
+# --- app_config (config-in-DB) -----------------------------------------------
+
+
+def test_get_config_returns_none_when_unset(postgres_state):
+    assert postgres_state.get_config("dry_run") is None
+
+
+def test_set_then_get_config(postgres_state):
+    postgres_state.set_config("dry_run", "false")
+    assert postgres_state.get_config("dry_run") == "false"
+
+
+def test_set_config_overwrites_existing_value(postgres_state):
+    postgres_state.set_config("dry_run", "false")
+    postgres_state.set_config("dry_run", "true")
+    assert postgres_state.get_config("dry_run") == "true"
+
+
+def test_list_config_returns_all_keys(postgres_state):
+    postgres_state.set_config("dry_run", "false")
+    postgres_state.set_config("scheduler.interval_seconds", "60")
+    assert postgres_state.list_config() == {"dry_run": "false", "scheduler.interval_seconds": "60"}
