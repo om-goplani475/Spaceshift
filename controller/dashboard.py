@@ -209,8 +209,14 @@ _PAGE_TEMPLATE = """
   .config-status { font-size: 0.8rem; margin-left: 0.5rem; }
   .config-status.ok { color: var(--green); }
   .config-status.error { color: var(--red); }
+  .config-status.dirty { color: var(--amber); }
 
-  .eligibility-note { color: var(--muted); font-size: 0.8rem; }
+  .settings-actions {
+    display: flex; align-items: center; gap: 0.6rem;
+    padding: 0.7rem 0.9rem; border-top: 1px solid var(--border);
+  }
+
+  .eligibility-note, .muted-note { color: var(--muted); font-size: 0.8rem; }
 
   .config-label { font-weight: 600; }
 
@@ -232,6 +238,19 @@ _PAGE_TEMPLATE = """
   .tooltip:hover::before, .tooltip:focus::before {
     content: ""; position: absolute; left: 10px; top: 122%; z-index: 20;
     border: 5px solid transparent; border-bottom-color: var(--text);
+  }
+  /* Flipped upward via JS (wireTooltipFlip) when there isn't enough room
+     below the trigger - e.g. the last few rows of the Settings table,
+     where the default downward tooltip used to render past the panel's
+     bottom edge and get clipped. A pure-CSS :hover tooltip has no way to
+     know its own position relative to the viewport, so that one
+     measurement has to happen in JS; the flip itself is still plain CSS. */
+  .tooltip.tooltip-flip:hover::after, .tooltip.tooltip-flip:focus::after {
+    top: auto; bottom: 135%;
+  }
+  .tooltip.tooltip-flip:hover::before, .tooltip.tooltip-flip:focus::before {
+    top: auto; bottom: 122%;
+    border-bottom-color: transparent; border-top-color: var(--text);
   }
 </style>
 
@@ -277,10 +296,11 @@ _PAGE_TEMPLATE = """
 <table id="instances-table">
   <thead><tr>
     <th>Instance</th><th>Account</th><th>Region</th><th>Type</th><th>State</th><th>Threshold</th>
-    <th>Autoresize</th><th>Last seen</th>
+    <th>Autoresize</th><th>Last scan</th><th>Last seen</th>
   </tr></thead>
   <tbody id="instances-tbody">
   {% for i in instances %}
+  {% set decision = latest_instance_decisions.get(i.instance_id) %}
   <tr data-volume="" data-instance="{{ i.instance_id|lower }}" data-account="{{ i.account_name }}"
       data-region="{{ i.region }}" data-autoresize="{{ i.autoresize|lower }}">
     <td class="mono">{{ i.instance_id }}</td>
@@ -296,10 +316,17 @@ _PAGE_TEMPLATE = """
         <span class="slider"></span>
       </label>
     </td>
+    <td>
+      {% if decision %}
+      <span class="badge {{ decision_badge(decision) }}">{{ decision }}</span>
+      {% else %}
+      <span class="muted-note">not yet scanned</span>
+      {% endif %}
+    </td>
     <td class="ts" data-ts="{{ i.last_seen_at.isoformat() }}"></td>
   </tr>
   {% else %}
-  <tr><td class="empty" colspan="8">No instances discovered yet.</td></tr>
+  <tr><td class="empty" colspan="9">No instances discovered yet.</td></tr>
   {% endfor %}
   </tbody>
 </table>
@@ -331,11 +358,12 @@ Threshold/Watched show what's actually in effect</small></h2>
 <table id="volumes-table">
   <thead><tr>
     <th>Volume</th><th>Instance</th><th>Account</th><th>Region</th><th>Size</th><th>Device</th>
-    <th>Threshold</th><th>Autoresize</th><th>Watched</th><th>Last seen</th>
+    <th>Threshold</th><th>Autoresize</th><th>Watched</th><th>Last scan</th><th>Last seen</th>
   </tr></thead>
   <tbody id="volumes-tbody">
   {% for row in volume_rows %}
   {% set v = row.v %}
+  {% set decision = latest_volume_decisions.get(v.volume_id) %}
   <tr data-volume="{{ v.volume_id|lower }}" data-instance="{{ (v.instance_id or '')|lower }}"
       data-account="{{ v.account_name }}" data-region="{{ v.region }}" data-autoresize="{{ v.autoresize|lower }}">
     <td class="mono">{{ v.volume_id }}</td>
@@ -370,10 +398,17 @@ Threshold/Watched show what's actually in effect</small></h2>
       <span class="badge badge-muted">No</span>
       {% endif %}
     </td>
+    <td>
+      {% if decision %}
+      <span class="badge {{ decision_badge(decision) }}">{{ decision }}</span>
+      {% else %}
+      <span class="muted-note">not yet scanned</span>
+      {% endif %}
+    </td>
     <td class="ts" data-ts="{{ v.last_seen_at.isoformat() }}"></td>
   </tr>
   {% else %}
-  <tr><td class="empty" colspan="10">No volumes discovered yet.</td></tr>
+  <tr><td class="empty" colspan="11">No volumes discovered yet.</td></tr>
   {% endfor %}
   </tbody>
 </table>
@@ -396,21 +431,24 @@ Threshold/Watched show what's actually in effect</small></h2>
     <td>
       {% if s.key == "dry_run" %}
       <label class="switch">
-        <input type="checkbox" class="config-bool-toggle" data-key="{{ s.key }}"
+        <input type="checkbox" class="config-bool-input" data-key="{{ s.key }}"
                {{ "checked" if (s.value if s.value is not none else s.default) == "true" }}>
         <span class="slider"></span>
       </label>
       {% else %}
-      <input type="text" class="config-value-input" value="{{ s.value if s.value is not none else '' }}"
-             placeholder="{{ s.default }}">
-      <button class="config-save-btn" data-key="{{ s.key }}">Save</button>
-      <span class="config-status"></span>
+      <input type="text" class="config-value-input" data-key="{{ s.key }}"
+             value="{{ s.value if s.value is not none else '' }}" placeholder="{{ s.default }}">
       {% endif %}
+      <span class="config-status"></span>
     </td>
   </tr>
   {% endfor %}
   </tbody>
 </table>
+<div class="settings-actions">
+  <button id="settings-update-btn" class="config-save-btn">Update settings</button>
+  <span class="config-status" id="settings-update-summary"></span>
+</div>
 </div>
 </div>
 
@@ -647,69 +685,106 @@ function wireAutoresizeToggles(root) {
   });
 }
 
-function wireConfigBoolToggles(root) {
-  root.querySelectorAll(".config-bool-toggle").forEach(function (toggle) {
-    toggle.addEventListener("change", function () {
-      const key = toggle.dataset.key;
-      const desired = toggle.checked;
-      toggle.disabled = true;
-      fetch("/api/config/" + encodeURIComponent(key), {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ value: desired ? "true" : "false" }),
-      })
-        .then(function (resp) {
-          if (!resp.ok) throw new Error("request failed");
-          return resp.json();
-        })
-        .catch(function () {
-          toggle.checked = !desired;
-          alert("Failed to update " + key + " - try again.");
-        })
-        .finally(function () {
-          toggle.disabled = false;
-        });
+// Marks a row "dirty" (edited, not yet submitted) rather than saving on
+// every keystroke/toggle - one "Update settings" click at the bottom
+// submits everything dirty at once, so changing several values doesn't
+// mean several round-trips (or several chances to forget one). A row's
+// dirty state also blocks the live-refresh poll from overwriting it - see
+// refreshLiveData()'s settings guard below.
+function wireConfigDirtyTracking(root) {
+  root.querySelectorAll(".config-value-input, .config-bool-input").forEach(function (input) {
+    const row = input.closest("tr");
+    const statusEl = row.querySelector(".config-status");
+    const eventName = input.type === "checkbox" ? "change" : "input";
+    input.addEventListener(eventName, function () {
+      row.dataset.dirty = "true";
+      statusEl.textContent = "unsaved";
+      statusEl.className = "config-status dirty";
     });
   });
 }
 
-function wireConfigSaveButtons(root) {
-  root.querySelectorAll(".config-save-btn").forEach(function (btn) {
-    btn.addEventListener("click", function () {
-      const row = btn.closest("tr");
-      const key = btn.dataset.key;
-      const input = row.querySelector(".config-value-input");
+// Pure-CSS :hover tooltips can't tell where they are on screen, so a
+// one-time JS measurement on hover/focus decides whether to flip the
+// tooltip upward (see .tooltip-flip in <style>) - without this, a row near
+// the bottom of the table opened its tooltip past the panel's edge, where
+// it was clipped and unreadable.
+function wireTooltipFlip(root) {
+  root.querySelectorAll(".tooltip").forEach(function (el) {
+    function checkSpace() {
+      const rect = el.getBoundingClientRect();
+      el.classList.toggle("tooltip-flip", window.innerHeight - rect.bottom < 100);
+    }
+    el.addEventListener("mouseenter", checkSpace);
+    el.addEventListener("focus", checkSpace);
+  });
+}
+
+function wireSettingsUpdateButton() {
+  const btn = document.getElementById("settings-update-btn");
+  if (!btn) return;
+  btn.addEventListener("click", function () {
+    const dirtyRows = Array.from(document.querySelectorAll('#settings-tbody tr[data-dirty="true"]'));
+    const summaryEl = document.getElementById("settings-update-summary");
+    if (dirtyRows.length === 0) {
+      summaryEl.textContent = "No changes to save";
+      summaryEl.className = "config-status";
+      return;
+    }
+    btn.disabled = true;
+    summaryEl.textContent = "Saving…";
+    summaryEl.className = "config-status";
+
+    const requests = dirtyRows.map(function (row) {
+      const key = row.dataset.key;
       const statusEl = row.querySelector(".config-status");
-      const value = input.value.trim();
-      btn.disabled = true;
-      statusEl.textContent = "";
-      statusEl.className = "config-status";
-      fetch("/api/config/" + encodeURIComponent(key), {
+      const boolInput = row.querySelector(".config-bool-input");
+      const textInput = row.querySelector(".config-value-input");
+      const value = boolInput ? (boolInput.checked ? "true" : "false") : textInput.value.trim();
+
+      return fetch("/api/config/" + encodeURIComponent(key), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ value: value }),
       })
         .then(function (resp) {
-          return resp.json().then(function (data) { return { ok: resp.ok, data: data }; });
-        })
-        .then(function (result) {
-          statusEl.textContent = result.ok ? "Saved" : (result.data.error || "Invalid value");
-          statusEl.className = "config-status " + (result.ok ? "ok" : "error");
+          return resp.json().then(function (data) {
+            return { ok: resp.ok, data: data, row: row, statusEl: statusEl };
+          });
         })
         .catch(function () {
-          statusEl.textContent = "Request failed";
-          statusEl.className = "config-status error";
-        })
-        .finally(function () {
-          btn.disabled = false;
+          return { ok: false, data: { error: "Request failed" }, row: row, statusEl: statusEl };
         });
+    });
+
+    Promise.all(requests).then(function (results) {
+      let succeeded = 0;
+      let failed = 0;
+      results.forEach(function (result) {
+        if (result.ok) {
+          succeeded++;
+          delete result.row.dataset.dirty;
+          result.statusEl.textContent = "Saved";
+          result.statusEl.className = "config-status ok";
+        } else {
+          failed++;
+          result.statusEl.textContent = result.data.error || "Invalid value";
+          result.statusEl.className = "config-status error";
+        }
+      });
+      summaryEl.textContent = failed === 0
+        ? "Saved " + succeeded + " setting" + (succeeded === 1 ? "" : "s")
+        : "Saved " + succeeded + ", " + failed + " failed - see rows above";
+      summaryEl.className = "config-status " + (failed === 0 ? "ok" : "error");
+      btn.disabled = false;
     });
   });
 }
 
 wireAutoresizeToggles(document);
-wireConfigBoolToggles(document);
-wireConfigSaveButtons(document);
+wireConfigDirtyTracking(document);
+wireTooltipFlip(document);
+wireSettingsUpdateButton();
 
 document.querySelectorAll(".tab-btn").forEach(function (btn) {
   btn.addEventListener("click", function () {
@@ -745,20 +820,23 @@ async function refreshLiveData() {
       if (current && updated) current.innerHTML = updated.innerHTML;
     });
 
-    // Settings rows have an unsaved-input state (typed but not yet Saved)
-    // that a background swap would silently wipe out - skip that one
-    // section for this cycle if the user's actively focused inside it.
+    // Settings rows have an unsaved-input state (typed/toggled but not yet
+    // submitted via the Update button) that a background swap would
+    // silently wipe out - skip that section for this cycle if the user is
+    // either actively focused inside it, or has any dirty (unsaved) row,
+    // since focus can move away from a field without the edit being saved.
     const settingsTbody = document.getElementById("settings-tbody");
     const updatedSettings = fresh.getElementById("settings-tbody");
     const editingSettings = settingsTbody && settingsTbody.contains(document.activeElement);
-    if (settingsTbody && updatedSettings && !editingSettings) {
+    const hasUnsavedSettings = settingsTbody && settingsTbody.querySelector('tr[data-dirty="true"]');
+    if (settingsTbody && updatedSettings && !editingSettings && !hasUnsavedSettings) {
       settingsTbody.innerHTML = updatedSettings.innerHTML;
     }
 
     formatTimestamps(document);
     wireAutoresizeToggles(document);
-    wireConfigBoolToggles(document);
-    wireConfigSaveButtons(document);
+    wireConfigDirtyTracking(document);
+    wireTooltipFlip(document);
     Object.values(tableControllers).forEach(function (c) { c.apply(); });
   } catch (e) {
     // Network hiccup or similar - just try again next tick.
@@ -797,10 +875,29 @@ def _decision_badge(decision: str) -> str:
     return _DECISION_BADGES.get(decision, "badge-muted")
 
 
-def _compute_stats(records, scans, volumes) -> dict[str, int]:
+def _latest_decision_by(scans, key) -> dict[str, str]:
+    """Most recent scan decision per key(scan) - e.g. "is SSM ready for this
+    instance" without digging through Scan History. `scans` is already
+    newest-first (state.list_scans()'s own ORDER BY), so the first hit per
+    key via setdefault is the latest one. Bounded by the same
+    _SCAN_LIST_LIMIT the Scan History table itself is - a resource with no
+    scan in that window shows as not-yet-scanned rather than stale data.
+    """
+    latest: dict[str, str] = {}
+    for s in scans:
+        latest.setdefault(key(s), s.decision)
+    return latest
+
+
+def _compute_stats(records, scans, volume_rows: list[dict]) -> dict[str, int]:
     return {
         "tracked": len({s.volume_id for s in scans}),
-        "autoresize_enabled": sum(1 for v in volumes if v.autoresize),
+        # Counts the *resolved* outcome (own flag OR its instance's, minus
+        # unattached volumes), not just each volume's own raw autoresize
+        # column - a volume watched only via its instance's flag used to
+        # not move this counter at all, same gap the Watched column on the
+        # Volumes tab fixed.
+        "autoresize_enabled": sum(1 for row in volume_rows if row["watched"]),
         "completed": sum(1 for r in records if r.status == ResizeStatus.EXTEND_COMPLETED),
         "needs_attention": sum(1 for r in records if r.status == ResizeStatus.EXTEND_FAILED_NEEDS_ATTENTION),
         "in_progress": sum(1 for r in records if r.status not in TERMINAL_STATUSES),
@@ -890,16 +987,19 @@ def create_app(state: StateBackend) -> Flask:
         # anything scripting against it.
         instances = [i for i in state.list_instances() if i.state != "stopped"]
         volumes = state.list_volumes()
+        volume_rows = _build_volume_rows(state, volumes)
         return render_template_string(
             _PAGE_TEMPLATE,
             records=records,
             scans=scans,
             instances=instances,
             volumes=volumes,
-            volume_rows=_build_volume_rows(state, volumes),
+            volume_rows=volume_rows,
+            latest_instance_decisions=_latest_decision_by(scans, lambda s: s.instance_id),
+            latest_volume_decisions=_latest_decision_by(scans, lambda s: s.volume_id),
             settings=_list_settings(state),
             scan_limit=_SCAN_LIST_LIMIT,
-            stats=_compute_stats(records, scans, volumes),
+            stats=_compute_stats(records, scans, volume_rows),
             status_badge=_status_badge,
             decision_badge=_decision_badge,
             resize_statuses=sorted({r.status.value for r in records}),
