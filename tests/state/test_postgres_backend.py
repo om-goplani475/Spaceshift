@@ -34,6 +34,31 @@ def postgres_state():
     backend.close()
 
 
+def test_concurrent_backend_construction_does_not_deadlock():
+    """Regression test for a real production crash: the controller and
+    dashboard are separate processes that each build their own
+    PostgresStateBackend, both running the same CREATE/ALTER/CREATE INDEX
+    IF NOT EXISTS schema block on startup - concurrently, if both start
+    around the same time (e.g. `docker compose up` bringing both up
+    together). IF NOT EXISTS makes that safe sequentially, but not under
+    real concurrent execution: before pg_advisory_xact_lock guarded it,
+    this reliably reproduced psycopg2.errors.DeadlockDetected, an unhandled
+    exception that crashed the process outright.
+    """
+    from controller.state.postgres_backend import PostgresStateBackend
+
+    dsn = os.environ["EBS_AUTO_RESIZE_TEST_POSTGRES_DSN"]
+
+    def build_and_close() -> None:
+        backend = PostgresStateBackend(dsn)
+        backend.close()
+
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        futures = [pool.submit(build_and_close) for _ in range(8)]
+        for future in futures:
+            future.result()  # re-raises here if any thread's constructor raised
+
+
 def test_create_if_absent_new_row(postgres_state):
     rec = postgres_state.create_if_absent("vol-1", "i-1", 100, 150)
     assert rec is not None

@@ -117,11 +117,29 @@ CREATE TABLE IF NOT EXISTS app_config (
 
 _TERMINAL_STATUS_VALUES = [s.value for s in TERMINAL_STATUSES]
 
+# Arbitrary constant identifying this app's schema-init lock - only needs to
+# be unique within this database, which this app owns exclusively anyway.
+_SCHEMA_INIT_LOCK_KEY = 727701
+
 
 class PostgresStateBackend(StateBackend):
     def __init__(self, dsn: str, min_connections: int = 1, max_connections: int = 10) -> None:
         self._pool = psycopg2.pool.ThreadedConnectionPool(min_connections, max_connections, dsn)
         with self._cursor(commit=True) as cur:
+            # The controller and dashboard are separate processes that each
+            # build their own PostgresStateBackend - both run this same
+            # CREATE/ALTER/CREATE INDEX IF NOT EXISTS block on every
+            # startup. IF NOT EXISTS makes it idempotent, but not safe
+            # under *concurrent* execution: two processes starting at once
+            # (e.g. `docker compose up` bringing both up together) can each
+            # grab an AccessExclusiveLock on a different table and then
+            # block on the other's, which Postgres resolves by killing one
+            # transaction with a DeadlockDetected error - an unhandled
+            # exception that crashed the whole process. pg_advisory_xact_lock
+            # serializes schema init instead: the second process simply
+            # waits for the first's transaction to commit (auto-releasing
+            # the lock), then runs the same DDL as a safe no-op.
+            cur.execute("SELECT pg_advisory_xact_lock(%s)", (_SCHEMA_INIT_LOCK_KEY,))
             cur.execute(_SCHEMA)
 
     @contextmanager
