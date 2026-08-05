@@ -45,10 +45,13 @@ def _require_int(label: str, value: Any, *, minimum: int) -> None:
 # (credentials, accounts, notifications) is deliberately not in this table -
 # those stay file-only identity/secrets, never DB-overridable. This is also
 # the canonical list of which settings are live-editable via app_config -
-# see docs/SETUP.md.
+# see docs/SETUP.md. Iteration order is also the dashboard Settings tab's
+# display order - dry_run is last on purpose, not first: it's the one
+# boolean/switch row among a table of otherwise-identical text-input rows,
+# so it reads more consistently grouped at the end than breaking up the
+# pattern partway through.
 DB_CONFIG_KEYS: dict[str, tuple[str, ...]] = {
     "default_threshold_percent": ("default_threshold_percent",),
-    "dry_run": ("dry_run",),
     "scheduler.interval_seconds": ("scheduler", "interval_seconds"),
     "scheduler.max_concurrent_resizes": ("scheduler", "max_concurrent_resizes"),
     "scheduler.scan_log_retention_days": ("scheduler", "scan_log_retention_days"),
@@ -57,6 +60,7 @@ DB_CONFIG_KEYS: dict[str, tuple[str, ...]] = {
     "resize.extend_retry.max_attempts": ("resize", "extend_retry", "max_attempts"),
     "resize.extend_retry.backoff_seconds": ("resize", "extend_retry", "backoff_seconds"),
     "resize.stale_lock_timeout_minutes": ("resize", "stale_lock_timeout_minutes"),
+    "dry_run": ("dry_run",),
 }
 
 

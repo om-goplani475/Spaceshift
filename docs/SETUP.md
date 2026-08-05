@@ -138,7 +138,6 @@ Values are parsed as YAML scalars (so `false`, `true`, `300` parse as bool/int -
 | Key | Default | Meaning |
 |---|---|---|
 | `default_threshold_percent` | `80` | Fallback percent-full threshold, used only when neither a volume nor its attached instance has its own `threshold_percent` set in Postgres (see section 1.3). |
-| `dry_run` | `true` | **The most important setting for a first run.** When true, the controller only logs what it *would* do - no `modify-volume` call, no `growpart`/`resize2fs`/`xfs_growfs`. Flip to `false` only after confirming the dry-run logs look right against your real account. |
 | `scheduler.interval_seconds` | `300` | How often a full discovery-and-check cycle runs. |
 | `scheduler.max_concurrent_resizes` | `5` | Size of the thread pool processing volumes in parallel each cycle. Raise for a larger fleet. |
 | `scheduler.scan_log_retention_days` | `7` | How long the dashboard's scan-history table (Postgres `scan_log`) keeps rows before a row older than this gets pruned, once per cycle. Pure observability data, unrelated to `resize_state`. |
@@ -147,6 +146,7 @@ Values are parsed as YAML scalars (so `false`, `true`, `300` parse as bool/int -
 | `resize.extend_retry.max_attempts` | `3` | How many times to retry the OS-side extend step (`growpart`/`resize2fs`/`xfs_growfs`) before giving up and alerting. Never re-triggers the AWS-side `modify-volume` call. |
 | `resize.extend_retry.backoff_seconds` | `60` | Minimum wait between extend retries. |
 | `resize.stale_lock_timeout_minutes` | `45` | If the controller crashes mid-resize, how long before a stuck row gets checked against AWS's real state instead of being retried blindly forever. |
+| `dry_run` | `true` | **The most important setting for a first run.** When true, the controller only logs what it *would* do - no `modify-volume` call, no `growpart`/`resize2fs`/`xfs_growfs`. Flip to `false` only after confirming the dry-run logs look right against your real account. |
 
 ## 6. First-run checklist
 

@@ -36,6 +36,58 @@ def _default_config_value(key: str) -> str:
     return str(value)
 
 
+# Human-readable label + hover explanation for each DB_CONFIG_KEYS entry -
+# the dotted/underscored key itself (e.g. "resize.extend_retry.backoff_seconds")
+# is precise but reads as an internal identifier, not something a first-time
+# reader parses at a glance. The dotted key is still shown (smaller, below
+# the label) since it's what SQL/docs/the API all use - not hidden, just not
+# the primary label.
+_CONFIG_LABELS: dict[str, str] = {
+    "default_threshold_percent": "Default threshold (%)",
+    "scheduler.interval_seconds": "Scan interval (sec)",
+    "scheduler.max_concurrent_resizes": "Max concurrent resizes",
+    "scheduler.scan_log_retention_days": "Scan log retention (days)",
+    "resize.max_volume_size_gb": "Max volume size (GB)",
+    "resize.growth_increment_percent": "Growth increment (%)",
+    "resize.extend_retry.max_attempts": "Extend retry attempts",
+    "resize.extend_retry.backoff_seconds": "Extend retry backoff (sec)",
+    "resize.stale_lock_timeout_minutes": "Stale lock timeout (min)",
+    "dry_run": "Dry run",
+}
+
+_CONFIG_DESCRIPTIONS: dict[str, str] = {
+    "default_threshold_percent": (
+        "Fallback percent-full threshold, used only when neither a volume nor its attached instance has its own "
+        "threshold set."
+    ),
+    "scheduler.interval_seconds": "How often a full discovery-and-check cycle runs.",
+    "scheduler.max_concurrent_resizes": "Size of the thread pool processing volumes in parallel each cycle.",
+    "scheduler.scan_log_retention_days": (
+        "How long the scan-history table keeps rows before a row older than this gets pruned, once per cycle."
+    ),
+    "resize.max_volume_size_gb": (
+        "Hard per-volume ceiling. Crossing it stops auto-resize for that volume and alerts for manual review "
+        "instead of continuing."
+    ),
+    "resize.growth_increment_percent": (
+        "How much bigger each resize makes the volume (e.g. 100GB → 120GB), not the target size itself."
+    ),
+    "resize.extend_retry.max_attempts": (
+        "How many times to retry the OS-side filesystem extend step before giving up and alerting. Never "
+        "re-triggers the AWS-side resize call."
+    ),
+    "resize.extend_retry.backoff_seconds": "Minimum wait between extend retries.",
+    "resize.stale_lock_timeout_minutes": (
+        "If the controller crashes mid-resize, how long before a stuck row gets checked against AWS's real state "
+        "instead of being retried blindly."
+    ),
+    "dry_run": (
+        "When on, the controller only logs what it would do - no real AWS resize call or filesystem change. "
+        "The most important setting for a first run."
+    ),
+}
+
+
 _PAGE_TEMPLATE = """
 <!doctype html>
 <meta charset="utf-8">
@@ -157,12 +209,34 @@ _PAGE_TEMPLATE = """
   .config-status { font-size: 0.8rem; margin-left: 0.5rem; }
   .config-status.ok { color: var(--green); }
   .config-status.error { color: var(--red); }
+
+  .config-label { font-weight: 600; }
+
+  /* Pure-CSS tooltip: no JS, and deliberately inverted relative to the
+     page's own theme (bg/text swapped) so it stays legible and consistent
+     in both light and dark mode without a third color needing definition.
+     No per-row icon - repeating the same "hover me" affordance on all ten
+     rows was more visual noise than help; the section subtitle says it once
+     instead, and cursor: help on each label is enough of a cue on its own. */
+  .tooltip { position: relative; cursor: help; }
+  .tooltip:hover::after, .tooltip:focus::after {
+    content: attr(data-tooltip);
+    position: absolute; left: 0; top: 135%; z-index: 20;
+    background: var(--text); color: var(--bg);
+    padding: 0.5rem 0.65rem; border-radius: 8px; font-size: 0.78rem; font-weight: normal;
+    white-space: normal; width: max-content; max-width: 280px; line-height: 1.4;
+    box-shadow: 0 6px 16px rgba(0, 0, 0, 0.3);
+  }
+  .tooltip:hover::before, .tooltip:focus::before {
+    content: ""; position: absolute; left: 10px; top: 122%; z-index: 20;
+    border: 5px solid transparent; border-bottom-color: var(--text);
+  }
 </style>
 
 <h1>ebs-auto-resize</h1>
 <p class="subtitle">Live resize activity and scan history from the controller.</p>
 
-<div class="stats">
+<div class="stats" id="dashboard-stats">
   <div class="stat"><div class="n">{{ stats.tracked }}</div><div class="l">Volumes scanned</div></div>
   <div class="stat"><div class="n">{{ stats.autoresize_enabled }}</div><div class="l">Autoresize enabled</div></div>
   <div class="stat"><div class="n">{{ stats.completed }}</div><div class="l">Resizes completed</div></div>
@@ -203,7 +277,7 @@ _PAGE_TEMPLATE = """
     <th>Instance</th><th>Account</th><th>Region</th><th>Type</th><th>State</th><th>Threshold</th>
     <th>Autoresize</th><th>Last seen</th>
   </tr></thead>
-  <tbody>
+  <tbody id="instances-tbody">
   {% for i in instances %}
   <tr data-volume="" data-instance="{{ i.instance_id|lower }}" data-account="{{ i.account_name }}"
       data-region="{{ i.region }}" data-autoresize="{{ i.autoresize|lower }}">
@@ -256,7 +330,7 @@ _PAGE_TEMPLATE = """
     <th>Volume</th><th>Instance</th><th>Account</th><th>Region</th><th>Size</th><th>Device</th>
     <th>Threshold</th><th>Autoresize</th><th>Last seen</th>
   </tr></thead>
-  <tbody>
+  <tbody id="volumes-tbody">
   {% for v in volumes %}
   <tr data-volume="{{ v.volume_id|lower }}" data-instance="{{ (v.instance_id or '')|lower }}"
       data-account="{{ v.account_name }}" data-region="{{ v.region }}" data-autoresize="{{ v.autoresize|lower }}">
@@ -286,14 +360,17 @@ _PAGE_TEMPLATE = """
 </div>
 
 <div class="tab-panel" id="settings-panel">
-<h2>Settings <small>live-editable - takes effect on the controller's next cycle, no restart</small></h2>
+<h2>Settings <small>live-editable, no restart needed - hover a setting's name for what it does</small></h2>
 <div class="panel">
 <table id="settings-table">
-  <thead><tr><th>Key</th><th>Value</th><th>Default</th><th></th></tr></thead>
-  <tbody>
+  <thead><tr><th>Key</th><th>Value</th></tr></thead>
+  <tbody id="settings-tbody">
   {% for s in settings %}
   <tr data-key="{{ s.key }}">
-    <td class="mono">{{ s.key }}</td>
+    <td>
+      <span class="config-label tooltip" tabindex="0"
+            data-tooltip="{{ s.description }} Default: {{ s.default }}.">{{ s.label }}</span>
+    </td>
     <td>
       {% if s.key == "dry_run" %}
       <label class="switch">
@@ -308,8 +385,6 @@ _PAGE_TEMPLATE = """
       <span class="config-status"></span>
       {% endif %}
     </td>
-    <td class="mono">{{ s.default }}</td>
-    <td>{{ "override set" if s.value is not none else "using default" }}</td>
   </tr>
   {% endfor %}
   </tbody>
@@ -331,7 +406,7 @@ _PAGE_TEMPLATE = """
   <thead><tr>
     <th>Volume</th><th>Instance</th><th>Status</th><th>Size</th><th>Extend attempts</th><th>Updated</th>
   </tr></thead>
-  <tbody>
+  <tbody id="resize-tbody">
   {% for r in records %}
   <tr data-volume="{{ r.volume_id|lower }}" data-instance="{{ r.instance_id|lower }}"
       data-status="{{ r.status.value }}">
@@ -377,7 +452,7 @@ _PAGE_TEMPLATE = """
     <th>Volume</th><th>Instance</th><th>Account</th><th>Region</th><th>Size</th><th>Usage</th>
     <th>Threshold</th><th>Decision</th><th>Checked</th>
   </tr></thead>
-  <tbody>
+  <tbody id="scan-tbody">
   {% for s in scans %}
   <tr data-volume="{{ s.volume_id|lower }}" data-instance="{{ s.instance_id|lower }}"
       data-account="{{ s.account_name }}" data-region="{{ s.region }}" data-size="{{ s.size_gb }}"
@@ -401,20 +476,30 @@ _PAGE_TEMPLATE = """
 <div class="pager" id="scan-pager"></div>
 
 <script>
-document.querySelectorAll(".ts").forEach(function (el) {
-  var d = new Date(el.dataset.ts);
-  el.textContent = d.toLocaleString(undefined, {
-    year: "numeric", month: "short", day: "numeric",
-    hour: "2-digit", minute: "2-digit", second: "2-digit"
+function formatTimestamps(root) {
+  root.querySelectorAll(".ts").forEach(function (el) {
+    var d = new Date(el.dataset.ts);
+    el.textContent = d.toLocaleString(undefined, {
+      year: "numeric", month: "short", day: "numeric",
+      hour: "2-digit", minute: "2-digit", second: "2-digit"
+    });
   });
-});
+}
+formatTimestamps(document);
 
 const PAGE_SIZE = 25;
+const tableControllers = {};
 
+// getRows() re-reads table.tBodies[0].rows fresh on every call, rather than
+// a one-time snapshot - this table's tbody content gets replaced wholesale
+// by refreshLiveData() every poll (see below), so a stale array captured
+// once at page load would silently stop matching what's on screen.
 function wireFilters(tableId, searchId, selectIds, countId, pagerId) {
   const table = document.getElementById(tableId);
   if (!table) return;
-  const rows = Array.from(table.tBodies[0].rows).filter(r => r.dataset.volume !== undefined);
+  function getRows() {
+    return Array.from(table.tBodies[0].rows).filter(r => r.dataset.volume !== undefined);
+  }
   const search = document.getElementById(searchId);
   const selects = selectIds.map(id => document.getElementById(id)).filter(Boolean);
   const countEl = document.getElementById(countId);
@@ -431,6 +516,7 @@ function wireFilters(tableId, searchId, selectIds, countId, pagerId) {
   }
 
   function apply() {
+    const rows = getRows();
     const matched = rows.filter(matches);
     const totalPages = Math.max(1, Math.ceil(matched.length / PAGE_SIZE));
     if (page > totalPages) page = totalPages;
@@ -470,6 +556,7 @@ function wireFilters(tableId, searchId, selectIds, countId, pagerId) {
   if (search) search.addEventListener("input", applyFromStart);
   for (const sel of selects) sel.addEventListener("change", applyFromStart);
   apply();
+  tableControllers[tableId] = { apply };
 }
 
 wireFilters("resize-table", "resize-search", ["resize-status-filter"], "resize-count", "resize-pager");
@@ -503,89 +590,104 @@ document.getElementById("volumes-account-filter").dataset.field = "account";
 document.getElementById("volumes-region-filter").dataset.field = "region";
 document.getElementById("volumes-autoresize-filter").dataset.field = "autoresize";
 
-document.querySelectorAll(".autoresize-toggle").forEach(function (toggle) {
-  toggle.addEventListener("change", function () {
-    const kind = toggle.dataset.kind; // "instances" or "volumes"
-    const id = toggle.dataset.id;
-    const desired = toggle.checked;
-    toggle.disabled = true;
-    fetch("/api/" + kind + "/" + encodeURIComponent(id) + "/autoresize", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ autoresize: desired }),
-    })
-      .then(function (resp) {
-        if (!resp.ok) throw new Error("request failed");
-        return resp.json();
+// Each of these wiring functions re-queries root (default: the whole
+// document) every time it's called, so calling it again after
+// refreshLiveData() swaps in fresh table rows picks up the new elements -
+// old elements are gone from the DOM by then, so there's no risk of
+// double-binding the same listener twice.
+function wireAutoresizeToggles(root) {
+  root.querySelectorAll(".autoresize-toggle").forEach(function (toggle) {
+    toggle.addEventListener("change", function () {
+      const kind = toggle.dataset.kind; // "instances" or "volumes"
+      const id = toggle.dataset.id;
+      const desired = toggle.checked;
+      toggle.disabled = true;
+      fetch("/api/" + kind + "/" + encodeURIComponent(id) + "/autoresize", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ autoresize: desired }),
       })
-      .then(function () {
-        toggle.closest("tr").dataset.autoresize = String(desired);
-      })
-      .catch(function () {
-        toggle.checked = !desired;
-        alert("Failed to update autoresize for " + id + " - try again.");
-      })
-      .finally(function () {
-        toggle.disabled = false;
-      });
+        .then(function (resp) {
+          if (!resp.ok) throw new Error("request failed");
+          return resp.json();
+        })
+        .then(function () {
+          toggle.closest("tr").dataset.autoresize = String(desired);
+        })
+        .catch(function () {
+          toggle.checked = !desired;
+          alert("Failed to update autoresize for " + id + " - try again.");
+        })
+        .finally(function () {
+          toggle.disabled = false;
+        });
+    });
   });
-});
+}
 
-document.querySelectorAll(".config-bool-toggle").forEach(function (toggle) {
-  toggle.addEventListener("change", function () {
-    const key = toggle.dataset.key;
-    const desired = toggle.checked;
-    toggle.disabled = true;
-    fetch("/api/config/" + encodeURIComponent(key), {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ value: desired ? "true" : "false" }),
-    })
-      .then(function (resp) {
-        if (!resp.ok) throw new Error("request failed");
-        return resp.json();
+function wireConfigBoolToggles(root) {
+  root.querySelectorAll(".config-bool-toggle").forEach(function (toggle) {
+    toggle.addEventListener("change", function () {
+      const key = toggle.dataset.key;
+      const desired = toggle.checked;
+      toggle.disabled = true;
+      fetch("/api/config/" + encodeURIComponent(key), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ value: desired ? "true" : "false" }),
       })
-      .catch(function () {
-        toggle.checked = !desired;
-        alert("Failed to update " + key + " - try again.");
-      })
-      .finally(function () {
-        toggle.disabled = false;
-      });
+        .then(function (resp) {
+          if (!resp.ok) throw new Error("request failed");
+          return resp.json();
+        })
+        .catch(function () {
+          toggle.checked = !desired;
+          alert("Failed to update " + key + " - try again.");
+        })
+        .finally(function () {
+          toggle.disabled = false;
+        });
+    });
   });
-});
+}
 
-document.querySelectorAll(".config-save-btn").forEach(function (btn) {
-  btn.addEventListener("click", function () {
-    const row = btn.closest("tr");
-    const key = btn.dataset.key;
-    const input = row.querySelector(".config-value-input");
-    const statusEl = row.querySelector(".config-status");
-    const value = input.value.trim();
-    btn.disabled = true;
-    statusEl.textContent = "";
-    statusEl.className = "config-status";
-    fetch("/api/config/" + encodeURIComponent(key), {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ value: value }),
-    })
-      .then(function (resp) {
-        return resp.json().then(function (data) { return { ok: resp.ok, data: data }; });
+function wireConfigSaveButtons(root) {
+  root.querySelectorAll(".config-save-btn").forEach(function (btn) {
+    btn.addEventListener("click", function () {
+      const row = btn.closest("tr");
+      const key = btn.dataset.key;
+      const input = row.querySelector(".config-value-input");
+      const statusEl = row.querySelector(".config-status");
+      const value = input.value.trim();
+      btn.disabled = true;
+      statusEl.textContent = "";
+      statusEl.className = "config-status";
+      fetch("/api/config/" + encodeURIComponent(key), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ value: value }),
       })
-      .then(function (result) {
-        statusEl.textContent = result.ok ? "Saved" : (result.data.error || "Invalid value");
-        statusEl.className = "config-status " + (result.ok ? "ok" : "error");
-      })
-      .catch(function () {
-        statusEl.textContent = "Request failed";
-        statusEl.className = "config-status error";
-      })
-      .finally(function () {
-        btn.disabled = false;
-      });
+        .then(function (resp) {
+          return resp.json().then(function (data) { return { ok: resp.ok, data: data }; });
+        })
+        .then(function (result) {
+          statusEl.textContent = result.ok ? "Saved" : (result.data.error || "Invalid value");
+          statusEl.className = "config-status " + (result.ok ? "ok" : "error");
+        })
+        .catch(function () {
+          statusEl.textContent = "Request failed";
+          statusEl.className = "config-status error";
+        })
+        .finally(function () {
+          btn.disabled = false;
+        });
+    });
   });
-});
+}
+
+wireAutoresizeToggles(document);
+wireConfigBoolToggles(document);
+wireConfigSaveButtons(document);
 
 document.querySelectorAll(".tab-btn").forEach(function (btn) {
   btn.addEventListener("click", function () {
@@ -594,6 +696,58 @@ document.querySelectorAll(".tab-btn").forEach(function (btn) {
     btn.classList.add("active");
     document.getElementById(btn.dataset.tab).classList.add("active");
   });
+});
+
+// Live refresh: re-fetches this same page and swaps in just the stats
+// cards and each table's rows, rather than a full reload or a second,
+// separately-maintained JS rendering path for the same data - the Jinja
+// template stays the single source of truth for what a row looks like.
+// Filter/search inputs and the active tab live outside the swapped
+// elements, so they're untouched and don't need saving/restoring.
+const POLL_INTERVAL_MS = 10000;
+const SWAP_IDS = ["dashboard-stats", "instances-tbody", "volumes-tbody", "resize-tbody", "scan-tbody"];
+let refreshInFlight = false;
+
+async function refreshLiveData() {
+  if (document.hidden || refreshInFlight) return;
+  refreshInFlight = true;
+  try {
+    const resp = await fetch("/");
+    if (!resp.ok) return;
+    const html = await resp.text();
+    const fresh = new DOMParser().parseFromString(html, "text/html");
+
+    SWAP_IDS.forEach(function (id) {
+      const current = document.getElementById(id);
+      const updated = fresh.getElementById(id);
+      if (current && updated) current.innerHTML = updated.innerHTML;
+    });
+
+    // Settings rows have an unsaved-input state (typed but not yet Saved)
+    // that a background swap would silently wipe out - skip that one
+    // section for this cycle if the user's actively focused inside it.
+    const settingsTbody = document.getElementById("settings-tbody");
+    const updatedSettings = fresh.getElementById("settings-tbody");
+    const editingSettings = settingsTbody && settingsTbody.contains(document.activeElement);
+    if (settingsTbody && updatedSettings && !editingSettings) {
+      settingsTbody.innerHTML = updatedSettings.innerHTML;
+    }
+
+    formatTimestamps(document);
+    wireAutoresizeToggles(document);
+    wireConfigBoolToggles(document);
+    wireConfigSaveButtons(document);
+    Object.values(tableControllers).forEach(function (c) { c.apply(); });
+  } catch (e) {
+    // Network hiccup or similar - just try again next tick.
+  } finally {
+    refreshInFlight = false;
+  }
+}
+
+setInterval(refreshLiveData, POLL_INTERVAL_MS);
+document.addEventListener("visibilitychange", function () {
+  if (!document.hidden) refreshLiveData();
 });
 </script>
 """
@@ -633,7 +787,16 @@ def _compute_stats(records, scans, volumes) -> dict[str, int]:
 
 def _list_settings(state: StateBackend) -> list[dict]:
     overrides = state.list_config()
-    return [{"key": key, "value": overrides.get(key), "default": _default_config_value(key)} for key in DB_CONFIG_KEYS]
+    return [
+        {
+            "key": key,
+            "label": _CONFIG_LABELS[key],
+            "description": _CONFIG_DESCRIPTIONS[key],
+            "value": overrides.get(key),
+            "default": _default_config_value(key),
+        }
+        for key in DB_CONFIG_KEYS
+    ]
 
 
 def create_app(state: StateBackend) -> Flask:
@@ -643,7 +806,12 @@ def create_app(state: StateBackend) -> Flask:
     def index():
         records = state.list_all()
         scans = state.list_scans(limit=_SCAN_LIST_LIMIT)
-        instances = state.list_instances()
+        # Stopped instances aren't being monitored (nothing to check disk
+        # usage on while it's off) - hidden from the tab so it only shows
+        # what's actually relevant, not everything ever discovered.
+        # /api/instances is unfiltered - the full record is still there for
+        # anything scripting against it.
+        instances = [i for i in state.list_instances() if i.state != "stopped"]
         volumes = state.list_volumes()
         return render_template_string(
             _PAGE_TEMPLATE,

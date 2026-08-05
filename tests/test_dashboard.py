@@ -75,6 +75,28 @@ def test_index_renders_instances_and_volumes(state):
     assert b"t3.micro" in response.data
 
 
+def test_index_hides_stopped_instances(state):
+    state.upsert_instance("default", "i-running", "us-east-1", "t3.micro", "running")
+    state.upsert_instance("default", "i-stopped", "us-east-1", "t3.micro", "stopped")
+
+    client = create_app(state).test_client()
+    response = client.get("/")
+
+    assert b"i-running" in response.data
+    assert b"i-stopped" not in response.data
+
+
+def test_api_instances_still_includes_stopped(state):
+    state.upsert_instance("default", "i-running", "us-east-1", "t3.micro", "running")
+    state.upsert_instance("default", "i-stopped", "us-east-1", "t3.micro", "stopped")
+
+    client = create_app(state).test_client()
+    response = client.get("/api/instances")
+
+    instance_ids = {i["instance_id"] for i in response.get_json()}
+    assert instance_ids == {"i-running", "i-stopped"}
+
+
 def test_stats_count_autoresize_enabled_volumes(state):
     state.upsert_volume("default", "vol-1", "i-1", "us-east-1", 100, "/dev/xvdf")
     state.upsert_volume("default", "vol-2", "i-1", "us-east-1", 100, "/dev/xvdg")
@@ -159,6 +181,35 @@ def test_index_renders_settings_tab(state):
     assert b"scheduler.interval_seconds" in response.data
 
 
+def test_settings_tab_shows_human_readable_labels_and_tooltips(state):
+    client = create_app(state).test_client()
+    response = client.get("/")
+    html = response.data.decode()
+
+    assert "Scan interval (sec)" in html  # label, not the raw "scheduler.interval_seconds" key
+    assert "How often a full discovery-and-check cycle runs." in html  # tooltip text
+
+
+def test_settings_tab_renders_dry_run_last(state):
+    client = create_app(state).test_client()
+    html = client.get("/").data.decode()
+
+    other_keys = [
+        "default_threshold_percent",
+        "scheduler.interval_seconds",
+        "scheduler.max_concurrent_resizes",
+        "scheduler.scan_log_retention_days",
+        "resize.max_volume_size_gb",
+        "resize.growth_increment_percent",
+        "resize.extend_retry.max_attempts",
+        "resize.extend_retry.backoff_seconds",
+        "resize.stale_lock_timeout_minutes",
+    ]
+    dry_run_position = html.index('data-key="dry_run"')
+    for key in other_keys:
+        assert html.index(f'data-key="{key}"') < dry_run_position
+
+
 def test_api_config_lists_all_known_keys_with_defaults(state):
     client = create_app(state).test_client()
     response = client.get("/api/config")
@@ -166,7 +217,9 @@ def test_api_config_lists_all_known_keys_with_defaults(state):
     assert response.status_code == 200
     data = response.get_json()
     by_key = {row["key"]: row for row in data}
-    assert by_key["dry_run"] == {"key": "dry_run", "value": None, "default": "true"}
+    assert by_key["dry_run"]["value"] is None
+    assert by_key["dry_run"]["default"] == "true"
+    assert by_key["dry_run"]["label"] == "Dry run"
     assert by_key["default_threshold_percent"]["default"] == "80"
     assert by_key["scheduler.interval_seconds"]["default"] == "300"
 
@@ -244,3 +297,35 @@ def test_set_config_overwrites_existing_value(state):
 
     assert response.status_code == 200
     assert state.get_config("dry_run") == "true"
+
+
+# --- Live refresh (client-side polling) --------------------------------------
+
+
+def test_index_has_stable_ids_for_live_refresh_swap(state):
+    # refreshLiveData() in the page's own JS re-fetches "/" and swaps these
+    # exact ids' innerHTML - if any of them go missing (e.g. someone edits
+    # the template and drops an id), live refresh silently stops updating
+    # that section instead of erroring, so it's worth pinning here.
+    client = create_app(state).test_client()
+    html = client.get("/").data.decode()
+
+    for expected_id in [
+        'id="dashboard-stats"',
+        'id="instances-tbody"',
+        'id="volumes-tbody"',
+        'id="settings-tbody"',
+        'id="resize-tbody"',
+        'id="scan-tbody"',
+    ]:
+        assert expected_id in html
+
+
+def test_index_includes_live_refresh_script(state):
+    client = create_app(state).test_client()
+    html = client.get("/").data.decode()
+
+    assert "function refreshLiveData" in html
+    assert "setInterval(refreshLiveData" in html
+    assert "visibilitychange" in html
+    assert "document.hidden" in html
