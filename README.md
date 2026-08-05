@@ -25,7 +25,7 @@ cp .env.example .env   # set a real POSTGRES_PASSWORD in it - no default is ship
 docker compose up
 ```
 
-This starts two containers: the controller, and a Postgres container it uses to track resize state (no separate database setup needed — the controller connects to it automatically using the password from `.env`). `docker compose up` refuses to start if `.env`/`POSTGRES_PASSWORD` is missing, rather than silently running with a guessable password.
+This starts three containers: the controller, its status dashboard (below), and a Postgres container both use to track resize state (no separate database setup needed — they connect to it automatically using the password from `.env`). `docker compose up` refuses to start if `.env`/`POSTGRES_PASSWORD` is missing, rather than silently running with a guessable password.
 
 `dry_run` defaults to `true` — the controller will log what it *would* resize without ever calling `modify-volume` or running a mutating remote command. Confirm the logs show what you expect against your own AWS account before flipping it off (it's a live-editable setting in Postgres, not a `config.yaml` field — see [docs/SETUP.md](docs/SETUP.md) section 5).
 
@@ -38,11 +38,7 @@ docker compose exec postgres psql -U ebs_auto_resize -d ebs_auto_resize \
 
 ### Status dashboard
 
-```bash
-docker compose --profile dashboard up
-```
-
-Serves a status page at `http://localhost:8080` with **Instances** and **Volumes** tabs (browse everything discovered, toggle `Autoresize` per resource - this is how you mark things eligible), a **Settings** tab (edit `dry_run` and every other live-editable setting - see [docs/SETUP.md](docs/SETUP.md) section 5 - without touching SQL or restarting anything), plus resize activity and scan history below. Managing more than one AWS account (see [docs/SETUP.md](docs/SETUP.md) section 1.4)? Every table is filterable by account alongside region. The page keeps itself up to date on its own (polls every 10s while the tab is visible, pauses when it isn't) - no manual refresh needed to see new scan results or resize activity land. JSON also available at `/api/status`, `/api/scans`, `/api/instances`, `/api/volumes`, `/api/config`. No authentication - only run this where you trust who's on the network.
+Already running as part of `docker compose up` above — no separate command needed. Serves a status page at `http://localhost:8089` with **Instances** and **Volumes** tabs (browse everything discovered, toggle `Autoresize` per resource - this is how you mark things eligible), a **Settings** tab (edit `dry_run` and every other live-editable setting - see [docs/SETUP.md](docs/SETUP.md) section 5 - without touching SQL or restarting anything), plus resize activity and scan history below. Managing more than one AWS account (see [docs/SETUP.md](docs/SETUP.md) section 1.4)? Every table is filterable by account alongside region. The page keeps itself up to date on its own (polls every 10s while the tab is visible, pauses when it isn't) - no manual refresh needed to see new scan results or resize activity land. JSON also available at `/api/status`, `/api/scans`, `/api/instances`, `/api/volumes`, `/api/config`. No authentication - only run this where you trust who's on the network.
 
 ## Setup and configuration
 

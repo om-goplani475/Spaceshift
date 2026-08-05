@@ -47,8 +47,10 @@ services:
         max-size: "10m"
         max-file: "3"
 
-  # Optional status page - not started by a plain `docker compose up`.
-  # Run with: docker compose --profile dashboard up
+  # Status page - starts automatically with a plain `docker compose up`,
+  # same as controller/postgres. No `profiles:` gate (there used to be one,
+  # requiring `--profile dashboard`) - not worth the extra flag to type
+  # every time for a container this cheap to run alongside the others.
   dashboard:
     build: .
     command: ["python", "-m", "controller.dashboard"]
@@ -78,8 +80,6 @@ services:
       options:
         max-size: "10m"
         max-file: "3"
-    profiles:
-      - dashboard
 
 volumes:
   postgres-data:
