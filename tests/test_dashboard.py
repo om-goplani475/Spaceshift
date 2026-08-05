@@ -1,5 +1,7 @@
 """Tests for controller.dashboard."""
 
+from dataclasses import replace
+
 from controller.dashboard import create_app
 from controller.state.base import ResizeStatus
 
@@ -329,3 +331,147 @@ def test_index_includes_live_refresh_script(state):
     assert "setInterval(refreshLiveData" in html
     assert "visibilitychange" in html
     assert "document.hidden" in html
+
+
+# --- Effective eligibility (Volumes tab Watched/Threshold columns) -----------
+
+
+def test_volume_watched_via_own_flag(state):
+    state.upsert_instance("default", "i-1", "us-east-1", "t3.micro", "running")
+    state.upsert_volume("default", "vol-1", "i-1", "us-east-1", 100, "/dev/xvdf")
+    state.set_volume_autoresize("vol-1", True)
+
+    html = create_app(state).test_client().get("/").data.decode()
+    row_start = html.index('data-volume="vol-1"')
+    row_end = html.index("</tr>", row_start)
+    row = html[row_start:row_end]
+
+    assert "Yes" in row
+    assert "via instance" not in row
+
+
+def test_volume_watched_via_instance_flag(state):
+    state.upsert_instance("default", "i-1", "us-east-1", "t3.micro", "running")
+    state.upsert_volume("default", "vol-1", "i-1", "us-east-1", 100, "/dev/xvdf")
+    state.set_instance_autoresize("i-1", True)
+    # Volume's own flag is untouched (still False) - only the instance is
+    # flagged - this is exactly the case that used to be invisible on the
+    # Volumes tab (toggle shows off, but the volume is actually watched).
+
+    html = create_app(state).test_client().get("/").data.decode()
+    row_start = html.index('data-volume="vol-1"')
+    row_end = html.index("</tr>", row_start)
+    row = html[row_start:row_end]
+
+    assert "Yes" in row
+    assert "via instance" in row
+    assert 'data-autoresize="false"' in row  # the toggle itself still reflects the volume's own (unset) flag
+
+
+def test_volume_not_watched_when_neither_flag_set(state):
+    state.upsert_instance("default", "i-1", "us-east-1", "t3.micro", "running")
+    state.upsert_volume("default", "vol-1", "i-1", "us-east-1", 100, "/dev/xvdf")
+
+    html = create_app(state).test_client().get("/").data.decode()
+    row_start = html.index('data-volume="vol-1"')
+    row_end = html.index("</tr>", row_start)
+    row = html[row_start:row_end]
+
+    assert ">No<" in row
+
+
+def test_unattached_volume_shows_unattached_even_if_flagged(state):
+    state.upsert_volume("default", "vol-1", None, "us-east-1", 100, None)
+    state.set_volume_autoresize("vol-1", True)  # flagged, but nothing to extend the filesystem on
+
+    html = create_app(state).test_client().get("/").data.decode()
+    row_start = html.index('data-volume="vol-1"')
+    row_end = html.index("</tr>", row_start)
+    row = html[row_start:row_end]
+
+    assert "Unattached" in row
+
+
+def test_threshold_shows_own_value_without_annotation(state):
+    state.upsert_instance("default", "i-1", "us-east-1", "t3.micro", "running")
+    state.upsert_volume("default", "vol-1", "i-1", "us-east-1", 100, "/dev/xvdf")
+    state._volumes["vol-1"] = replace(state._volumes["vol-1"], threshold_percent=42)
+
+    html = create_app(state).test_client().get("/").data.decode()
+    row_start = html.index('data-volume="vol-1"')
+    row_end = html.index("</tr>", row_start)
+    row = html[row_start:row_end]
+
+    assert "42%" in row
+    assert "eligibility-note" not in row
+
+
+def test_threshold_falls_back_to_instance_with_annotation(state):
+    state.upsert_instance("default", "i-1", "us-east-1", "t3.micro", "running")
+    state.upsert_volume("default", "vol-1", "i-1", "us-east-1", 100, "/dev/xvdf")
+    state._instances["i-1"] = replace(state._instances["i-1"], threshold_percent=55)
+
+    html = create_app(state).test_client().get("/").data.decode()
+    row_start = html.index('data-volume="vol-1"')
+    row_end = html.index("</tr>", row_start)
+    row = html[row_start:row_end]
+
+    assert "55%" in row
+    assert '<span class="eligibility-note">(instance)</span>' in row
+
+
+def test_threshold_falls_back_to_global_default_with_annotation(state):
+    state.upsert_instance("default", "i-1", "us-east-1", "t3.micro", "running")
+    state.upsert_volume("default", "vol-1", "i-1", "us-east-1", 100, "/dev/xvdf")
+
+    html = create_app(state).test_client().get("/").data.decode()
+    row_start = html.index('data-volume="vol-1"')
+    row_end = html.index("</tr>", row_start)
+    row = html[row_start:row_end]
+
+    assert "80%" in row  # dataclass default
+    assert '<span class="eligibility-note">(default)</span>' in row
+
+
+def test_threshold_default_reflects_app_config_override(state):
+    state.upsert_instance("default", "i-1", "us-east-1", "t3.micro", "running")
+    state.upsert_volume("default", "vol-1", "i-1", "us-east-1", 100, "/dev/xvdf")
+    state.set_config("default_threshold_percent", "65")
+
+    html = create_app(state).test_client().get("/").data.decode()
+    row_start = html.index('data-volume="vol-1"')
+    row_end = html.index("</tr>", row_start)
+    row = html[row_start:row_end]
+
+    assert "65%" in row
+
+
+def test_threshold_default_falls_back_on_invalid_app_config_override(state):
+    state.upsert_instance("default", "i-1", "us-east-1", "t3.micro", "running")
+    state.upsert_volume("default", "vol-1", "i-1", "us-east-1", 100, "/dev/xvdf")
+    state.set_config("default_threshold_percent", "not-a-number")
+
+    html = create_app(state).test_client().get("/").data.decode()
+    row_start = html.index('data-volume="vol-1"')
+    row_end = html.index("</tr>", row_start)
+    row = html[row_start:row_end]
+
+    assert "80%" in row  # falls back to the dataclass default, not a crash
+
+
+def test_watched_uses_full_instance_list_even_when_instance_is_stopped(state):
+    # The Instances tab hides stopped instances, but discovery.py's own
+    # eligibility resolution doesn't filter by instance state at all - the
+    # Volumes tab's Watched/Threshold columns must match that real
+    # behavior, not the Instances tab's display-only filtering.
+    state.upsert_instance("default", "i-1", "us-east-1", "t3.micro", "stopped")
+    state.upsert_volume("default", "vol-1", "i-1", "us-east-1", 100, "/dev/xvdf")
+    state.set_instance_autoresize("i-1", True)
+
+    html = create_app(state).test_client().get("/").data.decode()
+    row_start = html.index('data-volume="vol-1"')
+    row_end = html.index("</tr>", row_start)
+    row = html[row_start:row_end]
+
+    assert "Yes" in row
+    assert "via instance" in row

@@ -210,6 +210,8 @@ _PAGE_TEMPLATE = """
   .config-status.ok { color: var(--green); }
   .config-status.error { color: var(--red); }
 
+  .eligibility-note { color: var(--muted); font-size: 0.8rem; }
+
   .config-label { font-weight: 600; }
 
   /* Pure-CSS tooltip: no JS, and deliberately inverted relative to the
@@ -306,7 +308,8 @@ _PAGE_TEMPLATE = """
 </div>
 
 <div class="tab-panel" id="volumes-panel">
-<h2>Volumes <small>toggle autoresize per-volume, overrides its instance</small></h2>
+<h2>Volumes <small>toggle autoresize per-volume, overrides its instance -
+Threshold/Watched show what's actually in effect</small></h2>
 <div class="filters">
   <input type="text" id="volumes-search" placeholder="Search volume or instance ID...">
   <select id="volumes-account-filter">
@@ -328,10 +331,11 @@ _PAGE_TEMPLATE = """
 <table id="volumes-table">
   <thead><tr>
     <th>Volume</th><th>Instance</th><th>Account</th><th>Region</th><th>Size</th><th>Device</th>
-    <th>Threshold</th><th>Autoresize</th><th>Last seen</th>
+    <th>Threshold</th><th>Autoresize</th><th>Watched</th><th>Last seen</th>
   </tr></thead>
   <tbody id="volumes-tbody">
-  {% for v in volumes %}
+  {% for row in volume_rows %}
+  {% set v = row.v %}
   <tr data-volume="{{ v.volume_id|lower }}" data-instance="{{ (v.instance_id or '')|lower }}"
       data-account="{{ v.account_name }}" data-region="{{ v.region }}" data-autoresize="{{ v.autoresize|lower }}">
     <td class="mono">{{ v.volume_id }}</td>
@@ -340,7 +344,16 @@ _PAGE_TEMPLATE = """
     <td>{{ v.region }}</td>
     <td>{{ v.size_gb }}GB</td>
     <td>{{ v.device_name or "-" }}</td>
-    <td>{{ (v.threshold_percent ~ "%") if v.threshold_percent is not none else "default" }}</td>
+    <td>
+      {% if row.threshold is not none %}
+      {{ row.threshold }}%
+      {%- if row.threshold_source != "own" %}
+      <span class="eligibility-note">({{ row.threshold_source }})</span>
+      {%- endif %}
+      {% else %}
+      -
+      {% endif %}
+    </td>
     <td>
       <label class="switch">
         <input type="checkbox" class="autoresize-toggle" data-kind="volumes" data-id="{{ v.volume_id }}"
@@ -348,10 +361,19 @@ _PAGE_TEMPLATE = """
         <span class="slider"></span>
       </label>
     </td>
+    <td>
+      {% if row.watched_reason == "unattached" %}
+      <span class="badge badge-muted">Unattached</span>
+      {% elif row.watched %}
+      <span class="badge badge-green">Yes{{ " · via instance" if row.watched_reason == "instance" else "" }}</span>
+      {% else %}
+      <span class="badge badge-muted">No</span>
+      {% endif %}
+    </td>
     <td class="ts" data-ts="{{ v.last_seen_at.isoformat() }}"></td>
   </tr>
   {% else %}
-  <tr><td class="empty" colspan="9">No volumes discovered yet.</td></tr>
+  <tr><td class="empty" colspan="10">No volumes discovered yet.</td></tr>
   {% endfor %}
   </tbody>
 </table>
@@ -799,6 +821,61 @@ def _list_settings(state: StateBackend) -> list[dict]:
     ]
 
 
+def _effective_default_threshold(state: StateBackend) -> int:
+    # Same resolution + same last-known-good fallback controller.config's
+    # refresh_config_from_db uses each scheduler cycle - a bad live
+    # default_threshold_percent override shouldn't break this display any
+    # more than it breaks the scheduler itself.
+    try:
+        config = Config.from_dict(apply_db_overrides(_DEFAULT_CONFIG_DICT, state.list_config()))
+        return config.default_threshold_percent
+    except (ValueError, TypeError):
+        return _DEFAULT_CONFIG_DICT["default_threshold_percent"]
+
+
+def _resolve_volume_row(volume, instances_by_id: dict, default_threshold: int) -> dict:
+    """Mirrors controller.discovery.discover_eligible_volumes()'s exact
+    fallback chain, purely for display - "is this volume actually going to
+    get checked, and at what threshold" without a human needing to
+    cross-reference the Instances tab or remember the volume-then-instance-
+    then-default rule themselves. instances_by_id must be built from every
+    known instance (not the Instances tab's stopped-hidden display list) -
+    discovery.py's own resolution doesn't filter by instance state either,
+    so this has to match it exactly or the two would quietly disagree.
+    """
+    instance = instances_by_id.get(volume.instance_id) if volume.instance_id else None
+
+    if volume.instance_id is None or volume.device_name is None:
+        return {"watched": False, "watched_reason": "unattached", "threshold": None, "threshold_source": None}
+
+    if volume.autoresize:
+        watched, watched_reason = True, "own"
+    elif instance is not None and instance.autoresize:
+        watched, watched_reason = True, "instance"
+    else:
+        watched, watched_reason = False, "off"
+
+    if volume.threshold_percent is not None:
+        threshold, threshold_source = volume.threshold_percent, "own"
+    elif instance is not None and instance.threshold_percent is not None:
+        threshold, threshold_source = instance.threshold_percent, "instance"
+    else:
+        threshold, threshold_source = default_threshold, "default"
+
+    return {
+        "watched": watched,
+        "watched_reason": watched_reason,
+        "threshold": threshold,
+        "threshold_source": threshold_source,
+    }
+
+
+def _build_volume_rows(state: StateBackend, volumes: list) -> list[dict]:
+    instances_by_id = {i.instance_id: i for i in state.list_instances()}
+    default_threshold = _effective_default_threshold(state)
+    return [{"v": v, **_resolve_volume_row(v, instances_by_id, default_threshold)} for v in volumes]
+
+
 def create_app(state: StateBackend) -> Flask:
     app = Flask(__name__)
 
@@ -819,6 +896,7 @@ def create_app(state: StateBackend) -> Flask:
             scans=scans,
             instances=instances,
             volumes=volumes,
+            volume_rows=_build_volume_rows(state, volumes),
             settings=_list_settings(state),
             scan_limit=_SCAN_LIST_LIMIT,
             stats=_compute_stats(records, scans, volumes),
