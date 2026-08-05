@@ -61,7 +61,7 @@ The controller talks to instances exclusively via **SSM Send-Command** — no in
 ## Running in Docker
 
 - The container runs as a non-root user by default.
-- `restart: unless-stopped` plus a heartbeat-file `HEALTHCHECK` catch both crashes and hangs, so the controller recovers from both a crash and a silent lockup without manual intervention.
+- `restart: unless-stopped` plus a heartbeat-file `HEALTHCHECK` catch both crashes and hangs, so the controller recovers from both a crash and a silent lockup without manual intervention. The optional `dashboard` service builds from the same image but runs a different process (no scheduler loop, so no heartbeat file) - it overrides that healthcheck in `docker-compose.yml` with a plain HTTP check against its own page instead.
 - Postgres runs as its own container (`docker-compose.yml`'s `postgres` service), with its data on a named volume (`postgres-data`) — back it up periodically if you care about resize history surviving a host replacement.
 - **IMDSv2 gotcha:** if credentials mysteriously fail *only* inside the container (but work fine directly on the host), it's usually because Docker's networking adds an extra hop to the instance metadata service, and the default IMDSv2 hop limit is 1. Raise the instance's metadata hop limit to 2 to fix it.
 

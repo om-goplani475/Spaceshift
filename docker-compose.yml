@@ -60,6 +60,19 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env - see .env.example}
     ports:
       - "8089:8080"
+    # Overrides the Dockerfile's baked-in HEALTHCHECK, which checks for a
+    # heartbeat file only Scheduler.run_forever() ever writes - this
+    # service runs `controller.dashboard` instead (a plain Flask app, no
+    # scheduler loop), so that file never exists here and the image's
+    # default healthcheck would report unhealthy forever regardless of
+    # whether the dashboard is actually working. Checks the page itself
+    # instead - no curl/wget in the slim base image, so plain urllib.
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8080/', timeout=3)"]
+      interval: 30s
+      timeout: 5s
+      start_period: 10s
+      retries: 3
     logging:
       driver: json-file
       options:
