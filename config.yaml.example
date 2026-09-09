@@ -31,11 +31,11 @@ accounts:
   - name: default
     # Optional: assume a role in this account before making any AWS calls.
     # Leave unset to use the base identity directly (its own account).
-    # assume_role_arn: "arn:aws:iam::123456789012:role/ebs-auto-resize"
+    # assume_role_arn: "arn:aws:iam::123456789012:role/spaceshift"
     regions:
       - us-east-1
   # - name: prod-secondary
-  #   assume_role_arn: "arn:aws:iam::210987654321:role/ebs-auto-resize"
+  #   assume_role_arn: "arn:aws:iam::210987654321:role/spaceshift"
   #   regions:
   #     - us-east-1
   #     - eu-west-1

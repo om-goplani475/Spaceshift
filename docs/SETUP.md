@@ -54,7 +54,7 @@ One controller process can centrally manage several AWS accounts at once. `confi
 
 The single-account case is just a one-entry list (see `config.yaml.example`) - nothing else about setup changes. To add a second account:
 
-- Create a role in the **target** account (e.g. named `ebs-auto-resize`) with the permissions above.
+- Create a role in the **target** account (e.g. named `spaceshift`) with the permissions above.
 - That role's **trust policy** must explicitly allow the controller's own identity (its instance role, typically) to assume it - this is configured on the target account's side, not something the controller's own IAM policy can grant by itself.
 - Add an entry to `accounts:` with that role's ARN as `assume_role_arn` and the regions to scan in that account.
 

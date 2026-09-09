@@ -40,7 +40,7 @@
       "Sid": "OptionalAssumeRoleForMultiAccountSetups",
       "Effect": "Allow",
       "Action": "sts:AssumeRole",
-      "Resource": "arn:aws:iam::TARGET-ACCOUNT-ID:role/ebs-auto-resize"
+      "Resource": "arn:aws:iam::TARGET-ACCOUNT-ID:role/spaceshift"
     }
   ]
 }

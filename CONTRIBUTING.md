@@ -24,9 +24,9 @@ The suite uses `moto` to mock AWS calls, so no real AWS account or credentials a
 The Postgres backend tests are skipped by default, since they need a real Postgres server (not something `moto` can mock). To run them:
 
 ```bash
-docker run -d --name ebs-auto-resize-test-pg -e POSTGRES_PASSWORD=test -e POSTGRES_DB=testdb -p 15432:5432 postgres:16-alpine
+docker run -d --name spaceshift-test-pg -e POSTGRES_PASSWORD=test -e POSTGRES_DB=testdb -p 15432:5432 postgres:16-alpine
 EBS_AUTO_RESIZE_TEST_POSTGRES_DSN="dbname=testdb user=postgres password=test host=localhost port=15432" pytest tests/state/test_postgres_backend.py
-docker rm -f ebs-auto-resize-test-pg
+docker rm -f spaceshift-test-pg
 ```
 
 `tests/` mirrors `controller/`'s package layout - `tests/connections/` and `tests/state/` for the `connections/` and `state/` subpackages, flat files for everything else.

@@ -1,4 +1,4 @@
-# ebs-auto-resize
+# Spaceshift
 
 Self-hosted controller that watches EC2/EBS disk usage across a fleet and automatically grows a volume — both the AWS-side size **and** the OS-side partition/filesystem — before it fills up.
 
@@ -18,8 +18,8 @@ v1 supports **Amazon Linux + Ubuntu, ext4 + XFS**. LVM-based volumes are out of 
 ## Quickstart
 
 ```bash
-git clone <this-repo>
-cd ebs-auto-resize
+git clone https://github.com/om-goplani475/Spaceshift.git
+cd Spaceshift
 cp config.yaml.example config.yaml
 cp .env.example .env   # set a real POSTGRES_PASSWORD in it - no default is shipped
 docker compose up
