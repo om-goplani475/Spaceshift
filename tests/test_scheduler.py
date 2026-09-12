@@ -7,6 +7,7 @@ import pytest
 
 from controller.discovery import EligibleVolume
 from controller.disk_check import DiskUsage
+from controller.resize import ModifyVolumeError
 from controller.scheduler import Scheduler
 from controller.state.base import ResizeStatus
 
@@ -221,3 +222,63 @@ def test_recover_stale_row_marks_modify_completed(aws, scheduler, state):
     scheduler._recover_stale_row(ec2, record)
 
     assert state.get(volume_id).status == ResizeStatus.MODIFY_COMPLETED
+
+
+def test_recover_stale_row_ignores_an_earlier_completed_resize(aws, scheduler, state):
+    # The volume was resized to 120GB some time ago. A new 140GB row exists
+    # but modify_volume was never called (crash or rejection). Taking the
+    # newest AWS modification blindly would mark this row MODIFY_COMPLETED,
+    # run growpart/resize2fs on an unchanged volume, send a false "resized"
+    # alert, and then request modify_volume again next cycle - repeating
+    # every stale_lock_timeout until the 6h cooldown passed.
+    ec2 = boto3.client("ec2", region_name="us-east-1")
+    volume_id = ec2.create_volume(AvailabilityZone="us-east-1a", Size=100)["VolumeId"]
+    ec2.modify_volume(VolumeId=volume_id, Size=120)
+
+    state.create_if_absent(volume_id, "i-1", 120, 140)
+    record = state.get(volume_id)
+
+    scheduler._recover_stale_row(ec2, record)
+
+    assert state.get(volume_id).status == ResizeStatus.MODIFY_FAILED
+
+
+def test_recover_stale_row_with_no_aws_modification_releases_the_row(aws, scheduler, state):
+    # Previously: `return` with the row untouched, so the volume stayed
+    # "in flight" forever with no alert - one transient error permanently
+    # switched auto-resize off for it.
+    ec2 = boto3.client("ec2", region_name="us-east-1")
+    volume_id = ec2.create_volume(AvailabilityZone="us-east-1a", Size=100)["VolumeId"]
+    state.create_if_absent(volume_id, "i-1", 100, 120)
+
+    scheduler._recover_stale_row(ec2, state.get(volume_id))
+
+    assert state.get(volume_id).status == ResizeStatus.MODIFY_FAILED
+    assert state.create_if_absent(volume_id, "i-1", 100, 120) is not None  # a new attempt is allowed
+
+
+def test_recover_stale_row_treats_optimizing_as_modify_completed(scheduler, state):
+    state.create_if_absent("vol-1", "i-1", 100, 120)
+    record = state.get("vol-1")
+    ec2 = MagicMock()
+    ec2.describe_volumes_modifications.return_value = {
+        "VolumesModifications": [{"ModificationState": "optimizing", "TargetSize": 120, "StartTime": record.created_at}]
+    }
+
+    scheduler._recover_stale_row(ec2, record)
+
+    assert state.get("vol-1").status == ResizeStatus.MODIFY_COMPLETED
+
+
+def test_process_volume_records_resize_failed_when_modify_is_rejected(scheduler, volume, state):
+    with (
+        patch("controller.scheduler.is_ssm_ready", return_value=True),
+        patch("controller.scheduler.check_disk_usage", return_value=DiskUsage("/dev/xvdf", "/data", 95)),
+        patch("controller.scheduler.start_resize", side_effect=ModifyVolumeError("rejected")),
+    ):
+        scheduler._process_volume(_ACCOUNT, MagicMock(), MagicMock(), MagicMock(), volume, "us-east-1")
+
+    scans = state.list_scans()
+    assert len(scans) == 1
+    assert scans[0].decision == "resize_failed"
+    assert scans[0].percent_used == 95

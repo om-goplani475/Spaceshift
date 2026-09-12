@@ -25,12 +25,21 @@ from controller.state.base import ResizeRecord, ResizeStatus, StateBackend
 
 logger = logging.getLogger(__name__)
 
-# AWS platform limit, not a user preference.
+# AWS platform limits, not user preferences. Beyond the 4-per-24h cap, AWS
+# also rejects a second modification of the same volume within six hours
+# of the previous one (VolumeModificationRateExceeded) - so a volume that
+# is still over threshold right after a resize has to wait that long.
 _MODIFICATION_WINDOW = timedelta(hours=24)
 _MAX_MODIFICATIONS_PER_WINDOW = 4
+_MODIFICATION_COOLDOWN = timedelta(hours=6)
 
 _MODIFY_POLL_INTERVAL_SECONDS = 15
 _MODIFY_POLL_TIMEOUT_SECONDS = 900
+
+# The new capacity is usable by the OS as soon as AWS reports "optimizing";
+# "completed" can lag by hours on large volumes and is irrelevant to the
+# filesystem extend step.
+SIZE_AVAILABLE_STATES = frozenset({"optimizing", "completed"})
 
 _XVD_PATTERN = re.compile(r"^(?P<disk>/dev/xvd[a-z]+)(?P<partition>\d+)$")
 _NVME_PATTERN = re.compile(r"^(?P<disk>/dev/nvme\d+n\d+)p(?P<partition>\d+)$")
@@ -42,6 +51,10 @@ class InvalidDeviceNameError(ValueError):
 
 class ExtendFailedError(RuntimeError):
     pass
+
+
+class ModifyVolumeError(RuntimeError):
+    """The modify-volume API call was rejected; nothing changed on AWS."""
 
 
 def compute_target_size_gb(current_size_gb: int, growth_increment_percent: int) -> int:
@@ -87,22 +100,47 @@ def start_resize(
         )
         return True
 
-    since = datetime.now(UTC) - _MODIFICATION_WINDOW
-    if state.modification_count_since(volume_id, since) >= _MAX_MODIFICATIONS_PER_WINDOW:
+    now = datetime.now(UTC)
+    if state.modification_count_since(volume_id, now - _MODIFICATION_WINDOW) >= _MAX_MODIFICATIONS_PER_WINDOW:
         logger.warning(
             "%s has reached the AWS %d-modification/24h limit; skipping until the window rolls over",
             volume_id,
             _MAX_MODIFICATIONS_PER_WINDOW,
         )
         return False
+    if state.modification_count_since(volume_id, now - _MODIFICATION_COOLDOWN) > 0:
+        logger.warning(
+            "%s was modified less than %s ago; AWS won't accept another modification yet - skipping",
+            volume_id,
+            _MODIFICATION_COOLDOWN,
+        )
+        return False
 
+    previous = state.get(volume_id)
     record = state.create_if_absent(volume_id, instance_id, current_size_gb, target_size_gb)
     if record is None:
         return False  # a resize is already in flight for this volume
 
-    ec2_client.modify_volume(VolumeId=volume_id, Size=target_size_gb)
+    try:
+        ec2_client.modify_volume(VolumeId=volume_id, Size=target_size_gb)
+    except Exception as exc:
+        # The row was created before the call so two threads can't both
+        # modify; if the call is rejected it must not stay MODIFY_REQUESTED,
+        # or every later cycle would see "in flight" and skip the volume
+        # for good. MODIFY_FAILED is terminal, so the next cycle retries.
+        state.update_status(volume_id, ResizeStatus.MODIFY_FAILED)
+        if previous is None or previous.status != ResizeStatus.MODIFY_FAILED:
+            notifier.send(
+                "EBS volume resize rejected",
+                f"AWS rejected modify-volume for {volume_id} on {instance_id} "
+                f"({current_size_gb}GB -> {target_size_gb}GB): {exc}. "
+                f"The controller will retry on a later cycle; check IAM and the volume's modification history "
+                f"if this repeats.",
+            )
+        raise ModifyVolumeError(f"modify-volume rejected for {volume_id}: {exc}") from exc
+
     state.record_modification(volume_id, datetime.now(UTC))
-    _wait_for_modification_completed(ec2_client, volume_id)
+    _wait_for_new_size_available(ec2_client, volume_id, target_size_gb)
     state.update_status(volume_id, ResizeStatus.MODIFY_COMPLETED)
     return True
 
@@ -167,19 +205,43 @@ def should_retry_extend_now(record: ResizeRecord, backoff_seconds: int) -> bool:
     return datetime.now(UTC) >= next_attempt_at
 
 
-def _wait_for_modification_completed(ec2_client, volume_id: str) -> None:
+def find_modification(modifications: list[dict], target_size_gb: int, requested_at: datetime) -> dict | None:
+    """Pick the modification that corresponds to *our* request out of what
+    describe_volumes_modifications returned, or None if it isn't there.
+
+    A volume that was resized before has an older modification on record;
+    taking the newest entry blindly would mistake that earlier, completed
+    resize for the one just requested. Matching on target size and start
+    time (with slack for clock skew between this host and AWS) rules that
+    out. Newest match wins.
+    """
+    earliest_start = requested_at - timedelta(minutes=5)
+    for modification in reversed(modifications):
+        if modification.get("TargetSize") != target_size_gb:
+            continue
+        start_time = modification.get("StartTime")
+        if start_time is not None and start_time < earliest_start:
+            continue
+        return modification
+    return None
+
+
+def _wait_for_new_size_available(ec2_client, volume_id: str, target_size_gb: int) -> None:
+    requested_at = datetime.now(UTC)
     deadline = time.monotonic() + _MODIFY_POLL_TIMEOUT_SECONDS
     while time.monotonic() < deadline:
         response = ec2_client.describe_volumes_modifications(VolumeIds=[volume_id])
-        modifications = response.get("VolumesModifications", [])
-        if modifications:
-            modification_state = modifications[-1]["ModificationState"]
-            if modification_state == "completed":
+        modification = find_modification(response.get("VolumesModifications", []), target_size_gb, requested_at)
+        if modification is not None:
+            modification_state = modification["ModificationState"]
+            if modification_state in SIZE_AVAILABLE_STATES:
                 return
             if modification_state == "failed":
                 raise RuntimeError(f"AWS reported modify-volume failed for {volume_id}")
         time.sleep(_MODIFY_POLL_INTERVAL_SECONDS)
-    raise TimeoutError(f"modify-volume for {volume_id} did not complete within {_MODIFY_POLL_TIMEOUT_SECONDS}s")
+    raise TimeoutError(
+        f"modify-volume for {volume_id} was not reported as optimizing/completed within {_MODIFY_POLL_TIMEOUT_SECONDS}s"
+    )
 
 
 def _extend_filesystem(connector: Connector, target: ConnectionTarget, device_name: str) -> None:

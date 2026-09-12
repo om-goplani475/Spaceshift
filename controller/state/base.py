@@ -21,15 +21,22 @@ from datetime import datetime
 
 class ResizeStatus(enum.StrEnum):
     MODIFY_REQUESTED = "MODIFY_REQUESTED"
+    # The modify-volume API call itself was rejected (rate limit, IAM,
+    # throttling). Nothing changed on the AWS side, so this is terminal:
+    # the row no longer blocks a fresh attempt on a later cycle.
+    MODIFY_FAILED = "MODIFY_FAILED"
     MODIFY_COMPLETED = "MODIFY_COMPLETED"
     EXTEND_FAILED = "EXTEND_FAILED"
     EXTEND_FAILED_NEEDS_ATTENTION = "EXTEND_FAILED_NEEDS_ATTENTION"
     EXTEND_COMPLETED = "EXTEND_COMPLETED"
 
 
-# A volume in one of these statuses is done - either successfully or in a
-# way that needs a human, not the scheduler, to act next.
-TERMINAL_STATUSES = frozenset({ResizeStatus.EXTEND_COMPLETED, ResizeStatus.EXTEND_FAILED_NEEDS_ATTENTION})
+# A volume in one of these statuses is done with *this* attempt - either
+# successfully, in a way that needs a human next, or (MODIFY_FAILED) in a
+# way that a later cycle may simply retry.
+TERMINAL_STATUSES = frozenset(
+    {ResizeStatus.EXTEND_COMPLETED, ResizeStatus.EXTEND_FAILED_NEEDS_ATTENTION, ResizeStatus.MODIFY_FAILED}
+)
 
 
 @dataclass
@@ -53,7 +60,7 @@ class ScanRecord:
     tracks volumes with an actual resize in flight. decision is one of:
     ssm_not_ready, extend_retry_waiting, extend_retry_attempted,
     needs_attention, below_threshold, would_resize, resize_triggered,
-    resize_skipped.
+    resize_skipped, resize_failed.
     """
 
     id: int

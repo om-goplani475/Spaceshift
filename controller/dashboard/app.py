@@ -114,6 +114,7 @@ _STATUS_BADGES = {
     ResizeStatus.EXTEND_COMPLETED: "badge-green",
     ResizeStatus.EXTEND_FAILED_NEEDS_ATTENTION: "badge-red",
     ResizeStatus.EXTEND_FAILED: "badge-amber",
+    ResizeStatus.MODIFY_FAILED: "badge-amber",
 }
 
 _DECISION_BADGES = {
@@ -122,6 +123,7 @@ _DECISION_BADGES = {
     "needs_attention": "badge-red",
     "ssm_not_ready": "badge-amber",
     "resize_skipped": "badge-amber",
+    "resize_failed": "badge-red",
 }
 
 

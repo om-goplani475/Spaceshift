@@ -23,7 +23,14 @@ from controller.connections.ssm_connector import SsmConnector
 from controller.discovery import EligibleVolume, discover_eligible_volumes, is_ssm_ready
 from controller.disk_check import check_disk_usage
 from controller.notifications import Notifier
-from controller.resize import attempt_extend, should_retry_extend_now, start_resize
+from controller.resize import (
+    SIZE_AVAILABLE_STATES,
+    ModifyVolumeError,
+    attempt_extend,
+    find_modification,
+    should_retry_extend_now,
+    start_resize,
+)
 from controller.state.base import ResizeStatus, StateBackend
 
 logger = logging.getLogger(__name__)
@@ -148,15 +155,23 @@ class Scheduler:
 
             usage = check_disk_usage(connector, target, volume.device_name)
             if usage.percent_used >= volume.threshold_percent:
-                started = start_resize(
-                    ec2,
-                    self._state,
-                    self._notifier,
-                    self._config,
-                    volume.volume_id,
-                    volume.instance_id,
-                    volume.size_gb,
-                )
+                try:
+                    started = start_resize(
+                        ec2,
+                        self._state,
+                        self._notifier,
+                        self._config,
+                        volume.volume_id,
+                        volume.instance_id,
+                        volume.size_gb,
+                    )
+                except ModifyVolumeError as exc:
+                    # Already alerted and recorded as MODIFY_FAILED inside
+                    # start_resize; the scan row is what makes it visible
+                    # on the dashboard.
+                    logger.warning("%s", exc)
+                    self._record_scan(account_name, volume, region, "resize_failed", percent_used=usage.percent_used)
+                    return
                 if not started:
                     decision = "resize_skipped"
                 elif self._config.dry_run:
@@ -213,12 +228,23 @@ class Scheduler:
         # happened instead of blindly retrying or leaving the row stuck
         # forever (stale in-progress row recovery).
         response = ec2.describe_volumes_modifications(VolumeIds=[record.volume_id])
-        modifications = response.get("VolumesModifications", [])
-        if not modifications:
+        modification = find_modification(response.get("VolumesModifications", []), record.to_size_gb, record.created_at)
+        if modification is None:
+            # AWS has no modification matching this row, so modify-volume
+            # never went through (the process died before the call, or the
+            # call was rejected and the failure wasn't recorded). Nothing
+            # to wait for - release the row so a later cycle can retry.
+            logger.warning(
+                "%s: stale %s row has no matching AWS modification (target %dGB) - marking MODIFY_FAILED",
+                record.volume_id,
+                record.status.value,
+                record.to_size_gb,
+            )
+            self._state.update_status(record.volume_id, ResizeStatus.MODIFY_FAILED)
             return
 
-        modification_state = modifications[-1]["ModificationState"]
-        if modification_state == "completed" and record.status == ResizeStatus.MODIFY_REQUESTED:
+        modification_state = modification["ModificationState"]
+        if modification_state in SIZE_AVAILABLE_STATES and record.status == ResizeStatus.MODIFY_REQUESTED:
             self._state.update_status(record.volume_id, ResizeStatus.MODIFY_COMPLETED)
         elif modification_state == "failed":
             self._state.update_status(record.volume_id, ResizeStatus.EXTEND_FAILED_NEEDS_ATTENTION)

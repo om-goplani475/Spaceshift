@@ -1,18 +1,22 @@
 """Tests for controller.resize."""
 
 import datetime as dt
+from unittest.mock import MagicMock
 
 import boto3
 import pytest
+from botocore.exceptions import ClientError
 
 from controller.config import Config
 from controller.connections.base import CommandResult, ConnectionTarget
 from controller.resize import (
     ExtendFailedError,
     InvalidDeviceNameError,
+    ModifyVolumeError,
     _split_device,
     attempt_extend,
     compute_target_size_gb,
+    find_modification,
     should_retry_extend_now,
     start_resize,
 )
@@ -104,6 +108,123 @@ def test_start_resize_modification_limit_guard(aws, state, notifier):
     result = start_resize(ec2, state, notifier, config, volume_id, "i-1", 100)
 
     assert result is False
+
+
+def _rejecting_ec2(code: str = "VolumeModificationRateExceeded"):
+    ec2 = MagicMock()
+    ec2.modify_volume.side_effect = ClientError({"Error": {"Code": code, "Message": "nope"}}, "ModifyVolume")
+    return ec2
+
+
+def test_start_resize_marks_modify_failed_and_notifies_when_aws_rejects(state, notifier):
+    # The row is created before modify_volume so two threads can't both
+    # call it - which means a rejected call must not leave it at
+    # MODIFY_REQUESTED, or every later cycle sees "in flight" and skips
+    # the volume forever.
+    config = Config.from_dict({"dry_run": False})
+    notifier.send = MagicMock()
+
+    with pytest.raises(ModifyVolumeError):
+        start_resize(_rejecting_ec2(), state, notifier, config, "vol-1", "i-1", 100)
+
+    assert state.get("vol-1").status == ResizeStatus.MODIFY_FAILED
+    assert state.modification_count_since("vol-1", dt.datetime.now(dt.UTC) - dt.timedelta(days=1)) == 0
+    notifier.send.assert_called_once()
+    assert "rejected" in notifier.send.call_args.args[0].lower()
+
+
+def test_start_resize_modify_failed_row_does_not_block_a_retry(state, notifier):
+    config = Config.from_dict({"dry_run": False})
+    notifier.send = MagicMock()
+    with pytest.raises(ModifyVolumeError):
+        start_resize(_rejecting_ec2(), state, notifier, config, "vol-1", "i-1", 100)
+
+    with pytest.raises(ModifyVolumeError):
+        start_resize(_rejecting_ec2(), state, notifier, config, "vol-1", "i-1", 100)
+
+    # Second failure in a row: retried (not skipped as in-flight), but no
+    # second alert for the same ongoing condition.
+    assert state.get("vol-1").status == ResizeStatus.MODIFY_FAILED
+    notifier.send.assert_called_once()
+
+
+def test_start_resize_succeeds_after_an_earlier_modify_failed(aws, state, notifier):
+    ec2 = boto3.client("ec2", region_name="us-east-1")
+    volume_id = ec2.create_volume(AvailabilityZone="us-east-1a", Size=100)["VolumeId"]
+    config = Config.from_dict({"dry_run": False})
+    notifier.send = MagicMock()
+    with pytest.raises(ModifyVolumeError):
+        start_resize(_rejecting_ec2(), state, notifier, config, volume_id, "i-1", 100)
+
+    started = start_resize(ec2, state, notifier, config, volume_id, "i-1", 100)
+
+    assert started is True
+    assert state.get(volume_id).status == ResizeStatus.MODIFY_COMPLETED
+
+
+def test_start_resize_respects_six_hour_cooldown(state, notifier):
+    # AWS rejects a second modification within 6h of the last one; the
+    # 4-per-24h counter alone doesn't model that, so a volume still over
+    # threshold right after a resize would burn a rejected call per cycle.
+    config = Config.from_dict({"dry_run": False})
+    ec2 = MagicMock()
+    state.record_modification("vol-1", dt.datetime.now(dt.UTC) - dt.timedelta(hours=1))
+
+    result = start_resize(ec2, state, notifier, config, "vol-1", "i-1", 100)
+
+    assert result is False
+    assert state.get("vol-1") is None
+    ec2.modify_volume.assert_not_called()
+
+
+def test_start_resize_allows_modification_after_cooldown(state, notifier):
+    config = Config.from_dict({"dry_run": False})
+    ec2 = MagicMock()
+    ec2.describe_volumes_modifications.return_value = {
+        "VolumesModifications": [
+            {"ModificationState": "optimizing", "TargetSize": 120, "StartTime": dt.datetime.now(dt.UTC)}
+        ]
+    }
+    state.record_modification("vol-1", dt.datetime.now(dt.UTC) - dt.timedelta(hours=7))
+
+    assert start_resize(ec2, state, notifier, config, "vol-1", "i-1", 100) is True
+    ec2.modify_volume.assert_called_once_with(VolumeId="vol-1", Size=120)
+
+
+def test_start_resize_treats_optimizing_as_size_available(state, notifier):
+    # The new capacity is usable at "optimizing"; "completed" can lag by
+    # hours on large volumes. Waiting for it stalled the extend step (and a
+    # worker thread) for the whole 15-minute poll window, then timed out.
+    config = Config.from_dict({"dry_run": False})
+    ec2 = MagicMock()
+    ec2.describe_volumes_modifications.return_value = {
+        "VolumesModifications": [
+            {"ModificationState": "optimizing", "TargetSize": 120, "StartTime": dt.datetime.now(dt.UTC)}
+        ]
+    }
+
+    assert start_resize(ec2, state, notifier, config, "vol-1", "i-1", 100) is True
+    assert state.get("vol-1").status == ResizeStatus.MODIFY_COMPLETED
+    assert ec2.describe_volumes_modifications.call_count == 1  # no polling needed
+
+
+# --- find_modification -----------------------------------------------------
+
+
+def test_find_modification_ignores_an_earlier_resize():
+    now = dt.datetime.now(dt.UTC)
+    earlier = {"ModificationState": "completed", "TargetSize": 120, "StartTime": now - dt.timedelta(hours=8)}
+
+    assert find_modification([earlier], target_size_gb=140, requested_at=now) is None
+    assert find_modification([earlier], target_size_gb=120, requested_at=now) is None  # right size, too old
+
+
+def test_find_modification_prefers_newest_match_and_tolerates_skew():
+    now = dt.datetime.now(dt.UTC)
+    old = {"ModificationState": "completed", "TargetSize": 120, "StartTime": now - dt.timedelta(days=2)}
+    ours = {"ModificationState": "modifying", "TargetSize": 120, "StartTime": now - dt.timedelta(minutes=2)}
+
+    assert find_modification([old, ours], target_size_gb=120, requested_at=now) is ours
 
 
 # --- attempt_extend --------------------------------------------------------

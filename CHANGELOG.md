@@ -15,6 +15,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 - Issue and pull request templates, CODEOWNERS, code of conduct, this changelog.
 - A live-refresh indicator in the dashboard's top bar showing when the page last updated, and whether the last refresh failed.
+- New resize status `MODIFY_FAILED` and scan decision `resize_failed`, shown on the dashboard when AWS rejects a modify-volume call.
+
+### Fixed
+- A rejected `modify-volume` call (rate limit, IAM, throttling) left the volume permanently "in flight" and silently stopped auto-resizing it. It is now recorded as `MODIFY_FAILED`, alerted once, and retried on a later cycle.
+- The controller now honors AWS's 6-hour cooldown between modifications of the same volume instead of issuing a call AWS will reject.
+- Stale-row recovery matched the volume's *most recent* AWS modification even when it was an earlier, unrelated resize - which could run `growpart`/`resize2fs` on an unchanged volume and send a false "resized" alert. It now matches the modification to the row's own target size and start time.
+- The AWS-side step now completes when the modification reaches `optimizing` (when the new capacity is actually usable) instead of waiting for `completed`, which can lag by hours and routinely hit the 15-minute timeout.
 
 ## [0.1.0] - 2026-08-05
 
