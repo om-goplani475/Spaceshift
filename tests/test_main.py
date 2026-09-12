@@ -57,3 +57,14 @@ def test_build_state_backend_reads_host_and_password_from_env(monkeypatch):
     with patch("controller.main.PostgresStateBackend") as backend_cls:
         build_state_backend()
     backend_cls.assert_called_once_with("postgresql://ebs_auto_resize:supersecret@localhost:5432/ebs_auto_resize")
+
+
+def test_build_state_backend_percent_encodes_uri_structural_characters(monkeypatch):
+    # "p@ss/w%rd" unencoded parses as password "p", host "ss/w%rd@postgres".
+    monkeypatch.delenv("POSTGRES_HOST", raising=False)
+    monkeypatch.setenv("POSTGRES_PASSWORD", "p@ss/w%rd:x?y")
+    with patch("controller.main.PostgresStateBackend") as backend_cls:
+        build_state_backend()
+    backend_cls.assert_called_once_with(
+        "postgresql://ebs_auto_resize:p%40ss%2Fw%25rd%3Ax%3Fy@postgres:5432/ebs_auto_resize"
+    )

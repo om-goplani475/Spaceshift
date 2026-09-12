@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import logging
 import os
+from urllib.parse import quote
 
 from controller.config import load_config
 from controller.notifications import Notifier
@@ -34,7 +35,12 @@ def build_state_backend() -> StateBackend:
             ".env.example); running controller.main directly, export it yourself first."
         )
     host = os.environ.get("POSTGRES_HOST", "postgres")
-    return PostgresStateBackend(_POSTGRES_DSN_TEMPLATE.format(password=password, host=host))
+    # libpq percent-decodes the userinfo part of a URI, so any character
+    # that's structural in a URI (@ / : % ?) must be encoded here or the
+    # password is misparsed - e.g. "p@ss" becomes host "ss@postgres", and
+    # the connect error then echoes part of the password into the logs.
+    # ~40% of base64-random passwords contain a "/".
+    return PostgresStateBackend(_POSTGRES_DSN_TEMPLATE.format(password=quote(password, safe=""), host=host))
 
 
 def main() -> None:
