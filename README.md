@@ -72,5 +72,7 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for full dev setup, including how to run 
 ## Contributing / Security
 
 - [CONTRIBUTING.md](CONTRIBUTING.md) — dev environment, running tests, code style.
+- [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md) — expectations for everyone participating in the project.
 - [SECURITY.md](SECURITY.md) — this tool holds real AWS and instance access; please report vulnerabilities privately rather than via a public issue.
+- [CHANGELOG.md](CHANGELOG.md) — what changed between versions.
 - [LICENSE](LICENSE) — MIT.

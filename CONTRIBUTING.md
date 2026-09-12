@@ -49,6 +49,11 @@ ruff format .           # format
 
 1. Fork the repo and create a branch off `main`.
 2. Make your change, with tests covering it.
-3. Open a pull request describing what changed and why.
+3. Add a line under `[Unreleased]` in [CHANGELOG.md](CHANGELOG.md) if the change is user-visible.
+4. Open a pull request describing what changed and why - the PR template will prompt for the details.
+
+Commit messages follow [Conventional Commits](https://www.conventionalcommits.org/) (`feat:`, `fix:`, `refactor:`, `docs:`, `chore:`, with an optional scope like `feat(dashboard):`) - this is what the `git log` already looks like, so keep it consistent.
 
 For security-relevant issues, see [SECURITY.md](SECURITY.md) instead of opening a public issue.
+
+This project follows the [Contributor Covenant](CODE_OF_CONDUCT.md); by participating you agree to uphold it.
