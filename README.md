@@ -29,7 +29,7 @@ This starts three containers: the controller, its status dashboard (below), and 
 
 `dry_run` defaults to `true` — the controller will log what it *would* resize without ever calling `modify-volume` or running a mutating remote command. Confirm the logs show what you expect against your own AWS account before flipping it off (it's a live-editable setting in Postgres, not a `config.yaml` field — see [docs/SETUP.md](docs/SETUP.md) section 5).
 
-Mark a volume (or the instance it's attached to) as eligible - the first cycle syncs everything it can see into Postgres, but nothing is watched until this is set. The dashboard (below) is the easiest way to do this - flip the `Autoresize` toggle next to the volume/instance on its **Instances**/**Volumes** tab. Without the dashboard, it's a direct `UPDATE`:
+Mark a volume (or the instance it's attached to) as eligible - the first cycle syncs everything it can see into Postgres, but nothing is watched until this is set. The dashboard (below) is the easiest way to do this - flip the `Autoresize` toggle next to the volume/instance on the **Instances** or **Volumes** page. Without the dashboard, it's a direct `UPDATE`:
 
 ```bash
 docker compose exec postgres psql -U ebs_auto_resize -d ebs_auto_resize \
@@ -38,7 +38,18 @@ docker compose exec postgres psql -U ebs_auto_resize -d ebs_auto_resize \
 
 ### Status dashboard
 
-Already running as part of `docker compose up` above — no separate command needed. Serves a status page at `http://localhost:8089` with **Instances** and **Volumes** tabs (browse everything discovered, toggle `Autoresize` per resource - this is how you mark things eligible), a **Settings** tab (edit `dry_run` and every other live-editable setting - see [docs/SETUP.md](docs/SETUP.md) section 5 - without touching SQL or restarting anything), plus resize activity and scan history below. Managing more than one AWS account (see [docs/SETUP.md](docs/SETUP.md) section 1.4)? Every table is filterable by account alongside region. The page keeps itself up to date on its own (polls every 10s while the tab is visible, pauses when it isn't) - no manual refresh needed to see new scan results or resize activity land. JSON also available at `/api/status`, `/api/scans`, `/api/instances`, `/api/volumes`, `/api/config`. No authentication - only run this where you trust who's on the network.
+Already running as part of `docker compose up` above — no separate command needed. Served at `http://localhost:8089`:
+
+- **Overview** — the numbers that matter (volumes scanned, watched, resizes completed, in progress, needs attention), every resize the controller has started and where it got to, and the most recent disk checks.
+- **Instances** and **Volumes** — everything discovered, with an `Autoresize` toggle per row (this is how you mark things eligible). The Volumes page shows what's *actually* in effect after a volume's own flag, its instance's flag, and the default threshold are resolved.
+- **Settings** — `dry_run` and every other live-editable setting (see [docs/SETUP.md](docs/SETUP.md) section 5), grouped and described inline, no SQL and no restart.
+
+Managing more than one AWS account (see [docs/SETUP.md](docs/SETUP.md) section 1.4)? Every table is filterable by account alongside region. Pages keep themselves up to date (a 10s poll while the tab is visible, paused when it isn't) — the indicator in the top-right says when the last refresh happened. JSON is also available at `/api/status`, `/api/scans`, `/api/instances`, `/api/volumes`, `/api/config`. No authentication — only run this where you trust who's on the network.
+
+<p>
+  <img src="docs/screenshots/overview-light.png" alt="Spaceshift overview page: stat tiles, resize activity table, scan history table" width="49%">
+  <img src="docs/screenshots/overview-dark.png" alt="The same overview page in dark mode" width="49%">
+</p>
 
 ## Setup and configuration
 
