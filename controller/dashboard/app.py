@@ -5,7 +5,6 @@ process; run it only if you want visibility beyond the logs.
 
 from __future__ import annotations
 
-import logging
 from dataclasses import asdict
 
 from flask import Flask, jsonify, render_template_string, request
@@ -1140,11 +1139,3 @@ def _parse_autoresize_body() -> bool | None:
     if not isinstance(body, dict) or not isinstance(body.get("autoresize"), bool):
         return None
     return body["autoresize"]
-
-
-if __name__ == "__main__":
-    from controller.main import build_state_backend
-
-    logging.basicConfig(level=logging.INFO)
-    dashboard_state = build_state_backend()
-    create_app(dashboard_state).run(host="0.0.0.0", port=8080)
