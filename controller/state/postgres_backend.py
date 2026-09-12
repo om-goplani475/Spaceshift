@@ -145,19 +145,30 @@ class PostgresStateBackend(StateBackend):
     @contextmanager
     def _cursor(self, commit: bool = False) -> Iterator[psycopg2.extensions.cursor]:
         conn = self._pool.getconn()
+        # OperationalError/InterfaceError mean the connection itself is
+        # unusable (Postgres restarted, socket dropped) - not that a query
+        # was bad. The pool never validates connections, so unless the dead
+        # one is closed here it goes straight back into rotation and every
+        # later getconn() hands it out again; the controller then fails
+        # every cycle until restarted. Rolling back a dead connection also
+        # raises, which would mask the original error - skip it.
+        broken = False
         try:
             cur = conn.cursor()
             try:
                 yield cur
                 if commit:
                     conn.commit()
+            except (psycopg2.OperationalError, psycopg2.InterfaceError):
+                broken = True
+                raise
             except BaseException:
                 conn.rollback()
                 raise
             finally:
                 cur.close()
         finally:
-            self._pool.putconn(conn)
+            self._pool.putconn(conn, close=broken)
 
     def create_if_absent(
         self, volume_id: str, instance_id: str, from_size_gb: int, to_size_gb: int

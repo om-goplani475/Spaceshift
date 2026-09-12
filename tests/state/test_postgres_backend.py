@@ -190,3 +190,30 @@ def test_list_config_returns_all_keys(postgres_state):
     postgres_state.set_config("dry_run", "false")
     postgres_state.set_config("scheduler.interval_seconds", "60")
     assert postgres_state.list_config() == {"dry_run": "false", "scheduler.interval_seconds": "60"}
+
+
+def test_dead_connection_is_evicted_from_the_pool(postgres_state):
+    """After a Postgres restart, the connection the pool hands out is dead.
+    Before the fix, _cursor() returned it to the pool anyway, so every
+    later call got the same corpse and the controller failed every cycle
+    until someone restarted it. Simulate by terminating our own backend
+    from a second connection.
+    """
+    import psycopg2
+
+    with postgres_state._cursor() as cur:
+        cur.execute("SELECT pg_backend_pid()")
+        pid = cur.fetchone()[0]
+
+    killer = psycopg2.connect(os.environ["EBS_AUTO_RESIZE_TEST_POSTGRES_DSN"])
+    try:
+        killer.autocommit = True
+        with killer.cursor() as cur:
+            cur.execute("SELECT pg_terminate_backend(%s)", (pid,))
+    finally:
+        killer.close()
+
+    with pytest.raises((psycopg2.OperationalError, psycopg2.InterfaceError)):
+        postgres_state.list_config()
+
+    assert postgres_state.list_config() == {}  # fresh connection, not the dead one again
