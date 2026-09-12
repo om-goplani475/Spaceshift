@@ -309,14 +309,29 @@ def test_settings_tab_has_single_update_button_not_per_row_save(state):
     assert ">Save<" not in html  # the old per-row button text is gone
 
 
-def test_settings_tab_includes_dirty_tracking_and_tooltip_flip_script(state):
+def test_page_links_its_static_assets(state):
+    # The stylesheet and script live in static/ now - if either link breaks
+    # (renamed file, wrong url_for), the page still renders 200 but unstyled
+    # and inert, which nothing else would catch.
     client = create_app(state).test_client()
     html = client.get("/").data.decode()
 
-    assert "function wireConfigDirtyTracking" in html
-    assert "function wireTooltipFlip" in html
-    assert "function wireSettingsUpdateButton" in html
-    assert "tooltip-flip" in html
+    assert '<link rel="stylesheet" href="/static/css/dashboard.css">' in html
+    assert '<script src="/static/js/dashboard.js"></script>' in html
+    assert client.get("/static/css/dashboard.css").status_code == 200
+    assert client.get("/static/js/dashboard.js").status_code == 200
+
+
+def test_settings_script_has_dirty_tracking_and_tooltip_flip(state):
+    client = create_app(state).test_client()
+    js = client.get("/static/js/dashboard.js").data.decode()
+    css = client.get("/static/css/dashboard.css").data.decode()
+
+    assert "function wireConfigDirtyTracking" in js
+    assert "function wireTooltipFlip" in js
+    assert "function wireSettingsUpdateButton" in js
+    assert "tooltip-flip" in js
+    assert ".tooltip-flip" in css
 
 
 def test_api_config_lists_all_known_keys_with_defaults(state):
@@ -430,14 +445,14 @@ def test_index_has_stable_ids_for_live_refresh_swap(state):
         assert expected_id in html
 
 
-def test_index_includes_live_refresh_script(state):
+def test_script_includes_live_refresh(state):
     client = create_app(state).test_client()
-    html = client.get("/").data.decode()
+    js = client.get("/static/js/dashboard.js").data.decode()
 
-    assert "function refreshLiveData" in html
-    assert "setInterval(refreshLiveData" in html
-    assert "visibilitychange" in html
-    assert "document.hidden" in html
+    assert "function refreshLiveData" in js
+    assert "setInterval(refreshLiveData" in js
+    assert "visibilitychange" in js
+    assert "document.hidden" in js
 
 
 # --- Effective eligibility (Volumes tab Watched/Threshold columns) -----------
