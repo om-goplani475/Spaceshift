@@ -301,14 +301,17 @@ def test_settings_page_renders_every_key(state):
         assert f'data-key="{key}"'.encode() in response.data
 
 
-def test_settings_page_shows_labels_keys_and_descriptions_inline(state):
+def test_settings_page_shows_labels_and_descriptions_not_raw_keys(state):
     client = create_app(state).test_client()
     html = client.get("/settings").data.decode()
 
     assert "Scan interval (sec)" in html  # human label
-    assert "scheduler.interval_seconds" in html  # the key SQL/API use, still visible
     assert "How often a full discovery-and-check cycle runs." in html  # description, not hidden in a tooltip
     assert "data-tooltip" not in html
+    # The dotted key is an internal identifier - it drives data-key for the
+    # JS, but isn't rendered as visible text next to the label.
+    assert 'class="setting-key"' not in html
+    assert ">scheduler.interval_seconds<" not in html
 
 
 def test_settings_page_puts_dry_run_first(state):

@@ -35,12 +35,10 @@ def _default_config_value(key: str) -> str:
     return str(value)
 
 
-# Human-readable label + hover explanation for each DB_CONFIG_KEYS entry -
-# the dotted/underscored key itself (e.g. "resize.extend_retry.backoff_seconds")
-# is precise but reads as an internal identifier, not something a first-time
-# reader parses at a glance. The dotted key is still shown (smaller, below
-# the label) since it's what SQL/docs/the API all use - not hidden, just not
-# the primary label.
+# Human-readable label + description for each DB_CONFIG_KEYS entry - the
+# dotted key itself (e.g. "resize.extend_retry.backoff_seconds") is precise
+# but reads as an internal identifier. The Settings page shows only the
+# label; the key is still what SQL, docs/SETUP.md, and /api/config use.
 _CONFIG_LABELS: dict[str, str] = {
     "default_threshold_percent": "Default threshold (%)",
     "scheduler.interval_seconds": "Scan interval (sec)",
