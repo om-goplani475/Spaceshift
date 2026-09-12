@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Security vulnerability
+    url: https://github.com/om-goplani475/Spaceshift/security/advisories/new
+    about: Please report security issues privately via a GitHub Security Advisory, not a public issue. See SECURITY.md.
+  - name: Setup and usage questions
+    url: https://github.com/om-goplani475/Spaceshift/discussions
+    about: Not sure if it's a bug? Ask in Discussions first.

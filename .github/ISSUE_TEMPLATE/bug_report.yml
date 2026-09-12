@@ -1,0 +1,54 @@
+name: Bug report
+description: Something didn't work the way the docs say it should.
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for the report. If this could let the tool resize the wrong volume, run a command it shouldn't, or leak credentials, **stop** and report it privately instead — see [SECURITY.md](../blob/main/SECURITY.md).
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: What did you do, what did you expect, and what actually happened?
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Controller / dashboard logs
+      description: |
+        `docker compose logs controller` (and `dashboard` if relevant) around the time of the problem. **Redact account IDs, instance IDs, and anything else you consider sensitive.**
+      render: text
+
+  - type: input
+    id: version
+    attributes:
+      label: Version / commit
+      description: Output of `git rev-parse --short HEAD`, or the image tag you're running.
+    validations:
+      required: true
+
+  - type: dropdown
+    id: dry-run
+    attributes:
+      label: Was `dry_run` enabled?
+      options:
+        - "Yes"
+        - "No"
+        - Not sure
+    validations:
+      required: true
+
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: Target instance OS (Amazon Linux / Ubuntu / other), filesystem (ext4 / XFS), credentials mode (role / static), single or multi-account.
+      placeholder: |
+        OS: Ubuntu 22.04
+        Filesystem: ext4
+        Credentials: role
+        Accounts: 1
