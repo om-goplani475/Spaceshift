@@ -86,6 +86,31 @@ _CONFIG_DESCRIPTIONS: dict[str, str] = {
     ),
 }
 
+# Settings page layout: (group title, keys in display order). Safety is
+# first because dry_run is the one setting a first-time operator must see
+# before anything else. Every DB_CONFIG_KEYS entry must appear in exactly
+# one group - a test enforces this so a new setting can't be silently
+# missing from the page.
+_CONFIG_GROUPS: list[tuple[str, list[str]]] = [
+    ("Safety", ["dry_run"]),
+    (
+        "Thresholds and growth",
+        ["default_threshold_percent", "resize.growth_increment_percent", "resize.max_volume_size_gb"],
+    ),
+    (
+        "Scheduling",
+        ["scheduler.interval_seconds", "scheduler.max_concurrent_resizes", "scheduler.scan_log_retention_days"],
+    ),
+    (
+        "Retries and recovery",
+        [
+            "resize.extend_retry.max_attempts",
+            "resize.extend_retry.backoff_seconds",
+            "resize.stale_lock_timeout_minutes",
+        ],
+    ),
+]
+
 
 _STATUS_BADGES = {
     ResizeStatus.EXTEND_COMPLETED: "badge-green",
@@ -208,45 +233,78 @@ def _build_volume_rows(state: StateBackend, volumes: list) -> list[dict]:
     return [{"v": v, **_resolve_volume_row(v, instances_by_id, default_threshold)} for v in volumes]
 
 
+def _group_settings(settings: list[dict]) -> list[dict]:
+    by_key = {s["key"]: s for s in settings}
+    return [{"title": title, "settings": [by_key[key] for key in keys]} for title, keys in _CONFIG_GROUPS]
+
+
+# (endpoint, nav label) in display order - base.html renders these and
+# marks the current one via request.endpoint.
+_NAV_ITEMS = [
+    ("overview", "Overview"),
+    ("instances", "Instances"),
+    ("volumes", "Volumes"),
+    ("settings", "Settings"),
+]
+
+
 def create_app(state: StateBackend) -> Flask:
     app = Flask(__name__)
 
+    @app.context_processor
+    def _template_globals():
+        return {"nav_items": _NAV_ITEMS, "status_badge": _status_badge, "decision_badge": _decision_badge}
+
     @app.get("/")
-    def index():
+    def overview():
         records = state.list_all()
         scans = state.list_scans(limit=_SCAN_LIST_LIMIT)
-        # Stopped instances aren't being monitored (nothing to check disk
-        # usage on while it's off) - hidden from the tab so it only shows
-        # what's actually relevant, not everything ever discovered.
-        # /api/instances is unfiltered - the full record is still there for
-        # anything scripting against it.
-        instances = [i for i in state.list_instances() if i.state != "stopped"]
-        volumes = state.list_volumes()
-        volume_rows = _build_volume_rows(state, volumes)
+        volume_rows = _build_volume_rows(state, state.list_volumes())
         return render_template(
-            "index.html",
+            "overview.html",
             records=records,
             scans=scans,
-            instances=instances,
-            volumes=volumes,
-            volume_rows=volume_rows,
-            latest_instance_decisions=_latest_decision_by(scans, lambda s: s.instance_id),
-            latest_volume_decisions=_latest_decision_by(scans, lambda s: s.volume_id),
-            settings=_list_settings(state),
             scan_limit=_SCAN_LIST_LIMIT,
             stats=_compute_stats(records, scans, volume_rows),
-            status_badge=_status_badge,
-            decision_badge=_decision_badge,
             resize_statuses=sorted({r.status.value for r in records}),
             scan_accounts=sorted({s.account_name for s in scans}),
             scan_regions=sorted({s.region for s in scans}),
             scan_sizes=sorted({s.size_gb for s in scans}),
             scan_decisions=sorted({s.decision for s in scans}),
+        )
+
+    @app.get("/instances")
+    def instances():
+        scans = state.list_scans(limit=_SCAN_LIST_LIMIT)
+        # Stopped instances aren't being monitored (nothing to check disk
+        # usage on while it's off) - hidden here so the page only shows
+        # what's actually relevant, not everything ever discovered.
+        # /api/instances is unfiltered - the full record is still there for
+        # anything scripting against it.
+        instances = [i for i in state.list_instances() if i.state != "stopped"]
+        return render_template(
+            "instances.html",
+            instances=instances,
+            latest_instance_decisions=_latest_decision_by(scans, lambda s: s.instance_id),
             instance_accounts=sorted({i.account_name for i in instances}),
             instance_regions=sorted({i.region for i in instances}),
+        )
+
+    @app.get("/volumes")
+    def volumes():
+        scans = state.list_scans(limit=_SCAN_LIST_LIMIT)
+        volumes = state.list_volumes()
+        return render_template(
+            "volumes.html",
+            volume_rows=_build_volume_rows(state, volumes),
+            latest_volume_decisions=_latest_decision_by(scans, lambda s: s.volume_id),
             volume_accounts=sorted({v.account_name for v in volumes}),
             volume_regions=sorted({v.region for v in volumes}),
         )
+
+    @app.get("/settings")
+    def settings():
+        return render_template("settings.html", setting_groups=_group_settings(_list_settings(state)))
 
     @app.get("/api/status")
     def api_status():

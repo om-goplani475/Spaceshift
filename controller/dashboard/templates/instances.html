@@ -1,0 +1,45 @@
+{% extends "base.html" %}
+{% from "_macros.html" import filter_select, autoresize_select, pager, autoresize_switch, scan_decision, empty_row with context %}
+
+{% block title %}Instances{% endblock %}
+{% block heading %}Instances{% endblock %}
+{% block lede %}
+<p class="lede">Turn on Autoresize to watch every volume attached to an instance. Stopped instances aren't shown - there's nothing to check while they're off.</p>
+{% endblock %}
+
+{% block content %}
+<div class="filters">
+  <input type="search" id="instances-search" placeholder="Search instance ID…" aria-label="Search instances">
+  {{ filter_select("instances-account-filter", "account", "All accounts", instance_accounts) }}
+  {{ filter_select("instances-region-filter", "region", "All regions", instance_regions) }}
+  {{ autoresize_select("instances-autoresize-filter") }}
+  <span class="count" id="instances-count"></span>
+</div>
+<div class="panel">
+  <table id="instances-table">
+    <thead><tr>
+      <th>Instance</th><th>Account</th><th>Region</th><th>Type</th><th>State</th><th class="num">Threshold</th>
+      <th>Autoresize</th><th>Last scan</th><th>Last seen</th>
+    </tr></thead>
+    <tbody id="instances-tbody">
+    {% for i in instances %}
+    <tr data-volume="" data-instance="{{ i.instance_id|lower }}" data-account="{{ i.account_name }}"
+        data-region="{{ i.region }}" data-autoresize="{{ i.autoresize|lower }}">
+      <td class="mono">{{ i.instance_id }}</td>
+      <td>{{ i.account_name }}</td>
+      <td>{{ i.region }}</td>
+      <td>{{ i.instance_type }}</td>
+      <td>{{ i.state }}</td>
+      <td class="num">{{ (i.threshold_percent ~ "%") if i.threshold_percent is not none else "default" }}</td>
+      <td>{{ autoresize_switch("instances", i.instance_id, i.autoresize) }}</td>
+      <td>{{ scan_decision(latest_instance_decisions.get(i.instance_id)) }}</td>
+      <td class="ts" data-ts="{{ i.last_seen_at.isoformat() }}"></td>
+    </tr>
+    {% else %}
+    {{ empty_row(9, "No instances discovered yet.", "The controller syncs everything it can see on its first cycle.") }}
+    {% endfor %}
+    </tbody>
+  </table>
+</div>
+{{ pager("instances-pager") }}
+{% endblock %}

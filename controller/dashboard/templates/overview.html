@@ -1,0 +1,96 @@
+{% extends "base.html" %}
+{% from "_macros.html" import filter_select, pager, empty_row with context %}
+
+{% block title %}Overview{% endblock %}
+{% block heading %}Overview{% endblock %}
+{% block lede %}<p class="lede">What the controller has done, and what it's doing now.</p>{% endblock %}
+
+{% block content %}
+<div class="stats" id="dashboard-stats">
+  <div class="stat"><div class="l">Volumes scanned</div><div class="n">{{ stats.tracked }}</div></div>
+  <div class="stat"><div class="l">Autoresize enabled</div><div class="n">{{ stats.autoresize_enabled }}</div></div>
+  <div class="stat"><div class="l">Resizes completed</div><div class="n">{{ stats.completed }}</div></div>
+  <div class="stat"><div class="l">In progress</div><div class="n">{{ stats.in_progress }}</div></div>
+  <div class="stat{{ ' warn' if stats.needs_attention }}">
+    <div class="l">Needs attention</div><div class="n">{{ stats.needs_attention }}</div>
+  </div>
+</div>
+
+<section class="section">
+  <div class="section-header">
+    <h2>Resize activity</h2>
+    <p class="section-note">Every resize the controller has started, and where it got to.</p>
+  </div>
+  <div class="filters">
+    <input type="search" id="resize-search" placeholder="Search volume or instance…" aria-label="Search resizes">
+    {{ filter_select("resize-status-filter", "status", "All statuses", resize_statuses) }}
+    <span class="count" id="resize-count"></span>
+  </div>
+  <div class="panel">
+    <table id="resize-table">
+      <thead><tr>
+        <th>Volume</th><th>Instance</th><th>Status</th><th class="num">Size</th>
+        <th class="num">Extend attempts</th><th>Updated</th>
+      </tr></thead>
+      <tbody id="resize-tbody">
+      {% for r in records %}
+      <tr data-volume="{{ r.volume_id|lower }}" data-instance="{{ r.instance_id|lower }}" data-status="{{ r.status.value }}">
+        <td class="mono">{{ r.volume_id }}</td>
+        <td class="mono">{{ r.instance_id }}</td>
+        <td><span class="badge {{ status_badge(r.status) }}">{{ r.status.value }}</span></td>
+        <td class="num">{{ r.from_size_gb }} GB &rarr; {{ r.to_size_gb }} GB</td>
+        <td class="num">{{ r.extend_attempts }}</td>
+        <td class="ts" data-ts="{{ r.updated_at.isoformat() }}"></td>
+      </tr>
+      {% else %}
+      {{ empty_row(6, "No resize activity yet.", "Resizes appear here once a watched volume crosses its threshold.") }}
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {{ pager("resize-pager") }}
+</section>
+
+<section class="section">
+  <div class="section-header">
+    <h2>Scan history</h2>
+    <p class="section-note">The most recent {{ scan_limit }} disk checks, newest first.</p>
+  </div>
+  <div class="filters">
+    <input type="search" id="scan-search" placeholder="Search volume or instance…" aria-label="Search scans">
+    {{ filter_select("scan-account-filter", "account", "All accounts", scan_accounts) }}
+    {{ filter_select("scan-region-filter", "region", "All regions", scan_regions) }}
+    {{ filter_select("scan-size-filter", "size", "All sizes", scan_sizes, suffix=" GB") }}
+    {{ filter_select("scan-decision-filter", "decision", "All decisions", scan_decisions) }}
+    <span class="count" id="scan-count"></span>
+  </div>
+  <div class="panel">
+    <table id="scan-table">
+      <thead><tr>
+        <th>Volume</th><th>Instance</th><th>Account</th><th>Region</th><th class="num">Size</th>
+        <th class="num">Usage</th><th class="num">Threshold</th><th>Decision</th><th>Checked</th>
+      </tr></thead>
+      <tbody id="scan-tbody">
+      {% for s in scans %}
+      <tr data-volume="{{ s.volume_id|lower }}" data-instance="{{ s.instance_id|lower }}"
+          data-account="{{ s.account_name }}" data-region="{{ s.region }}" data-size="{{ s.size_gb }}"
+          data-decision="{{ s.decision }}">
+        <td class="mono">{{ s.volume_id }}</td>
+        <td class="mono">{{ s.instance_id }}</td>
+        <td>{{ s.account_name }}</td>
+        <td>{{ s.region }}</td>
+        <td class="num">{{ s.size_gb }} GB</td>
+        <td class="num">{{ (s.percent_used ~ "%") if s.percent_used is not none else "–" }}</td>
+        <td class="num">{{ s.threshold_percent }}%</td>
+        <td><span class="badge {{ decision_badge(s.decision) }}">{{ s.decision }}</span></td>
+        <td class="ts" data-ts="{{ s.timestamp.isoformat() }}"></td>
+      </tr>
+      {% else %}
+      {{ empty_row(9, "No scans recorded yet.", "The first cycle runs shortly after the controller starts.") }}
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {{ pager("scan-pager") }}
+</section>
+{% endblock %}

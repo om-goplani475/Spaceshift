@@ -1,0 +1,46 @@
+{# Shared pieces for the data tables. Every table on the dashboard has the
+   same filter bar shape (search + selects + count) and the same client-side
+   pager; dashboard.js wires them by id, so the ids here have to match the
+   wireFilters() calls there. #}
+
+{% macro filter_select(id, field, empty_label, options, suffix="") %}
+<select id="{{ id }}" data-field="{{ field }}" aria-label="{{ empty_label }}">
+  <option value="">{{ empty_label }}</option>
+  {% for option in options %}<option value="{{ option }}">{{ option }}{{ suffix }}</option>{% endfor %}
+</select>
+{% endmacro %}
+
+{% macro autoresize_select(id) %}
+<select id="{{ id }}" data-field="autoresize" aria-label="Autoresize">
+  <option value="">Any autoresize</option>
+  <option value="true">Enabled</option>
+  <option value="false">Disabled</option>
+</select>
+{% endmacro %}
+
+{% macro pager(id) %}
+<div class="pager" id="{{ id }}"></div>
+{% endmacro %}
+
+{% macro autoresize_switch(kind, id, checked) %}
+<label class="switch">
+  <input type="checkbox" class="autoresize-toggle" data-kind="{{ kind }}" data-id="{{ id }}" {{ "checked" if checked }}
+         aria-label="Autoresize {{ id }}">
+  <span class="slider"></span>
+</label>
+{% endmacro %}
+
+{% macro scan_decision(decision) %}
+{% if decision %}
+<span class="badge {{ decision_badge(decision) }}">{{ decision }}</span>
+{% else %}
+<span class="muted-note">not yet scanned</span>
+{% endif %}
+{% endmacro %}
+
+{% macro empty_row(colspan, message, hint) %}
+<tr class="empty-row"><td class="empty" colspan="{{ colspan }}">
+  <span class="empty-title">{{ message }}</span>
+  {% if hint %}<span class="empty-hint">{{ hint }}</span>{% endif %}
+</td></tr>
+{% endmacro %}

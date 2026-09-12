@@ -1,0 +1,46 @@
+{% extends "base.html" %}
+
+{% block title %}Settings{% endblock %}
+{% block heading %}Settings{% endblock %}
+{% block lede %}
+<p class="lede">Changes apply on the controller's next cycle - no restart needed. Leave a field blank to use its default.</p>
+{% endblock %}
+
+{% block content %}
+<form class="settings" id="settings-form" onsubmit="return false;">
+  <div id="settings-list">
+    {% for group in setting_groups %}
+    <section class="settings-group">
+      <h2>{{ group.title }}</h2>
+      {% for s in group.settings %}
+      <div class="setting" data-key="{{ s.key }}">
+        <div class="setting-text">
+          <label class="setting-label" for="setting-{{ s.key }}">{{ s.label }}</label>
+          <code class="setting-key">{{ s.key }}</code>
+          <p class="setting-description">{{ s.description }}</p>
+        </div>
+        <div class="setting-control">
+          {% if s.key == "dry_run" %}
+          <label class="switch">
+            <input type="checkbox" id="setting-{{ s.key }}" class="config-bool-input" data-key="{{ s.key }}"
+                   {{ "checked" if (s.value if s.value is not none else s.default) == "true" }}>
+            <span class="slider"></span>
+          </label>
+          {% else %}
+          <input type="text" id="setting-{{ s.key }}" class="config-value-input" data-key="{{ s.key }}"
+                 value="{{ s.value if s.value is not none else '' }}" placeholder="{{ s.default }}"
+                 inputmode="numeric" autocomplete="off">
+          {% endif %}
+          <span class="config-status" aria-live="polite"></span>
+        </div>
+      </div>
+      {% endfor %}
+    </section>
+    {% endfor %}
+  </div>
+  <div class="settings-actions">
+    <button type="button" id="settings-update-btn" class="btn btn-primary">Update settings</button>
+    <span class="config-status" id="settings-update-summary" aria-live="polite"></span>
+  </div>
+</form>
+{% endblock %}

@@ -1,0 +1,65 @@
+{% extends "base.html" %}
+{% from "_macros.html" import filter_select, autoresize_select, pager, autoresize_switch, scan_decision, empty_row with context %}
+
+{% block title %}Volumes{% endblock %}
+{% block heading %}Volumes{% endblock %}
+{% block lede %}
+<p class="lede">A volume's own Autoresize setting overrides its instance's. <strong>Watched</strong> and <strong>Threshold</strong> show what's actually in effect after that resolution.</p>
+{% endblock %}
+
+{% block content %}
+<div class="filters">
+  <input type="search" id="volumes-search" placeholder="Search volume or instance ID…" aria-label="Search volumes">
+  {{ filter_select("volumes-account-filter", "account", "All accounts", volume_accounts) }}
+  {{ filter_select("volumes-region-filter", "region", "All regions", volume_regions) }}
+  {{ autoresize_select("volumes-autoresize-filter") }}
+  <span class="count" id="volumes-count"></span>
+</div>
+<div class="panel">
+  <table id="volumes-table">
+    <thead><tr>
+      <th>Volume</th><th>Instance</th><th>Account</th><th>Region</th><th class="num">Size</th><th>Device</th>
+      <th class="num">Threshold</th><th>Autoresize</th><th>Watched</th><th>Last scan</th><th>Last seen</th>
+    </tr></thead>
+    <tbody id="volumes-tbody">
+    {% for row in volume_rows %}
+    {% set v = row.v %}
+    <tr data-volume="{{ v.volume_id|lower }}" data-instance="{{ (v.instance_id or '')|lower }}"
+        data-account="{{ v.account_name }}" data-region="{{ v.region }}" data-autoresize="{{ v.autoresize|lower }}">
+      <td class="mono">{{ v.volume_id }}</td>
+      <td class="mono">{{ v.instance_id or "–" }}</td>
+      <td>{{ v.account_name }}</td>
+      <td>{{ v.region }}</td>
+      <td class="num">{{ v.size_gb }} GB</td>
+      <td class="mono">{{ v.device_name or "–" }}</td>
+      <td class="num">
+        {% if row.threshold is not none %}
+        {{ row.threshold }}%
+        {%- if row.threshold_source != "own" %}
+        <span class="eligibility-note">({{ row.threshold_source }})</span>
+        {%- endif %}
+        {% else %}
+        –
+        {% endif %}
+      </td>
+      <td>{{ autoresize_switch("volumes", v.volume_id, v.autoresize) }}</td>
+      <td>
+        {% if row.watched_reason == "unattached" %}
+        <span class="badge badge-muted">Unattached</span>
+        {% elif row.watched %}
+        <span class="badge badge-green">Yes{{ " · via instance" if row.watched_reason == "instance" else "" }}</span>
+        {% else %}
+        <span class="badge badge-muted">No</span>
+        {% endif %}
+      </td>
+      <td>{{ scan_decision(latest_volume_decisions.get(v.volume_id)) }}</td>
+      <td class="ts" data-ts="{{ v.last_seen_at.isoformat() }}"></td>
+    </tr>
+    {% else %}
+    {{ empty_row(11, "No volumes discovered yet.", "The controller syncs everything it can see on its first cycle.") }}
+    {% endfor %}
+    </tbody>
+  </table>
+</div>
+{{ pager("volumes-pager") }}
+{% endblock %}
