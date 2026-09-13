@@ -15,11 +15,14 @@ RUN useradd --create-home --uid 1000 controller \
 
 USER controller
 
-# Detects a hung (not just crashed) scheduler loop by checking that the
-# heartbeat file scheduler.py writes every tick is recent. 10 minutes is a
-# generous multiple of the default 300s interval - if you raise
-# scheduler.interval_seconds well past that, raise this too.
+# Healthy while the deadline in the heartbeat file is in the future. The
+# scheduler writes that deadline only after a *successful* tick, from its
+# own interval setting plus a fixed grace - so a loop that's alive but
+# failing goes unhealthy, and raising scheduler.interval_seconds (even live,
+# from the dashboard) never needs a change here. Note Docker only reports
+# health; recovery comes from the scheduler exiting after repeated
+# failures and `restart: unless-stopped` bringing it back.
 HEALTHCHECK --interval=60s --timeout=5s --start-period=30s --retries=3 \
-    CMD find /tmp/ebs-auto-resize-heartbeat -mmin -10 | grep -q . || exit 1
+    CMD ["python", "-m", "controller.healthcheck"]
 
 CMD ["python", "-m", "controller.main"]

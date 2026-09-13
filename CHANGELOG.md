@@ -18,6 +18,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - New resize status `MODIFY_FAILED` and scan decision `resize_failed`, shown on the dashboard when AWS rejects a modify-volume call.
 
 ### Fixed
+- Container health now reflects whether scheduler cycles are *succeeding*, not just whether the process is alive. The heartbeat is written only after a successful cycle, with a deadline derived from `scheduler.interval_seconds`, so raising the interval never causes a false "unhealthy".
+- The controller recovers from a Postgres restart instead of failing every cycle forever: dead connections are evicted from the pool.
+- Three consecutive failed cycles now cause a deliberate exit (logged at `CRITICAL`) so `restart: unless-stopped` brings the controller back with a fresh process.
+- `POSTGRES_PASSWORD` containing `@`, `/`, `%`, `:` or `?` broke the database connection string (and echoed part of the password into the logs). It is now encoded correctly; any characters are fine except `$`, which docker compose itself expands in `.env`.
 - A rejected `modify-volume` call (rate limit, IAM, throttling) left the volume permanently "in flight" and silently stopped auto-resizing it. It is now recorded as `MODIFY_FAILED`, alerted once, and retried on a later cycle.
 - The controller now honors AWS's 6-hour cooldown between modifications of the same volume instead of issuing a call AWS will reject.
 - Stale-row recovery matched the volume's *most recent* AWS modification even when it was an earlier, unrelated resize - which could run `growpart`/`resize2fs` on an unchanged volume and send a false "resized" alert. It now matches the modification to the row's own target size and start time.

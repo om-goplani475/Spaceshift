@@ -10,6 +10,7 @@ per-volume progress across ticks.
 from __future__ import annotations
 
 import logging
+import sys
 import time
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import asdict, dataclass
@@ -35,9 +36,21 @@ from controller.state.base import ResizeStatus, StateBackend
 
 logger = logging.getLogger(__name__)
 
-# Checked by the Dockerfile's HEALTHCHECK to detect a hung (not just
-# crashed) scheduler loop.
+# Read by `python -m controller.healthcheck` (the Dockerfile HEALTHCHECK).
+# Holds the deadline by which the *next* successful tick is due - written
+# only after a tick succeeds, so a loop that is alive but failing every
+# cycle goes unhealthy instead of looking fine. The deadline is derived
+# from the live interval setting, so raising the interval from the
+# dashboard never needs a Dockerfile change to keep the check honest.
 HEARTBEAT_PATH = "/tmp/ebs-auto-resize-heartbeat"
+# Slack on top of the interval for a legitimately slow tick (a large
+# first discovery, or several volumes waiting on modify-volume at once).
+_HEARTBEAT_GRACE = timedelta(minutes=30)
+
+# A tick can fail for a transient reason (Postgres restarting, an AWS
+# outage); this many in a row means something needs a fresh process -
+# exit non-zero and let the container restart policy do the retry.
+_MAX_CONSECUTIVE_FAILURES = 3
 
 
 @dataclass
@@ -86,17 +99,34 @@ class Scheduler:
         self._ssm_not_ready_alerted: set[tuple[str, str]] = set()
 
     def run_forever(self) -> None:
+        # Initial deadline so the health check has something to read
+        # before the first (possibly long) tick finishes.
+        self._write_heartbeat()
+        consecutive_failures = 0
         while True:
             try:
                 self.run_once()
             except Exception:
-                logger.exception("Unhandled error during scheduler tick")
-            self._write_heartbeat()
+                consecutive_failures += 1
+                logger.exception(
+                    "Scheduler tick failed (%d of %d consecutive failures before restart)",
+                    consecutive_failures,
+                    _MAX_CONSECUTIVE_FAILURES,
+                )
+                if consecutive_failures >= _MAX_CONSECUTIVE_FAILURES:
+                    logger.critical(
+                        "%d consecutive ticks failed - exiting so the container restarts with a fresh process",
+                        consecutive_failures,
+                    )
+                    sys.exit(1)
+            else:
+                consecutive_failures = 0
+                self._write_heartbeat()
             time.sleep(self._config.scheduler.interval_seconds)
 
-    @staticmethod
-    def _write_heartbeat() -> None:
-        Path(HEARTBEAT_PATH).write_text(datetime.now(UTC).isoformat())
+    def _write_heartbeat(self) -> None:
+        deadline = datetime.now(UTC) + timedelta(seconds=self._config.scheduler.interval_seconds) + _HEARTBEAT_GRACE
+        Path(HEARTBEAT_PATH).write_text(deadline.isoformat())
 
     def run_once(self) -> None:
         self._config = refresh_config_from_db(self._base_config_dict, self._state, self._config)

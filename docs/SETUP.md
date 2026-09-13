@@ -138,7 +138,7 @@ Values are parsed as YAML scalars (so `false`, `true`, `300` parse as bool/int -
 | Key | Default | Meaning |
 |---|---|---|
 | `default_threshold_percent` | `80` | Fallback percent-full threshold, used only when neither a volume nor its attached instance has its own `threshold_percent` set in Postgres (see section 1.3). |
-| `scheduler.interval_seconds` | `300` | How often a full discovery-and-check cycle runs. |
+| `scheduler.interval_seconds` | `300` | How often a full discovery-and-check cycle runs. The container health check derives its deadline from this value, so raising it here (even live) never needs a Dockerfile change. |
 | `scheduler.max_concurrent_resizes` | `5` | Size of the thread pool processing volumes in parallel each cycle. Raise for a larger fleet. |
 | `scheduler.scan_log_retention_days` | `7` | How long the dashboard's scan-history table (Postgres `scan_log`) keeps rows before a row older than this gets pruned, once per cycle. Pure observability data, unrelated to `resize_state`. |
 | `resize.max_volume_size_gb` | `500` | Hard per-volume ceiling. Crossing it stops auto-resize for that volume and sends a "needs manual review" alert instead of continuing - the guardrail against a runaway log file quietly costing you money forever. |

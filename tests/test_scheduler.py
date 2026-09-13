@@ -1,5 +1,6 @@
 """Tests for controller.scheduler."""
 
+import datetime as dt
 from unittest.mock import MagicMock, patch
 
 import boto3
@@ -282,3 +283,93 @@ def test_process_volume_records_resize_failed_when_modify_is_rejected(scheduler,
     assert len(scans) == 1
     assert scans[0].decision == "resize_failed"
     assert scans[0].percent_used == 95
+
+
+# --- heartbeat / failure policy ------------------------------------------------
+
+
+class _StopLoop(BaseException):
+    """Breaks out of run_forever from a scripted run_once. BaseException so
+    the loop's `except Exception` doesn't count it as a failed tick."""
+
+
+def test_heartbeat_written_only_after_a_successful_tick(scheduler):
+    calls = iter([RuntimeError("boom"), None, RuntimeError("boom"), _StopLoop()])
+
+    def run_once():
+        outcome = next(calls)
+        if outcome is not None:
+            raise outcome
+
+    with (
+        patch("controller.scheduler.time.sleep"),
+        patch.object(scheduler, "run_once", side_effect=run_once),
+        patch.object(scheduler, "_write_heartbeat") as write_heartbeat,
+    ):
+        try:
+            scheduler.run_forever()
+        except _StopLoop:
+            pass
+
+    # Once at startup, once after the single successful tick - never after
+    # a failed one, or a loop that's alive but broken would look healthy.
+    assert write_heartbeat.call_count == 2
+
+
+def test_run_forever_exits_after_three_consecutive_failures(scheduler, tmp_path):
+    with (
+        patch("controller.scheduler.HEARTBEAT_PATH", str(tmp_path / "heartbeat")),
+        patch("controller.scheduler.time.sleep"),
+        patch.object(scheduler, "run_once", side_effect=RuntimeError("postgres down")) as run_once,
+        pytest.raises(SystemExit) as exc_info,
+    ):
+        scheduler.run_forever()
+
+    assert exc_info.value.code == 1
+    assert run_once.call_count == 3
+
+
+def test_success_resets_the_consecutive_failure_count(scheduler, tmp_path):
+    # fail, fail, succeed, fail, fail, succeed... must never exit.
+    outcomes = iter([RuntimeError("x"), RuntimeError("x"), None] * 2 + [_StopLoop()])
+
+    def run_once():
+        outcome = next(outcomes)
+        if outcome is not None:
+            raise outcome
+
+    with (
+        patch("controller.scheduler.HEARTBEAT_PATH", str(tmp_path / "heartbeat")),
+        patch("controller.scheduler.time.sleep"),
+        patch.object(scheduler, "run_once", side_effect=run_once),
+    ):
+        try:
+            scheduler.run_forever()
+        except _StopLoop:
+            pass  # consumed all outcomes without SystemExit
+
+
+def test_heartbeat_deadline_tracks_the_live_interval(scheduler, state, tmp_path):
+    from controller.healthcheck import is_healthy
+
+    heartbeat = tmp_path / "heartbeat"
+    state.set_config("scheduler.interval_seconds", "3600")
+    with (
+        patch("controller.scheduler.HEARTBEAT_PATH", str(heartbeat)),
+        patch("controller.scheduler.discover_eligible_volumes", return_value=[]),
+    ):
+        scheduler.run_once()  # picks up the 3600s interval from app_config
+        scheduler._write_heartbeat()
+
+    now = dt.datetime.now(dt.UTC)
+    assert is_healthy(str(heartbeat), now=now + dt.timedelta(minutes=59))
+    assert is_healthy(str(heartbeat), now=now + dt.timedelta(minutes=89))  # interval + 30min grace
+    assert not is_healthy(str(heartbeat), now=now + dt.timedelta(minutes=91))
+
+
+def test_healthcheck_is_unhealthy_without_a_heartbeat_file(tmp_path):
+    from controller.healthcheck import is_healthy
+
+    assert not is_healthy(str(tmp_path / "missing"))
+    (tmp_path / "garbage").write_text("not a timestamp")
+    assert not is_healthy(str(tmp_path / "garbage"))
