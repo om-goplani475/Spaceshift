@@ -1,18 +1,26 @@
-# AWS SDK
-boto3>=1.34
+# Runtime dependencies, fully pinned (direct + transitive) so two builds
+# of the Dockerfile a week apart produce the same image. Test and lint
+# tools are in requirements-dev.txt and never enter the image.
+#
+# To upgrade: bump the direct deps below, `pip install -U` them in a fresh
+# venv, and regenerate the transitive pins from `pip freeze`.
 
-# config.yaml parsing
-PyYAML>=6.0
+# --- direct ---
+boto3==1.43.59            # AWS SDK
+Flask==3.1.3              # status dashboard
+psycopg2-binary==2.9.12   # Postgres state backend
+PyYAML==6.0.3             # config.yaml + app_config value parsing
 
-# Postgres state backend
-psycopg2-binary>=2.9
-
-# optional status dashboard
-Flask>=3.0
-
-# testing
-pytest>=8.0
-moto[ec2,ssm]>=5.0
-
-# linting/formatting
-ruff>=0.8
+# --- transitive (pinned for reproducibility) ---
+blinker==1.9.0
+botocore==1.43.59
+click==8.4.2
+itsdangerous==2.2.0
+Jinja2==3.1.6
+jmespath==1.1.0
+MarkupSafe==3.0.3
+python-dateutil==2.9.0.post0
+s3transfer==0.19.2
+six==1.17.0
+urllib3==2.7.0
+Werkzeug==3.1.8

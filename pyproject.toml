@@ -4,10 +4,10 @@ version = "0.1.0"
 description = "Self-hosted controller that auto-resizes EBS volumes (AWS-side and OS-side) based on real disk usage"
 requires-python = ">=3.12"
 
-# Runtime dependencies are pinned in requirements.txt (what the Dockerfile
-# and CONTRIBUTING.md's venv setup actually install) - not duplicated here,
-# since this project ships as a container, not a published package, and two
-# dependency lists would just be two things to keep in sync.
+# Dependencies live in requirements.txt (runtime, fully pinned - what the
+# Dockerfile installs) and requirements-dev.txt (test/lint tooling, what a
+# contributor installs) - not duplicated here, since this project ships as
+# a container, not a published package.
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

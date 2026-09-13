@@ -1,0 +1,7 @@
+# Test and lint tooling. `pip install -r requirements-dev.txt` pulls in
+# requirements.txt too, so this is the one file a contributor installs.
+-r requirements.txt
+
+pytest==9.1.1
+moto[ec2,ssm]==5.2.2
+ruff==0.16.0
