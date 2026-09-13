@@ -1,0 +1,17 @@
+# Only controller/, requirements.txt and config.yaml.example are COPY'd,
+# but everything else in the tree is still sent to the daemon as build
+# context - including real secrets. Keep it out.
+.git
+.github
+venv
+.env
+config.yaml
+*.pem
+*.key
+**/__pycache__
+**/*.pyc
+.pytest_cache
+.ruff_cache
+tests
+docs
+*.md
