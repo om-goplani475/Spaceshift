@@ -1,0 +1,24 @@
+{% extends "base.html" %}
+{% set standalone = true %}
+
+{% block title %}Sign in{% endblock %}
+{% block heading %}Sign in{% endblock %}
+
+{% block content %}
+<form class="auth-form" method="post" action="{{ url_for('auth.login', next=request.args.get('next')) }}">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+  {% if error %}<p class="form-error" role="alert">{{ error }}</p>{% endif %}
+  <div class="field">
+    <label for="username">Username</label>
+    <input type="text" id="username" name="username" value="{{ username }}" autocomplete="username"
+           autocapitalize="none" spellcheck="false" required autofocus>
+  </div>
+  <div class="field">
+    <label for="password">Password</label>
+    <input type="password" id="password" name="password" autocomplete="current-password" required>
+  </div>
+  <div class="form-actions">
+    <button type="submit" class="btn btn-primary">Sign in</button>
+  </div>
+</form>
+{% endblock %}

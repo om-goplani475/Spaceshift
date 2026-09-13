@@ -9,8 +9,9 @@ does not support. Don't enable gunicorn's --preload for this app.
 import logging
 
 from controller.dashboard.app import create_app
+from controller.dashboard.auth import AuthSettings
 from controller.main import build_state_backend
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 
-app = create_app(build_state_backend())
+app = create_app(build_state_backend(), AuthSettings.from_env())

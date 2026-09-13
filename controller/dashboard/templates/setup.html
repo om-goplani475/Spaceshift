@@ -1,0 +1,47 @@
+{% extends "base.html" %}
+{% set standalone = true %}
+
+{% block title %}Set up{% endblock %}
+{% block heading %}Create the first admin{% endblock %}
+{% block lede %}
+{% if not token_unset %}
+<p class="lede">This page works exactly once - it disappears as soon as a user exists.</p>
+{% endif %}
+{% endblock %}
+
+{% block content %}
+{% if token_unset %}
+<p class="lede">
+  Set <code>SPACESHIFT_SETUP_TOKEN</code> in <code>.env</code> and restart, or run
+  <code>docker compose exec dashboard python -m controller.dashboard.users create-admin &lt;name&gt;</code>.
+</p>
+{% else %}
+<form class="auth-form" method="post" action="{{ url_for('auth.setup') }}">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+  {% if error %}<p class="form-error" role="alert">{{ error }}</p>{% endif %}
+  <div class="field">
+    <label for="token">Setup token</label>
+    <input type="password" id="token" name="token" autocomplete="off" required autofocus>
+    <p class="field-hint">The value of <code>SPACESHIFT_SETUP_TOKEN</code> in your <code>.env</code>.</p>
+  </div>
+  <div class="field">
+    <label for="username">Username</label>
+    <input type="text" id="username" name="username" value="{{ username }}" autocomplete="username"
+           autocapitalize="none" spellcheck="false" required>
+    <p class="field-hint">3-32 characters: lowercase letters, digits, <code>.</code> <code>_</code> <code>-</code>. Can't be renamed later.</p>
+  </div>
+  <div class="field">
+    <label for="password">Password</label>
+    <input type="password" id="password" name="password" autocomplete="new-password" required>
+    <p class="field-hint">At least 12 characters. Length is all that's checked - a long passphrase beats a short complex one.</p>
+  </div>
+  <div class="field">
+    <label for="confirm">Confirm password</label>
+    <input type="password" id="confirm" name="confirm" autocomplete="new-password" required>
+  </div>
+  <div class="form-actions">
+    <button type="submit" class="btn btn-primary">Create admin and sign in</button>
+  </div>
+</form>
+{% endif %}
+{% endblock %}

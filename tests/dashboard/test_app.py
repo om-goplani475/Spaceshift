@@ -4,13 +4,11 @@ import re
 from dataclasses import replace
 
 from controller.config import DB_CONFIG_KEYS
-from controller.dashboard import create_app
 from controller.dashboard.app import _CONFIG_GROUPS
 from controller.state.base import ResizeStatus
 
 
-def test_pages_render_empty_states(state):
-    client = create_app(state).test_client()
+def test_pages_render_empty_states(state, client):
 
     overview = client.get("/")
     assert overview.status_code == 200
@@ -26,8 +24,7 @@ def test_pages_render_empty_states(state):
     assert b"No volumes discovered yet" in volumes.data
 
 
-def test_nav_marks_current_page(state):
-    client = create_app(state).test_client()
+def test_nav_marks_current_page(state, client):
 
     pages = [("/", "Overview"), ("/instances", "Instances"), ("/volumes", "Volumes"), ("/settings", "Settings")]
     for path, label in pages:
@@ -37,21 +34,19 @@ def test_nav_marks_current_page(state):
         assert html.count('aria-current="page"') == 1
 
 
-def test_index_renders_records(state):
+def test_index_renders_records(state, client):
     state.create_if_absent("vol-1", "i-1", 100, 120)
     state.update_status("vol-1", ResizeStatus.EXTEND_COMPLETED)
 
-    client = create_app(state).test_client()
     response = client.get("/")
 
     assert response.status_code == 200
     assert b"vol-1" in response.data
 
 
-def test_api_status_returns_json(state):
+def test_api_status_returns_json(state, client):
     state.create_if_absent("vol-1", "i-1", 100, 120)
 
-    client = create_app(state).test_client()
     response = client.get("/api/status")
 
     assert response.status_code == 200
@@ -59,10 +54,9 @@ def test_api_status_returns_json(state):
     assert data[0]["volume_id"] == "vol-1"
 
 
-def test_index_renders_scan_history(state):
+def test_index_renders_scan_history(state, client):
     state.record_scan("default", "us-east-1", "vol-9", "i-9", 100, 80, 42.0, "below_threshold")
 
-    client = create_app(state).test_client()
     response = client.get("/")
 
     assert response.status_code == 200
@@ -70,12 +64,11 @@ def test_index_renders_scan_history(state):
     assert b"below_threshold" in response.data
 
 
-def test_api_scans_returns_json_newest_first(state):
+def test_api_scans_returns_json_newest_first(state, client):
     state.record_scan("default", "us-east-1", "vol-0", "i-1", 100, 80, 10, "below_threshold")
     state.record_scan("default", "us-east-1", "vol-1", "i-1", 100, 80, 10, "below_threshold")
     state.record_scan("default", "us-east-1", "vol-2", "i-1", 100, 80, 10, "below_threshold")
 
-    client = create_app(state).test_client()
     response = client.get("/api/scans")
 
     assert response.status_code == 200
@@ -84,11 +77,9 @@ def test_api_scans_returns_json_newest_first(state):
     assert data[0]["account_name"] == "default"
 
 
-def test_instances_and_volumes_pages_render_records(state):
+def test_instances_and_volumes_pages_render_records(state, client):
     state.upsert_instance("default", "i-1", "us-east-1", "t3.micro", "running")
     state.upsert_volume("default", "vol-1", "i-1", "us-east-1", 100, "/dev/xvdf")
-
-    client = create_app(state).test_client()
 
     instances = client.get("/instances")
     assert instances.status_code == 200
@@ -103,22 +94,22 @@ def test_instances_and_volumes_pages_render_records(state):
 # --- Last scan column (Instances/Volumes pages) -------------------------------
 
 
-def test_instance_shows_not_yet_scanned_before_any_scan(state):
+def test_instance_shows_not_yet_scanned_before_any_scan(state, client):
     state.upsert_instance("default", "i-1", "us-east-1", "t3.micro", "running")
 
-    html = create_app(state).test_client().get("/instances").data.decode()
+    html = client.get("/instances").data.decode()
     row_start = html.index('data-instance="i-1"')
     row_end = html.index("</tr>", row_start)
 
     assert "not yet scanned" in html[row_start:row_end]
 
 
-def test_instance_shows_most_recent_scan_decision(state):
+def test_instance_shows_most_recent_scan_decision(state, client):
     state.upsert_instance("default", "i-1", "us-east-1", "t3.micro", "running")
     state.record_scan("default", "us-east-1", "vol-1", "i-1", 100, 80, 50.0, "below_threshold")
     state.record_scan("default", "us-east-1", "vol-1", "i-1", 100, 80, 95.0, "would_resize")
 
-    html = create_app(state).test_client().get("/instances").data.decode()
+    html = client.get("/instances").data.decode()
     row_start = html.index('data-instance="i-1"')
     row_end = html.index("</tr>", row_start)
     row = html[row_start:row_end]
@@ -127,24 +118,24 @@ def test_instance_shows_most_recent_scan_decision(state):
     assert "below_threshold" not in row
 
 
-def test_instance_last_scan_prefers_ssm_not_ready_when_most_recent(state):
+def test_instance_last_scan_prefers_ssm_not_ready_when_most_recent(state, client):
     state.upsert_instance("default", "i-1", "us-east-1", "t3.micro", "running")
     state.record_scan("default", "us-east-1", "vol-1", "i-1", 100, 80, None, "ssm_not_ready")
 
-    html = create_app(state).test_client().get("/instances").data.decode()
+    html = client.get("/instances").data.decode()
     row_start = html.index('data-instance="i-1"')
     row_end = html.index("</tr>", row_start)
 
     assert "ssm_not_ready" in html[row_start:row_end]
 
 
-def test_volume_shows_most_recent_scan_decision(state):
+def test_volume_shows_most_recent_scan_decision(state, client):
     state.upsert_instance("default", "i-1", "us-east-1", "t3.micro", "running")
     state.upsert_volume("default", "vol-1", "i-1", "us-east-1", 100, "/dev/xvdf")
     state.record_scan("default", "us-east-1", "vol-1", "i-1", 100, 80, 50.0, "below_threshold")
     state.record_scan("default", "us-east-1", "vol-1", "i-1", 100, 80, 95.0, "resize_triggered")
 
-    html = create_app(state).test_client().get("/volumes").data.decode()
+    html = client.get("/volumes").data.decode()
     row_start = html.index('data-volume="vol-1"')
     row_end = html.index("</tr>", row_start)
     row = html[row_start:row_end]
@@ -153,33 +144,31 @@ def test_volume_shows_most_recent_scan_decision(state):
     assert "below_threshold" not in row
 
 
-def test_volume_shows_not_yet_scanned_before_any_scan(state):
+def test_volume_shows_not_yet_scanned_before_any_scan(state, client):
     state.upsert_instance("default", "i-1", "us-east-1", "t3.micro", "running")
     state.upsert_volume("default", "vol-1", "i-1", "us-east-1", 100, "/dev/xvdf")
 
-    html = create_app(state).test_client().get("/volumes").data.decode()
+    html = client.get("/volumes").data.decode()
     row_start = html.index('data-volume="vol-1"')
     row_end = html.index("</tr>", row_start)
 
     assert "not yet scanned" in html[row_start:row_end]
 
 
-def test_instances_page_hides_stopped_instances(state):
+def test_instances_page_hides_stopped_instances(state, client):
     state.upsert_instance("default", "i-running", "us-east-1", "t3.micro", "running")
     state.upsert_instance("default", "i-stopped", "us-east-1", "t3.micro", "stopped")
 
-    client = create_app(state).test_client()
     response = client.get("/instances")
 
     assert b"i-running" in response.data
     assert b"i-stopped" not in response.data
 
 
-def test_api_instances_still_includes_stopped(state):
+def test_api_instances_still_includes_stopped(state, client):
     state.upsert_instance("default", "i-running", "us-east-1", "t3.micro", "running")
     state.upsert_instance("default", "i-stopped", "us-east-1", "t3.micro", "stopped")
 
-    client = create_app(state).test_client()
     response = client.get("/api/instances")
 
     instance_ids = {i["instance_id"] for i in response.get_json()}
@@ -194,19 +183,18 @@ def _stat(html: str, label: str) -> int:
     return int(match.group(1))
 
 
-def test_stats_count_autoresize_enabled_volumes(state):
+def test_stats_count_autoresize_enabled_volumes(state, client):
     state.upsert_volume("default", "vol-1", "i-1", "us-east-1", 100, "/dev/xvdf")
     state.upsert_volume("default", "vol-2", "i-1", "us-east-1", 100, "/dev/xvdg")
     state.set_volume_autoresize("vol-1", True)
 
-    client = create_app(state).test_client()
     response = client.get("/")
 
     assert response.status_code == 200
     assert _stat(response.data.decode(), "Autoresize enabled") == 1
 
 
-def test_stats_autoresize_enabled_counts_volumes_watched_via_instance(state):
+def test_stats_autoresize_enabled_counts_volumes_watched_via_instance(state, client):
     # A volume watched only because its instance's flag is set (not its own)
     # used to not move this counter at all - the same gap the Volumes tab's
     # Watched column fixed. It must count here too.
@@ -214,27 +202,23 @@ def test_stats_autoresize_enabled_counts_volumes_watched_via_instance(state):
     state.upsert_volume("default", "vol-1", "i-1", "us-east-1", 100, "/dev/xvdf")
     state.set_instance_autoresize("i-1", True)
 
-    client = create_app(state).test_client()
     response = client.get("/")
 
     assert _stat(response.data.decode(), "Autoresize enabled") == 1
 
 
-def test_stats_autoresize_enabled_excludes_unattached_even_if_flagged(state):
+def test_stats_autoresize_enabled_excludes_unattached_even_if_flagged(state, client):
     state.upsert_volume("default", "vol-1", None, "us-east-1", 100, None)
     state.set_volume_autoresize("vol-1", True)
 
-    client = create_app(state).test_client()
     response = client.get("/")
 
     assert _stat(response.data.decode(), "Autoresize enabled") == 0
 
 
-def test_api_instances_and_volumes_return_json(state):
+def test_api_instances_and_volumes_return_json(state, client):
     state.upsert_instance("default", "i-1", "us-east-1", "t3.micro", "running")
     state.upsert_volume("default", "vol-1", "i-1", "us-east-1", 100, "/dev/xvdf")
-
-    client = create_app(state).test_client()
 
     instances = client.get("/api/instances").get_json()
     volumes = client.get("/api/volumes").get_json()
@@ -246,9 +230,8 @@ def test_api_instances_and_volumes_return_json(state):
     assert volumes[0]["account_name"] == "default"
 
 
-def test_toggle_instance_autoresize(state):
+def test_toggle_instance_autoresize(state, client):
     state.upsert_instance("default", "i-1", "us-east-1", "t3.micro", "running")
-    client = create_app(state).test_client()
 
     response = client.post("/api/instances/i-1/autoresize", json={"autoresize": True})
 
@@ -257,9 +240,8 @@ def test_toggle_instance_autoresize(state):
     assert state.list_instances()[0].autoresize is True
 
 
-def test_toggle_volume_autoresize(state):
+def test_toggle_volume_autoresize(state, client):
     state.upsert_volume("default", "vol-1", "i-1", "us-east-1", 100, "/dev/xvdf")
-    client = create_app(state).test_client()
 
     response = client.post("/api/volumes/vol-1/autoresize", json={"autoresize": True})
 
@@ -268,21 +250,18 @@ def test_toggle_volume_autoresize(state):
     assert state.list_volumes()[0].autoresize is True
 
 
-def test_toggle_unknown_instance_returns_404(state):
-    client = create_app(state).test_client()
+def test_toggle_unknown_instance_returns_404(state, client):
     response = client.post("/api/instances/i-nonexistent/autoresize", json={"autoresize": True})
     assert response.status_code == 404
 
 
-def test_toggle_unknown_volume_returns_404(state):
-    client = create_app(state).test_client()
+def test_toggle_unknown_volume_returns_404(state, client):
     response = client.post("/api/volumes/vol-nonexistent/autoresize", json={"autoresize": True})
     assert response.status_code == 404
 
 
-def test_toggle_with_invalid_body_returns_400(state):
+def test_toggle_with_invalid_body_returns_400(state, client):
     state.upsert_instance("default", "i-1", "us-east-1", "t3.micro", "running")
-    client = create_app(state).test_client()
 
     response = client.post("/api/instances/i-1/autoresize", json={"autoresize": "not-a-bool"})
 
@@ -292,8 +271,7 @@ def test_toggle_with_invalid_body_returns_400(state):
 # --- Settings page (config-in-DB) --------------------------------------------
 
 
-def test_settings_page_renders_every_key(state):
-    client = create_app(state).test_client()
+def test_settings_page_renders_every_key(state, client):
     response = client.get("/settings")
 
     assert response.status_code == 200
@@ -301,8 +279,7 @@ def test_settings_page_renders_every_key(state):
         assert f'data-key="{key}"'.encode() in response.data
 
 
-def test_settings_page_shows_labels_and_descriptions_not_raw_keys(state):
-    client = create_app(state).test_client()
+def test_settings_page_shows_labels_and_descriptions_not_raw_keys(state, client):
     html = client.get("/settings").data.decode()
 
     assert "Scan interval (sec)" in html  # human label
@@ -314,10 +291,9 @@ def test_settings_page_shows_labels_and_descriptions_not_raw_keys(state):
     assert ">scheduler.interval_seconds<" not in html
 
 
-def test_settings_page_puts_dry_run_first(state):
+def test_settings_page_puts_dry_run_first(state, client):
     # dry_run is the one setting a first-time operator must see before
     # anything else, so the Safety group leads the page.
-    client = create_app(state).test_client()
     html = client.get("/settings").data.decode()
 
     dry_run_position = html.index('data-key="dry_run"')
@@ -332,8 +308,7 @@ def test_settings_groups_cover_every_key_exactly_once():
     assert len(grouped) == len(set(grouped))
 
 
-def test_settings_page_has_single_update_button_not_per_row_save(state):
-    client = create_app(state).test_client()
+def test_settings_page_has_single_update_button_not_per_row_save(state, client):
     html = client.get("/settings").data.decode()
 
     assert 'id="settings-update-btn"' in html
@@ -341,11 +316,10 @@ def test_settings_page_has_single_update_button_not_per_row_save(state):
     assert ">Save<" not in html  # the old per-row button text is gone
 
 
-def test_page_links_its_static_assets(state):
+def test_page_links_its_static_assets(state, client):
     # The stylesheet and script live in static/ now - if either link breaks
     # (renamed file, wrong url_for), the page still renders 200 but unstyled
     # and inert, which nothing else would catch.
-    client = create_app(state).test_client()
     html = client.get("/").data.decode()
 
     assert '<link rel="stylesheet" href="/static/css/dashboard.css">' in html
@@ -354,8 +328,7 @@ def test_page_links_its_static_assets(state):
     assert client.get("/static/js/dashboard.js").status_code == 200
 
 
-def test_settings_script_has_dirty_tracking_and_batched_update(state):
-    client = create_app(state).test_client()
+def test_settings_script_has_dirty_tracking_and_batched_update(state, client):
     js = client.get("/static/js/dashboard.js").data.decode()
 
     assert "function wireConfigDirtyTracking" in js
@@ -363,8 +336,7 @@ def test_settings_script_has_dirty_tracking_and_batched_update(state):
     assert "#settings-list .setting[data-dirty" in js
 
 
-def test_api_config_lists_all_known_keys_with_defaults(state):
-    client = create_app(state).test_client()
+def test_api_config_lists_all_known_keys_with_defaults(state, client):
     response = client.get("/api/config")
 
     assert response.status_code == 200
@@ -377,9 +349,8 @@ def test_api_config_lists_all_known_keys_with_defaults(state):
     assert by_key["scheduler.interval_seconds"]["default"] == "300"
 
 
-def test_api_config_reflects_current_override(state):
+def test_api_config_reflects_current_override(state, client):
     state.set_config("dry_run", "false")
-    client = create_app(state).test_client()
 
     response = client.get("/api/config")
 
@@ -387,8 +358,7 @@ def test_api_config_reflects_current_override(state):
     assert by_key["dry_run"]["value"] == "false"
 
 
-def test_set_config_valid_value_persists(state):
-    client = create_app(state).test_client()
+def test_set_config_valid_value_persists(state, client):
 
     response = client.post("/api/config/dry_run", json={"value": "false"})
 
@@ -397,8 +367,7 @@ def test_set_config_valid_value_persists(state):
     assert state.get_config("dry_run") == "false"
 
 
-def test_set_config_invalid_value_rejected_and_not_persisted(state):
-    client = create_app(state).test_client()
+def test_set_config_invalid_value_rejected_and_not_persisted(state, client):
 
     response = client.post("/api/config/scheduler.interval_seconds", json={"value": "not-a-number"})
 
@@ -407,8 +376,7 @@ def test_set_config_invalid_value_rejected_and_not_persisted(state):
     assert state.get_config("scheduler.interval_seconds") is None
 
 
-def test_set_config_out_of_range_value_rejected(state):
-    client = create_app(state).test_client()
+def test_set_config_out_of_range_value_rejected(state, client):
 
     response = client.post("/api/config/default_threshold_percent", json={"value": "150"})
 
@@ -416,24 +384,21 @@ def test_set_config_out_of_range_value_rejected(state):
     assert state.get_config("default_threshold_percent") is None
 
 
-def test_set_config_unknown_key_returns_404(state):
-    client = create_app(state).test_client()
+def test_set_config_unknown_key_returns_404(state, client):
 
     response = client.post("/api/config/credentials.mode", json={"value": "static"})
 
     assert response.status_code == 404
 
 
-def test_set_config_invalid_body_returns_400(state):
-    client = create_app(state).test_client()
+def test_set_config_invalid_body_returns_400(state, client):
 
     response = client.post("/api/config/dry_run", json={"value": 123})
 
     assert response.status_code == 400
 
 
-def test_set_config_does_not_clobber_other_overrides(state):
-    client = create_app(state).test_client()
+def test_set_config_does_not_clobber_other_overrides(state, client):
 
     client.post("/api/config/dry_run", json={"value": "false"})
     client.post("/api/config/scheduler.interval_seconds", json={"value": "60"})
@@ -442,8 +407,7 @@ def test_set_config_does_not_clobber_other_overrides(state):
     assert state.get_config("scheduler.interval_seconds") == "60"
 
 
-def test_set_config_overwrites_existing_value(state):
-    client = create_app(state).test_client()
+def test_set_config_overwrites_existing_value(state, client):
 
     client.post("/api/config/dry_run", json={"value": "false"})
     response = client.post("/api/config/dry_run", json={"value": "true"})
@@ -455,12 +419,11 @@ def test_set_config_overwrites_existing_value(state):
 # --- Live refresh (client-side polling) --------------------------------------
 
 
-def test_pages_have_stable_ids_for_live_refresh_swap(state):
+def test_pages_have_stable_ids_for_live_refresh_swap(state, client):
     # refreshLiveData() in dashboard.js re-fetches the current page and
     # swaps these exact ids' innerHTML - if one goes missing (e.g. a
     # template edit drops an id), live refresh silently stops updating
     # that section instead of erroring, so it's worth pinning here.
-    client = create_app(state).test_client()
 
     expected = {
         "/": ['id="dashboard-stats"', 'id="resize-tbody"', 'id="scan-tbody"'],
@@ -474,15 +437,14 @@ def test_pages_have_stable_ids_for_live_refresh_swap(state):
             assert expected_id in html, f"{path} is missing {expected_id}"
 
 
-def test_live_refresh_fetches_the_current_page(state):
+def test_live_refresh_fetches_the_current_page(state, client):
     # Each page is its own route now - refreshing "/" from /instances
     # would swap in nothing (the ids don't match) and look like a dead poll.
-    js = create_app(state).test_client().get("/static/js/dashboard.js").data.decode()
+    js = client.get("/static/js/dashboard.js").data.decode()
     assert "fetch(location.pathname)" in js
 
 
-def test_script_includes_live_refresh(state):
-    client = create_app(state).test_client()
+def test_script_includes_live_refresh(state, client):
     js = client.get("/static/js/dashboard.js").data.decode()
 
     assert "function refreshLiveData" in js
@@ -494,12 +456,12 @@ def test_script_includes_live_refresh(state):
 # --- Effective eligibility (Volumes page Watched/Threshold columns) -----------
 
 
-def test_volume_watched_via_own_flag(state):
+def test_volume_watched_via_own_flag(state, client):
     state.upsert_instance("default", "i-1", "us-east-1", "t3.micro", "running")
     state.upsert_volume("default", "vol-1", "i-1", "us-east-1", 100, "/dev/xvdf")
     state.set_volume_autoresize("vol-1", True)
 
-    html = create_app(state).test_client().get("/volumes").data.decode()
+    html = client.get("/volumes").data.decode()
     row_start = html.index('data-volume="vol-1"')
     row_end = html.index("</tr>", row_start)
     row = html[row_start:row_end]
@@ -508,7 +470,7 @@ def test_volume_watched_via_own_flag(state):
     assert "via instance" not in row
 
 
-def test_volume_watched_via_instance_flag(state):
+def test_volume_watched_via_instance_flag(state, client):
     state.upsert_instance("default", "i-1", "us-east-1", "t3.micro", "running")
     state.upsert_volume("default", "vol-1", "i-1", "us-east-1", 100, "/dev/xvdf")
     state.set_instance_autoresize("i-1", True)
@@ -516,7 +478,7 @@ def test_volume_watched_via_instance_flag(state):
     # flagged - this is exactly the case that used to be invisible on the
     # Volumes tab (toggle shows off, but the volume is actually watched).
 
-    html = create_app(state).test_client().get("/volumes").data.decode()
+    html = client.get("/volumes").data.decode()
     row_start = html.index('data-volume="vol-1"')
     row_end = html.index("</tr>", row_start)
     row = html[row_start:row_end]
@@ -526,11 +488,11 @@ def test_volume_watched_via_instance_flag(state):
     assert 'data-autoresize="false"' in row  # the toggle itself still reflects the volume's own (unset) flag
 
 
-def test_volume_not_watched_when_neither_flag_set(state):
+def test_volume_not_watched_when_neither_flag_set(state, client):
     state.upsert_instance("default", "i-1", "us-east-1", "t3.micro", "running")
     state.upsert_volume("default", "vol-1", "i-1", "us-east-1", 100, "/dev/xvdf")
 
-    html = create_app(state).test_client().get("/volumes").data.decode()
+    html = client.get("/volumes").data.decode()
     row_start = html.index('data-volume="vol-1"')
     row_end = html.index("</tr>", row_start)
     row = html[row_start:row_end]
@@ -538,11 +500,11 @@ def test_volume_not_watched_when_neither_flag_set(state):
     assert ">No<" in row
 
 
-def test_unattached_volume_shows_unattached_even_if_flagged(state):
+def test_unattached_volume_shows_unattached_even_if_flagged(state, client):
     state.upsert_volume("default", "vol-1", None, "us-east-1", 100, None)
     state.set_volume_autoresize("vol-1", True)  # flagged, but nothing to extend the filesystem on
 
-    html = create_app(state).test_client().get("/volumes").data.decode()
+    html = client.get("/volumes").data.decode()
     row_start = html.index('data-volume="vol-1"')
     row_end = html.index("</tr>", row_start)
     row = html[row_start:row_end]
@@ -550,12 +512,12 @@ def test_unattached_volume_shows_unattached_even_if_flagged(state):
     assert "Unattached" in row
 
 
-def test_threshold_shows_own_value_without_annotation(state):
+def test_threshold_shows_own_value_without_annotation(state, client):
     state.upsert_instance("default", "i-1", "us-east-1", "t3.micro", "running")
     state.upsert_volume("default", "vol-1", "i-1", "us-east-1", 100, "/dev/xvdf")
     state._volumes["vol-1"] = replace(state._volumes["vol-1"], threshold_percent=42)
 
-    html = create_app(state).test_client().get("/volumes").data.decode()
+    html = client.get("/volumes").data.decode()
     row_start = html.index('data-volume="vol-1"')
     row_end = html.index("</tr>", row_start)
     row = html[row_start:row_end]
@@ -564,12 +526,12 @@ def test_threshold_shows_own_value_without_annotation(state):
     assert "eligibility-note" not in row
 
 
-def test_threshold_falls_back_to_instance_with_annotation(state):
+def test_threshold_falls_back_to_instance_with_annotation(state, client):
     state.upsert_instance("default", "i-1", "us-east-1", "t3.micro", "running")
     state.upsert_volume("default", "vol-1", "i-1", "us-east-1", 100, "/dev/xvdf")
     state._instances["i-1"] = replace(state._instances["i-1"], threshold_percent=55)
 
-    html = create_app(state).test_client().get("/volumes").data.decode()
+    html = client.get("/volumes").data.decode()
     row_start = html.index('data-volume="vol-1"')
     row_end = html.index("</tr>", row_start)
     row = html[row_start:row_end]
@@ -578,11 +540,11 @@ def test_threshold_falls_back_to_instance_with_annotation(state):
     assert '<span class="eligibility-note">(instance)</span>' in row
 
 
-def test_threshold_falls_back_to_global_default_with_annotation(state):
+def test_threshold_falls_back_to_global_default_with_annotation(state, client):
     state.upsert_instance("default", "i-1", "us-east-1", "t3.micro", "running")
     state.upsert_volume("default", "vol-1", "i-1", "us-east-1", 100, "/dev/xvdf")
 
-    html = create_app(state).test_client().get("/volumes").data.decode()
+    html = client.get("/volumes").data.decode()
     row_start = html.index('data-volume="vol-1"')
     row_end = html.index("</tr>", row_start)
     row = html[row_start:row_end]
@@ -591,12 +553,12 @@ def test_threshold_falls_back_to_global_default_with_annotation(state):
     assert '<span class="eligibility-note">(default)</span>' in row
 
 
-def test_threshold_default_reflects_app_config_override(state):
+def test_threshold_default_reflects_app_config_override(state, client):
     state.upsert_instance("default", "i-1", "us-east-1", "t3.micro", "running")
     state.upsert_volume("default", "vol-1", "i-1", "us-east-1", 100, "/dev/xvdf")
     state.set_config("default_threshold_percent", "65")
 
-    html = create_app(state).test_client().get("/volumes").data.decode()
+    html = client.get("/volumes").data.decode()
     row_start = html.index('data-volume="vol-1"')
     row_end = html.index("</tr>", row_start)
     row = html[row_start:row_end]
@@ -604,12 +566,12 @@ def test_threshold_default_reflects_app_config_override(state):
     assert "65%" in row
 
 
-def test_threshold_default_falls_back_on_invalid_app_config_override(state):
+def test_threshold_default_falls_back_on_invalid_app_config_override(state, client):
     state.upsert_instance("default", "i-1", "us-east-1", "t3.micro", "running")
     state.upsert_volume("default", "vol-1", "i-1", "us-east-1", 100, "/dev/xvdf")
     state.set_config("default_threshold_percent", "not-a-number")
 
-    html = create_app(state).test_client().get("/volumes").data.decode()
+    html = client.get("/volumes").data.decode()
     row_start = html.index('data-volume="vol-1"')
     row_end = html.index("</tr>", row_start)
     row = html[row_start:row_end]
@@ -617,7 +579,7 @@ def test_threshold_default_falls_back_on_invalid_app_config_override(state):
     assert "80%" in row  # falls back to the dataclass default, not a crash
 
 
-def test_watched_uses_full_instance_list_even_when_instance_is_stopped(state):
+def test_watched_uses_full_instance_list_even_when_instance_is_stopped(state, client):
     # The Instances tab hides stopped instances, but discovery.py's own
     # eligibility resolution doesn't filter by instance state at all - the
     # Volumes tab's Watched/Threshold columns must match that real
@@ -626,7 +588,7 @@ def test_watched_uses_full_instance_list_even_when_instance_is_stopped(state):
     state.upsert_volume("default", "vol-1", "i-1", "us-east-1", 100, "/dev/xvdf")
     state.set_instance_autoresize("i-1", True)
 
-    html = create_app(state).test_client().get("/volumes").data.decode()
+    html = client.get("/volumes").data.decode()
     row_start = html.index('data-volume="vol-1"')
     row_end = html.index("</tr>", row_start)
     row = html[row_start:row_end]

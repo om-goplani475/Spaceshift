@@ -175,6 +175,20 @@ code, .mono {
   50% { opacity: 0.35; transform: scale(0.8); }
 }
 
+.user-menu {
+  align-self: center;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-3);
+  margin-left: var(--sp-2);
+  padding-left: var(--sp-4);
+  border-left: 1px solid var(--border);
+  font-size: var(--text-sm);
+}
+.user-name { color: var(--text-2); max-width: 14ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.btn-quiet { border-color: transparent; background: transparent; color: var(--text-2); padding: 4px 8px; }
+.btn-quiet:hover:not(:disabled) { color: var(--text); background: var(--surface-2); }
+
 /* ---- Page ------------------------------------------------------------- */
 
 .page {
@@ -184,6 +198,17 @@ code, .mono {
 }
 
 .page-header { margin-bottom: var(--sp-6); }
+.page-narrow { max-width: 420px; padding-top: var(--sp-10); }
+
+.flashes { margin-bottom: var(--sp-5); }
+.flash {
+  padding: var(--sp-3) var(--sp-4);
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--accent);
+  border-radius: var(--radius);
+  background: var(--surface);
+  font-size: var(--text-sm);
+}
 .lede {
   margin-top: var(--sp-1);
   color: var(--text-2);
@@ -454,6 +479,46 @@ td.empty {
 }
 .settings-actions .config-status { font-size: var(--text-sm); }
 
+/* ---- Sign-in and setup forms ------------------------------------------ */
+
+.auth-form {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow);
+  padding: var(--sp-6);
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-4);
+}
+.field { display: flex; flex-direction: column; gap: var(--sp-1); }
+.field label { font-size: var(--text-sm); font-weight: 600; }
+.field input {
+  font: inherit;
+  font-size: var(--text-md);
+  color: var(--text);
+  background: var(--surface);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  padding: 8px 10px;
+  line-height: 1.3;
+  transition: border-color var(--ease), box-shadow var(--ease);
+}
+.field input:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 20%, transparent);
+}
+.field-hint { font-size: var(--text-xs); color: var(--text-3); }
+.form-error {
+  padding: var(--sp-2) var(--sp-3);
+  border-radius: var(--radius);
+  background: color-mix(in srgb, var(--red) 10%, var(--surface));
+  color: var(--red);
+  font-size: var(--text-sm);
+}
+.form-actions { display: flex; justify-content: flex-end; margin-top: var(--sp-1); }
+
 /* ---- Small screens ---------------------------------------------------- */
 
 @media (max-width: 720px) {
@@ -462,6 +527,7 @@ td.empty {
   .nav::-webkit-scrollbar { display: none; }
   .nav-link { padding: 0 var(--sp-2); }
   .live-label, .live-age { display: none; }
+  .user-name { display: none; }
   .page { padding: var(--sp-5) var(--sp-4) var(--sp-8); }
   .setting { grid-template-columns: 1fr; gap: var(--sp-3); }
   .setting-control { align-items: flex-start; }

@@ -1,6 +1,6 @@
-"""Optional read-only status dashboard - shows recent resize activity and
-scan history from the state backend. Entirely separate from the scheduler
-process; run it only if you want visibility beyond the logs.
+"""Status dashboard - resize activity, scan history, eligibility toggles
+and live settings, behind a login (see auth.py). Entirely separate from
+the scheduler process; it shares nothing with it but the database.
 """
 
 from __future__ import annotations
@@ -10,6 +10,7 @@ from dataclasses import asdict
 from flask import Flask, jsonify, render_template, request
 
 from controller.config import DB_CONFIG_KEYS, Config, apply_db_overrides
+from controller.dashboard.auth import AuthSettings, init_auth
 from controller.state.base import TERMINAL_STATUSES, ResizeStatus, StateBackend
 
 _SCAN_LIST_LIMIT = 200
@@ -248,8 +249,11 @@ _NAV_ITEMS = [
 ]
 
 
-def create_app(state: StateBackend) -> Flask:
+def create_app(state: StateBackend, auth: AuthSettings) -> Flask:
     app = Flask(__name__)
+    # Sessions, CSRF, security headers, the login gate on every route
+    # below, and the /login, /logout, /setup and /healthz routes.
+    init_auth(app, state, auth)
 
     @app.context_processor
     def _template_globals():

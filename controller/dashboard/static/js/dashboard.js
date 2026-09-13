@@ -1,5 +1,20 @@
 "use strict";
 
+// ---- CSRF ---------------------------------------------------------------------
+
+// Every state-changing fetch() sends the token from base.html's meta tag;
+// Flask-WTF rejects a POST without it. The token is tied to the session,
+// not the page, so it stays valid across live refreshes.
+const CSRF_TOKEN = (document.querySelector('meta[name="csrf-token"]') || {}).content || "";
+
+function postJSON(url, body) {
+  return fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "X-CSRFToken": CSRF_TOKEN },
+    body: JSON.stringify(body),
+  });
+}
+
 // ---- Timestamps -----------------------------------------------------------
 
 function formatTimestamps(root) {
@@ -141,11 +156,7 @@ function wireAutoresizeToggles(root) {
       const id = toggle.dataset.id;
       const desired = toggle.checked;
       toggle.disabled = true;
-      fetch("/api/" + kind + "/" + encodeURIComponent(id) + "/autoresize", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ autoresize: desired }),
-      })
+      postJSON("/api/" + kind + "/" + encodeURIComponent(id) + "/autoresize", { autoresize: desired })
         .then(function (resp) {
           if (!resp.ok) throw new Error("request failed");
           return resp.json();
@@ -186,6 +197,10 @@ function wireConfigDirtyTracking(root) {
 }
 
 function wireSettingsUpdateButton() {
+  // Enter in a text field would otherwise submit the form as a plain
+  // page POST; the Update button is the only way settings are saved.
+  const form = document.getElementById("settings-form");
+  if (form) form.addEventListener("submit", function (e) { e.preventDefault(); });
   const btn = document.getElementById("settings-update-btn");
   if (!btn) return;
   btn.addEventListener("click", function () {
@@ -207,11 +222,7 @@ function wireSettingsUpdateButton() {
       const textInput = row.querySelector(".config-value-input");
       const value = boolInput ? (boolInput.checked ? "true" : "false") : textInput.value.trim();
 
-      return fetch("/api/config/" + encodeURIComponent(key), {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ value: value }),
-      })
+      return postJSON("/api/config/" + encodeURIComponent(key), { value: value })
         .then(function (resp) {
           return resp.json().then(function (data) {
             return { ok: resp.ok, data: data, row: row, statusEl: statusEl };
@@ -278,6 +289,13 @@ async function refreshLiveData() {
   if (liveIndicator) liveIndicator.dataset.state = "refreshing";
   try {
     const resp = await fetch(location.pathname);
+    // The session expired (or was revoked) and the server sent us to the
+    // sign-in page - go there properly instead of silently showing stale
+    // data with a green "Live" dot.
+    if (resp.redirected && new URL(resp.url).pathname === "/login") {
+      location.href = "/login?next=" + encodeURIComponent(location.pathname);
+      return;
+    }
     if (!resp.ok) throw new Error("refresh failed: " + resp.status);
     const html = await resp.text();
     const fresh = new DOMParser().parseFromString(html, "text/html");
@@ -316,9 +334,11 @@ async function refreshLiveData() {
   }
 }
 
-setInterval(refreshLiveData, POLL_INTERVAL_MS);
-setInterval(renderLiveAge, 1000);
-renderLiveAge();
-document.addEventListener("visibilitychange", function () {
-  if (!document.hidden) refreshLiveData();
-});
+if (document.body.dataset.live !== "off") {
+  setInterval(refreshLiveData, POLL_INTERVAL_MS);
+  setInterval(renderLiveAge, 1000);
+  renderLiveAge();
+  document.addEventListener("visibilitychange", function () {
+    if (!document.hidden) refreshLiveData();
+  });
+}
