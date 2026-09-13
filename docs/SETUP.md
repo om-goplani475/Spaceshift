@@ -148,7 +148,31 @@ Values are parsed as YAML scalars (so `false`, `true`, `300` parse as bool/int -
 | `resize.stale_lock_timeout_minutes` | `45` | If the controller crashes mid-resize, how long before a stuck row gets checked against AWS's real state instead of being retried blindly forever. |
 | `dry_run` | `true` | **The most important setting for a first run.** When true, the controller only logs what it *would* do - no `modify-volume` call, no `growpart`/`resize2fs`/`xfs_growfs`. Flip to `false` only after confirming the dry-run logs look right against your real account. |
 
-## 6. First-run checklist
+## 6. Backups, restore, and upgrades
+
+The `postgres-data` volume is the **only** copy of everything the controller knows that isn't in AWS: which volumes and instances are eligible, every live-editable setting (including `dry_run`), the modification ledger that enforces AWS's 4-per-24h limit, and the state of any resize in flight. Treat it like the production data it is.
+
+**Back up** (a plain SQL dump; run it from cron or before any upgrade):
+
+```bash
+docker compose exec -T postgres pg_dump -U ebs_auto_resize ebs_auto_resize > spaceshift-$(date +%F).sql
+```
+
+**Restore** into a fresh, empty database (stop the controller and dashboard first so nothing writes mid-restore):
+
+```bash
+docker compose stop controller dashboard
+docker compose exec -T postgres psql -U ebs_auto_resize ebs_auto_resize < spaceshift-2026-09-13.sql
+docker compose start controller dashboard
+```
+
+**`docker compose down -v` deletes the volume.** After that, the controller starts cleanly but nothing is eligible (it fails closed - no alert, no resizes) and every setting is back to its default, including `dry_run: true`. A volume that was mid-resize at the time has no row: the AWS side may have grown, but the OS-side extend never runs. On the next cycle the controller sees the disk still full, requests another modification, AWS rejects it (6-hour cooldown), and the row goes to `MODIFY_FAILED` - recoverable, but only if you know that's why. Use `docker compose down` (no `-v`) unless you mean it.
+
+**Upgrades:** the schema is created and migrated automatically at startup (`CREATE TABLE IF NOT EXISTS` / `ADD COLUMN IF NOT EXISTS`), so `docker compose pull && docker compose up -d` is the whole procedure. Downgrading to an older image against a newer schema also works - added columns have defaults and are simply ignored. Take a dump first anyway.
+
+Running two controllers against **separate** databases (e.g. two compose projects from different directories) is safe but wasteful: both request the same modification, AWS rejects the second, and its row self-heals via `MODIFY_FAILED` - each duplicate burns a slot of the 4-per-24h limit. Two controllers sharing **one** database is fine; the resize row insert is atomic.
+
+## 7. First-run checklist
 
 1. IAM role attached to the host running the controller (1.1).
 2. SSM Agent + `AmazonSSMManagedInstanceCore` on every target instance (1.2).
