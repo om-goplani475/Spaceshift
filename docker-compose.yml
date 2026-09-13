@@ -71,17 +71,27 @@ services:
         condition: service_healthy
     environment:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env - see .env.example}
+      # Signs session cookies. Required - see .env.example for how to
+      # generate one. Rotating it signs everyone out.
+      SPACESHIFT_SECRET_KEY: ${SPACESHIFT_SECRET_KEY:?Set SPACESHIFT_SECRET_KEY in .env - see .env.example}
+      # Guards /setup, the page that creates the first admin. Optional:
+      # unset, /setup only prints instructions and the CLI is the way in.
+      SPACESHIFT_SETUP_TOKEN: ${SPACESHIFT_SETUP_TOKEN:-}
+      # "true" only when an HTTPS reverse proxy sits in front - turns on
+      # Secure cookies and trusts X-Forwarded-* from one hop.
+      SPACESHIFT_BEHIND_TLS_PROXY: ${SPACESHIFT_BEHIND_TLS_PROXY:-false}
     ports:
       - "8089:8080"
     # Overrides the Dockerfile's baked-in HEALTHCHECK, which checks for a
     # heartbeat file only Scheduler.run_forever() ever writes - this
-    # service runs `controller.dashboard` instead (a plain Flask app, no
-    # scheduler loop), so that file never exists here and the image's
-    # default healthcheck would report unhealthy forever regardless of
-    # whether the dashboard is actually working. Checks the page itself
-    # instead - no curl/wget in the slim base image, so plain urllib.
+    # service runs the dashboard instead (no scheduler loop), so that file
+    # never exists here and the image's default healthcheck would report
+    # unhealthy forever regardless of whether the dashboard is actually
+    # working. /healthz is unauthenticated and runs SELECT 1, so this
+    # proves the process is up *and* Postgres answers - no curl/wget in
+    # the slim base image, so plain urllib.
     healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8080/', timeout=3)"]
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8080/healthz', timeout=3)"]
       interval: 30s
       timeout: 5s
       start_period: 10s
