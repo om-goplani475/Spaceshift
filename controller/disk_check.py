@@ -13,7 +13,10 @@ from dataclasses import dataclass
 
 from controller.connections.base import ConnectionTarget, Connector
 
-DEVICE_PATTERN = re.compile(r"^/dev/(xvd|nvme)[a-z0-9]+$")
+# \Z, not $: "$" also matches just before a trailing newline, so
+# "/dev/xvdf1\n" would pass. shlex.quote would still neutralise it, but
+# the allowlist is the primary control and shouldn't lean on the second.
+DEVICE_PATTERN = re.compile(r"^/dev/(xvd|nvme)[a-z0-9]+\Z")
 
 
 class InvalidDeviceNameError(ValueError):

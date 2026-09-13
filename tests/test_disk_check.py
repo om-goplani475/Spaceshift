@@ -64,3 +64,11 @@ def test_unparseable_df_output_raises_disk_check_error():
 
     with pytest.raises(DiskCheckError, match="Could not parse"):
         check_disk_usage(connector, target, "/dev/xvdf")
+
+
+@pytest.mark.parametrize("device", ["/dev/xvdf1\n", "/dev/xvdf1\r\n", "/dev/nvme1n1p1\n"])
+def test_device_pattern_rejects_trailing_newline(device):
+    # "$" matches before a trailing newline; the allowlist must not.
+    from controller.disk_check import DEVICE_PATTERN
+
+    assert DEVICE_PATTERN.match(device) is None

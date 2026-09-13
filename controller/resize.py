@@ -41,8 +41,8 @@ _MODIFY_POLL_TIMEOUT_SECONDS = 900
 # filesystem extend step.
 SIZE_AVAILABLE_STATES = frozenset({"optimizing", "completed"})
 
-_XVD_PATTERN = re.compile(r"^(?P<disk>/dev/xvd[a-z]+)(?P<partition>\d+)$")
-_NVME_PATTERN = re.compile(r"^(?P<disk>/dev/nvme\d+n\d+)p(?P<partition>\d+)$")
+_XVD_PATTERN = re.compile(r"^(?P<disk>/dev/xvd[a-z]+)(?P<partition>\d+)\Z")
+_NVME_PATTERN = re.compile(r"^(?P<disk>/dev/nvme\d+n\d+)p(?P<partition>\d+)\Z")
 
 
 class InvalidDeviceNameError(ValueError):

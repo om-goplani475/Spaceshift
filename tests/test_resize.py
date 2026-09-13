@@ -362,3 +362,9 @@ def test_should_retry_extend_now():
 
     old_failed = ResizeRecord("v", "i", ResizeStatus.EXTEND_FAILED, 100, 120, 1, now, now - dt.timedelta(seconds=120))
     assert should_retry_extend_now(old_failed, 60) is True
+
+
+@pytest.mark.parametrize("device", ["/dev/xvdf1\n", "/dev/nvme0n1p1\n"])
+def test_split_device_rejects_trailing_newline(device):
+    with pytest.raises(InvalidDeviceNameError):
+        _split_device(device)
