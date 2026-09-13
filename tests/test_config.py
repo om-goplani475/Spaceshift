@@ -215,3 +215,16 @@ def test_postgres_pool_covers_every_possible_worker():
     from controller.state.postgres_backend import PostgresStateBackend
 
     assert PostgresStateBackend.DEFAULT_MAX_CONNECTIONS > MAX_CONCURRENT_RESIZES
+
+
+@pytest.mark.parametrize("value", ["0", "1", "", "null", "banana", 0, 1, None])
+def test_dry_run_must_be_a_real_boolean(value):
+    # app_config values are YAML-parsed text; anything but true/false must be
+    # rejected rather than silently picking live mode via truthiness.
+    with pytest.raises(ValueError, match="dry_run must be true or false"):
+        Config.from_dict({"dry_run": value})
+
+
+def test_dry_run_accepts_booleans():
+    assert Config.from_dict({"dry_run": True}).dry_run is True
+    assert Config.from_dict({"dry_run": False}).dry_run is False

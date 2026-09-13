@@ -209,6 +209,13 @@ class Config:
             raise ValueError(
                 "credentials.mode is 'static' but aws_access_key_id and aws_secret_access_key are not both set"
             )
+        # app_config values arrive as YAML-parsed text: "0", "null", "" and
+        # "banana" are all falsy-or-truthy *non-bools* that would silently
+        # pick live mode (or dry-run) while the Settings switch shows the
+        # opposite. Only true/false are acceptable for the one setting
+        # that decides whether real AWS calls happen.
+        if not isinstance(self.dry_run, bool):
+            raise ValueError(f"dry_run must be true or false, got {self.dry_run!r}")
         if self.notifications.method not in _VALID_NOTIFICATION_METHODS:
             raise ValueError(
                 f"notifications.method must be one of {sorted(_VALID_NOTIFICATION_METHODS)}, "
