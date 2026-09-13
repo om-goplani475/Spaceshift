@@ -38,6 +38,8 @@ docker rm -f spaceshift-test-pg
 - New connection methods or state backends should implement the abstract interface in `connections/base.py` or `state/base.py` rather than being special-cased elsewhere.
 - Any value that reaches a remote shell command (device paths, mount points, filesystem types, anything parsed from instance output or AWS metadata) must pass an allowlist and/or `shlex.quote()`. Instance output is untrusted - a compromised instance can return anything from `df`/`lsblk`/`blkid` - and the database is written by operators over an API, so neither is safe to interpolate directly. See SECURITY.md for the full threat model.
 
+CI (`.github/workflows/ci.yml`) runs `ruff check`, `ruff format --check`, the full `pytest` suite against a real Postgres, and `pip-audit` on every pull request - all four must pass. Running the same commands locally first saves a round trip.
+
 Lint and format with [`ruff`](https://docs.astral.sh/ruff/) (config in `pyproject.toml`):
 
 ```bash
