@@ -217,3 +217,28 @@ def test_dead_connection_is_evicted_from_the_pool(postgres_state):
         postgres_state.list_config()
 
     assert postgres_state.list_config() == {}  # fresh connection, not the dead one again
+
+
+def test_threshold_percent_range_is_enforced_by_the_database(postgres_state):
+    # Operators set threshold_percent with plain SQL (SETUP.md 1.3), so the
+    # 0-100 range has to be a database constraint, not just controller code.
+    import psycopg2
+
+    postgres_state.upsert_instance("default", "i-1", "us-east-1", "t3.micro", "running")
+    with postgres_state._cursor(commit=True) as cur:
+        cur.execute("UPDATE instances SET threshold_percent = 100 WHERE instance_id = 'i-1'")
+        cur.execute("UPDATE instances SET threshold_percent = NULL WHERE instance_id = 'i-1'")
+
+    with pytest.raises(psycopg2.errors.CheckViolation):
+        with postgres_state._cursor(commit=True) as cur:
+            cur.execute("UPDATE instances SET threshold_percent = 101 WHERE instance_id = 'i-1'")
+
+
+def test_schema_init_is_idempotent_with_constraints_present():
+    # Second construction against an already-migrated database must not
+    # fail on ADD CONSTRAINT (which has no IF NOT EXISTS of its own).
+    from controller.state.postgres_backend import PostgresStateBackend
+
+    dsn = os.environ["EBS_AUTO_RESIZE_TEST_POSTGRES_DSN"]
+    PostgresStateBackend(dsn).close()
+    PostgresStateBackend(dsn).close()

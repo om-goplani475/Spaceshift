@@ -104,6 +104,21 @@ ALTER TABLE scan_log ADD COLUMN IF NOT EXISTS account_name TEXT NOT NULL DEFAULT
 CREATE INDEX IF NOT EXISTS idx_instances_account_name ON instances (account_name);
 CREATE INDEX IF NOT EXISTS idx_volumes_account_name ON volumes (account_name);
 
+-- threshold_percent is written by operators directly in SQL (docs/SETUP.md
+-- 1.3), so the range check has to live in the database, not just in the
+-- controller. ADD CONSTRAINT has no IF NOT EXISTS, hence the DO block.
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'instances_threshold_percent_range') THEN
+        ALTER TABLE instances ADD CONSTRAINT instances_threshold_percent_range
+            CHECK (threshold_percent IS NULL OR threshold_percent BETWEEN 0 AND 100);
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'volumes_threshold_percent_range') THEN
+        ALTER TABLE volumes ADD CONSTRAINT volumes_threshold_percent_range
+            CHECK (threshold_percent IS NULL OR threshold_percent BETWEEN 0 AND 100);
+    END IF;
+END $$;
+
 -- Live-editable settings (default_threshold_percent, dry_run, scheduler.*,
 -- resize.*) - a flat key-value table rather than typed columns, so a new
 -- setting never needs a schema migration to become DB-editable. A missing
