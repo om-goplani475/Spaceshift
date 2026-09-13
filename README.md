@@ -23,11 +23,13 @@ v1 supports **Amazon Linux + Ubuntu, ext4 + XFS**. LVM-based volumes are out of 
 git clone https://github.com/om-goplani475/Spaceshift.git
 cd Spaceshift
 cp config.yaml.example config.yaml
-cp .env.example .env   # set a real POSTGRES_PASSWORD in it - no default is shipped
+cp .env.example .env   # fill in POSTGRES_PASSWORD, SPACESHIFT_SECRET_KEY, SPACESHIFT_SETUP_TOKEN - no defaults are shipped
 docker compose up
 ```
 
-This starts three containers: the controller, its status dashboard (below), and a Postgres container both use to track resize state (no separate database setup needed — they connect to it automatically using the password from `.env`). `docker compose up` refuses to start if `.env`/`POSTGRES_PASSWORD` is missing, rather than silently running with a guessable password.
+Then open `http://localhost:8089/setup` and create the first admin with the setup token from your `.env` (or run `docker compose exec dashboard python -m controller.dashboard.users create-admin <name>` instead). That page works exactly once.
+
+This starts three containers: the controller, its dashboard (below), and a Postgres container both use to track resize state (no separate database setup needed — they connect to it automatically using the password from `.env`). `docker compose up` refuses to start if `.env` is missing the password or the secret key, rather than silently running with a guessable one.
 
 `dry_run` defaults to `true` — the controller will log what it *would* resize without ever calling `modify-volume` or running a mutating remote command. Confirm the logs show what you expect against your own AWS account before flipping it off (it's a live-editable setting in Postgres, not a `config.yaml` field — see [docs/SETUP.md](docs/SETUP.md) section 5).
 
@@ -38,15 +40,15 @@ docker compose exec postgres psql -U ebs_auto_resize -d ebs_auto_resize \
   -c "UPDATE volumes SET autoresize = true WHERE volume_id = 'vol-xxxxxxxx';"
 ```
 
-### Status dashboard
+### Dashboard
 
-Already running as part of `docker compose up` above — no separate command needed. Served at `http://localhost:8089`:
+Already running as part of `docker compose up` above — no separate command needed. Served at `http://localhost:8089`, behind a login (every user is an admin for now; see [docs/SETUP.md](docs/SETUP.md) section 7 for users, passwords, and recovery):
 
 - **Overview** — the numbers that matter (volumes scanned, watched, resizes completed, in progress, needs attention), every resize the controller has started and where it got to, and the most recent disk checks.
 - **Instances** and **Volumes** — everything discovered, with an `Autoresize` toggle per row (this is how you mark things eligible). The Volumes page shows what's *actually* in effect after a volume's own flag, its instance's flag, and the default threshold are resolved.
 - **Settings** — `dry_run` and every other live-editable setting (see [docs/SETUP.md](docs/SETUP.md) section 5), grouped and described inline, no SQL and no restart.
 
-Managing more than one AWS account (see [docs/SETUP.md](docs/SETUP.md) section 1.4)? Every table is filterable by account alongside region. Pages keep themselves up to date (a 10s poll while the tab is visible, paused when it isn't) — the indicator in the top-right says when the last refresh happened. JSON is also available at `/api/status`, `/api/scans`, `/api/instances`, `/api/volumes`, `/api/config`. The container serves it with gunicorn, plain HTTP — put it behind a TLS-terminating reverse proxy (nginx, Caddy, an ALB) if it's reachable beyond localhost. No authentication yet — only run this where you trust who's on the network.
+Managing more than one AWS account (see [docs/SETUP.md](docs/SETUP.md) section 1.4)? Every table is filterable by account alongside region. Pages keep themselves up to date (a 10s poll while the tab is visible, paused when it isn't) — the indicator in the top-right says when the last refresh happened. JSON is also available at `/api/status`, `/api/scans`, `/api/instances`, `/api/volumes`, `/api/config` — with the same session cookie a browser gets from `/login` (a `curl` recipe is in [docs/SETUP.md](docs/SETUP.md) 7.6). The container serves plain HTTP with gunicorn — if it's reachable beyond localhost, put it behind a TLS-terminating reverse proxy (nginx, Caddy, an ALB) and set `SPACESHIFT_BEHIND_TLS_PROXY=true` so the session cookie is only ever sent over HTTPS.
 
 <p>
   <img src="docs/screenshots/overview-light.png" alt="Spaceshift overview page: stat tiles, resize activity table, scan history table" width="49%">
@@ -70,7 +72,7 @@ The controller talks to instances exclusively via **SSM Send-Command** — no in
 ## Running in Docker
 
 - The container runs as a non-root user by default.
-- **Health and recovery.** The controller writes a heartbeat only after a *successful* cycle, with a deadline it computes from your `scheduler.interval_seconds` (plus 30 minutes' grace for a slow cycle). If that deadline passes, `docker ps` shows the container unhealthy - so a loop that's alive but failing every cycle can't look fine. If three consecutive cycles fail (e.g. Postgres unreachable), the controller logs a `CRITICAL` line and exits; `restart: unless-stopped` brings it back with a fresh process and fresh database connections. Seeing that restart in the logs is intentional, not a crash. The `dashboard` service builds from the same image but has no scheduler loop, so it overrides the healthcheck in `docker-compose.yml` with a plain HTTP check against its own page.
+- **Health and recovery.** The controller writes a heartbeat only after a *successful* cycle, with a deadline it computes from your `scheduler.interval_seconds` (plus 30 minutes' grace for a slow cycle). If that deadline passes, `docker ps` shows the container unhealthy - so a loop that's alive but failing every cycle can't look fine. If three consecutive cycles fail (e.g. Postgres unreachable), the controller logs a `CRITICAL` line and exits; `restart: unless-stopped` brings it back with a fresh process and fresh database connections. Seeing that restart in the logs is intentional, not a crash. The `dashboard` service builds from the same image but has no scheduler loop, so it overrides the healthcheck in `docker-compose.yml` with a request to its own unauthenticated `/healthz`, which also proves Postgres answers.
 - Postgres runs as its own container (`docker-compose.yml`'s `postgres` service), with its data on a named volume (`postgres-data`). That volume holds your eligibility flags, settings, and in-flight resize state — not just history — so back it up; `docker compose down -v` wipes it. Commands and the upgrade procedure are in [docs/SETUP.md](docs/SETUP.md) section 6.
 - **IMDSv2 gotcha:** if credentials mysteriously fail *only* inside the container (but work fine directly on the host), it's usually because Docker's networking adds an extra hop to the instance metadata service, and the default IMDSv2 hop limit is 1. Raise the instance's metadata hop limit to 2 to fix it.
 

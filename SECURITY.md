@@ -21,6 +21,7 @@ You should receive an acknowledgment within a few days. Once a fix is available,
 **Where the tool's decisions come from:**
 - *Eligibility and thresholds* live in Postgres (`instances.autoresize`, `volumes.autoresize`, `threshold_percent`), written via the dashboard's HTTP API or directly in SQL. The controller reads **no EC2 tags** for these.
 - *Live settings* (`dry_run`, growth increment, size ceiling, and the rest of `app_config`) are also written via the dashboard/API or SQL.
+- *Who may do that* is decided by the dashboard's login: local username + password (argon2id), a signed session cookie (`SPACESHIFT_SECRET_KEY`), CSRF tokens on every state-changing request, and database-backed login rate limiting. Every signed-in user is an admin in this version.
 - *Instance output* (`df`, `lsblk`, `blkid`) and *AWS metadata* (device names, sizes, modification state) are parsed and fed back into remote commands.
 
 In scope:
@@ -29,9 +30,12 @@ In scope:
 - Bypass of a control that exists: the device-path allowlist, the `dry_run` guard, the AWS modification-rate guards, the Postgres `threshold_percent` range constraint, or the dashboard's input validation.
 - Credential handling: secrets logged, keys baked into images, the Postgres DSN or a Slack token appearing in error output, unnecessary IAM permission scope in `docs/iam-policy.json`.
 - Authentication or authorization bypass in the SSM connection path.
+- Dashboard authentication: reaching any page or `/api/*` route without a valid session, a CSRF bypass, a session that outlives a password change or deactivation, the `/setup` page being reachable once a user exists, the setup token or a password hash leaking, a way past the login rate limit, an open redirect via `?next=`, or a weakening of the security headers/CSP.
 
 Known and accepted for now (not a vulnerability report - please don't file it as one):
-- **The dashboard has no authentication.** Anyone who can reach its port can change eligibility and settings. Authentication, role-based access, and an audit log are the next planned release. Until then the README says to bind it to loopback or put it behind an authenticating proxy, and the threat model assumes the dashboard's network is trusted.
+- **No roles and no audit log yet.** Every signed-in user can change every setting, and there's no per-user record of who changed what. Both are the next planned releases.
+- **No password breach-list check.** Passwords are length-checked only (12-128); an HIBP k-anonymity lookup is planned.
+- **Plain HTTP by default.** The container has no TLS; the README and `docs/SETUP.md` say to put a TLS-terminating proxy in front and set `SPACESHIFT_BEHIND_TLS_PROXY=true` for anything beyond localhost.
 
 Out of scope:
 - Anything requiring write access to the controller's Postgres database or its host - that's already full control of the tool by design.

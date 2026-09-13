@@ -178,14 +178,89 @@ docker compose start controller dashboard
 
 Running two controllers against **separate** databases (e.g. two compose projects from different directories) is safe but wasteful: both request the same modification, AWS rejects the second, and its row self-heals via `MODIFY_FAILED` - each duplicate burns a slot of the 4-per-24h limit. Two controllers sharing **one** database is fine; the resize row insert is atomic.
 
-## 7. First-run checklist
+## 7. Dashboard login
+
+The dashboard requires a login for every page and every `/api/*` call. There is no default user and no default password.
+
+### 7.1 `.env` values
+
+Three values in `.env` (see `.env.example` for the one-liners that generate them):
+
+| Variable | Required | What it does |
+|---|---|---|
+| `SPACESHIFT_SECRET_KEY` | yes, ≥32 chars | Signs session cookies. Rotating it signs everyone out and nothing else. |
+| `SPACESHIFT_SETUP_TOKEN` | no, ≥16 chars if set | Guards `/setup` (below). Ignored once a user exists. |
+| `SPACESHIFT_BEHIND_TLS_PROXY` | no, default `false` | See 7.4. |
+
+### 7.2 Creating the first admin
+
+Two ways; pick either.
+
+**The setup page.** Set `SPACESHIFT_SETUP_TOKEN` in `.env`, start the stack, open `http://localhost:8089/setup`, and enter the token, a username, and a password. You're signed in straight away and the page is a plain 404 from then on - you can delete the token from `.env` (the startup log reminds you; leaving it is harmless). If the variable is unset, `/setup` shows one sentence pointing at this section and the CLI, and does nothing else - it never generates or prints a token.
+
+**The CLI**, from inside the container (prompts for the password twice):
+
+```bash
+docker compose exec dashboard python -m controller.dashboard.users create-admin <name>
+```
+
+Wrong tokens count against the same rate limit as failed logins (7.5), so a 16+ character token can't be brute-forced. If you wipe the database (`docker compose down -v`), `users` is empty again and `/setup` is live again with the same token.
+
+### 7.3 Usernames, passwords, and recovery
+
+- **Usernames** are 3-32 characters of `a-z 0-9 . _ -`, stored lowercase, unique case-insensitively, and can't be renamed (they will be the actor in the audit log). Deactivate and create a new one instead.
+- **Passwords** are 12-128 characters. Length is the only rule - no character classes, no expiry, no forced rotation ([NIST 800-63B](https://pages.nist.gov/800-63-3/sp800-63b.html)). A password can't be the username or contain "spaceshift". Passwords are **not yet checked against breach lists** (planned: an HIBP k-anonymity lookup that never sends the password off the host); until then, use a password manager or a long passphrase.
+- **Every user is an admin.** Roles arrive in a later release.
+- **Lost the password, or locked out?** There's no email, so recovery is the same CLI:
+
+  ```bash
+  docker compose exec dashboard python -m controller.dashboard.users reset-password <name>   # prompts; signs their other sessions out; re-activates if deactivated
+  docker compose exec dashboard python -m controller.dashboard.users unlock <name>           # clears a failed-login lockout early
+  docker compose exec dashboard python -m controller.dashboard.users deactivate <name>       # refused for the last active user
+  ```
+
+Changing a password, deactivating a user, or `unlock` signs out every existing session for that user. Sessions otherwise last 12 hours, or 1 hour without activity - fixed, not configurable. The dashboard's 10-second refresh counts as activity while the tab is visible.
+
+### 7.4 Behind an HTTPS proxy
+
+The container speaks plain HTTP. On `localhost` or through an SSH tunnel that's fine. If the dashboard is reachable over a network, put a TLS-terminating proxy in front and set `SPACESHIFT_BEHIND_TLS_PROXY=true`, which (a) marks the session cookie `Secure` so browsers never send it over HTTP and (b) trusts `X-Forwarded-For`/`X-Forwarded-Proto` from exactly one hop, so login rate limiting sees real client addresses instead of the proxy's. Don't set it without the proxy: the cookie is silently dropped over HTTP and login never "takes", and any client could spoof its address with a header.
+
+A complete `Caddyfile` for it:
+
+```
+dashboard.example.com {
+    reverse_proxy localhost:8089
+}
+```
+
+Caddy sets both headers and provisions the certificate itself. For nginx, `proxy_set_header X-Forwarded-For $remote_addr; proxy_set_header X-Forwarded-Proto $scheme;` inside the `location` block does the same.
+
+### 7.5 Rate limiting
+
+5 failed logins for one username in 15 minutes locks that username for 15 minutes; 20 from one address locks the address. Both lift on their own (`unlock` lifts the username one early). The response is the same "Invalid username or password" either way, with HTTP 429 and a `Retry-After` header. Failures are logged at `WARNING` and kept in the `login_attempts` table for 7 days.
+
+### 7.6 Scripting against the API
+
+`/api/*` needs the session cookie - there are no API tokens yet. Sign in once with a cookie jar and reuse it (the login form is CSRF-protected, so fetch a token first):
+
+```bash
+TOKEN=$(curl -s -c jar.txt http://localhost:8089/login | grep -o 'name="csrf-token" content="[^"]*"' | cut -d'"' -f4)
+curl -s -b jar.txt -c jar.txt -o /dev/null http://localhost:8089/login \
+  --data-urlencode "csrf_token=$TOKEN" --data-urlencode "username=<name>" --data-urlencode "password=<password>"
+curl -s -b jar.txt http://localhost:8089/api/volumes
+```
+
+`GET /healthz` is the one unauthenticated endpoint: no data, just `{"status": "ok"}` once Postgres answers `SELECT 1`. It's what the compose healthcheck and a load balancer should use.
+
+## 8. First-run checklist
 
 1. IAM role attached to the host running the controller (1.1).
 2. SSM Agent + `AmazonSSMManagedInstanceCore` on every target instance (1.2).
 3. Docker + Docker Compose installed; IMDSv2 hop limit raised if the controller itself is on EC2 (3).
 4. `config.yaml` copied from the example and adjusted (4) - `accounts`, `credentials`, and `notifications` only.
-5. `.env` copied from `.env.example` with a real `POSTGRES_PASSWORD` set - `docker compose up` refuses to start without it.
+5. `.env` copied from `.env.example` with `POSTGRES_PASSWORD`, `SPACESHIFT_SECRET_KEY`, and (optionally) `SPACESHIFT_SETUP_TOKEN` set - `docker compose up` refuses to start without the first two.
 6. `docker compose up`, watch the logs - the first cycle syncs every instance/volume it can see into Postgres, but nothing is eligible yet. `dry_run` defaults to `true` until you set it otherwise (5) - nothing gets resized for real yet either way.
-7. At least one volume or instance's `autoresize` column set to `true` (1.3) - confirm the next cycle's dry-run output matches what you expect.
-8. Slack bot token + channel ID, if using `notifications.method: slack` (2).
-9. Only then, set `dry_run` to `false` in `app_config` (5).
+7. First admin created, via `http://localhost:8089/setup` or the CLI (7.2).
+8. At least one volume or instance's `autoresize` column set to `true` (1.3) - confirm the next cycle's dry-run output matches what you expect.
+9. Slack bot token + channel ID, if using `notifications.method: slack` (2).
+10. Only then, set `dry_run` to `false` in `app_config` (5).

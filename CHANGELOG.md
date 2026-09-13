@@ -11,6 +11,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Volume-to-device resolution relies on the attach-time device name. `/dev/sd*` names, unpartitioned volumes, and root volumes with an EFI partition are not handled correctly (see README "Known limitation"). Tracked for a future release; needs validation on real Nitro/Xen, AL2023/Ubuntu instances.
 
 ### Changed
+- **Breaking:** `docker compose up` now also requires `SPACESHIFT_SECRET_KEY` in `.env`, and the dashboard's JSON API needs a session cookie (`curl` recipe in docs/SETUP.md 7.6).
 - Project renamed from ebs-auto-resize to Spaceshift.
 - `controller/dashboard.py` split into a `controller/dashboard/` package. No behavior change; `python -m controller.dashboard` still works.
 - Dashboard redesigned. The single tabbed page is now four: **Overview** (`/`), **Instances** (`/instances`), **Volumes** (`/volumes`), and **Settings** (`/settings`), with a shared nav. Settings are grouped, with `dry_run` first and each setting's description shown inline rather than in a hover tooltip. Templates, CSS, and JS live in `controller/dashboard/templates/` and `static/` instead of one inline string. The JSON API is unchanged.
@@ -19,6 +20,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `scheduler.max_concurrent_resizes` is capped at 32; the Postgres connection pool is sized to cover it.
 
 ### Added
+- **Dashboard login.** Every page and every `/api/*` route now requires a signed-in user (local username + password, argon2id hashes, signed session cookies that last 12 hours or 1 hour idle). The first admin is created once at `/setup` with `SPACESHIFT_SETUP_TOKEN` from `.env`, or with `python -m controller.dashboard.users create-admin` inside the container; the same CLI resets passwords, clears lockouts and deactivates users. Failed logins are rate-limited per username and per address via a `login_attempts` table shared by all workers. State-changing requests carry CSRF tokens, and every response gets `X-Content-Type-Options`, `X-Frame-Options`, `Referrer-Policy` and a `default-src 'self'` CSP. `.env` gains `SPACESHIFT_SECRET_KEY` (required), `SPACESHIFT_SETUP_TOKEN` and `SPACESHIFT_BEHIND_TLS_PROXY`. See docs/SETUP.md section 7.
+- `GET /healthz`: unauthenticated liveness check that runs `SELECT 1`; the compose healthcheck uses it.
 - Issue and pull request templates, CODEOWNERS, code of conduct, this changelog, `.dockerignore`.
 - GitHub Actions CI: lint, tests against a real Postgres, and `pip-audit` on every pull request.
 - A live-refresh indicator in the dashboard's top bar showing when the page last updated, and whether the last refresh failed.
