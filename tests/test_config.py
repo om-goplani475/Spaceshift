@@ -198,3 +198,20 @@ def test_refresh_config_from_db_reverts_when_db_row_removed():
     state._app_config.pop("dry_run")
     reverted = refresh_config_from_db(asdict(previous), state, updated)
     assert reverted.dry_run is True
+
+
+def test_max_concurrent_resizes_capped_at_pool_size():
+    # Above the ceiling, worker threads would exhaust the Postgres pool
+    # (getconn() raises rather than blocks) and silently skip volumes.
+    from controller.config import MAX_CONCURRENT_RESIZES
+
+    Config.from_dict({"scheduler": {"max_concurrent_resizes": MAX_CONCURRENT_RESIZES}})
+    with pytest.raises(ValueError, match="max_concurrent_resizes must be an integer <="):
+        Config.from_dict({"scheduler": {"max_concurrent_resizes": MAX_CONCURRENT_RESIZES + 1}})
+
+
+def test_postgres_pool_covers_every_possible_worker():
+    from controller.config import MAX_CONCURRENT_RESIZES
+    from controller.state.postgres_backend import PostgresStateBackend
+
+    assert PostgresStateBackend.DEFAULT_MAX_CONNECTIONS > MAX_CONCURRENT_RESIZES

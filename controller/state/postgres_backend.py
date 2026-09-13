@@ -18,6 +18,7 @@ from datetime import UTC, datetime
 import psycopg2
 import psycopg2.pool
 
+from controller.config import MAX_CONCURRENT_RESIZES
 from controller.state.base import (
     TERMINAL_STATUSES,
     InstanceRecord,
@@ -123,7 +124,12 @@ _SCHEMA_INIT_LOCK_KEY = 727701
 
 
 class PostgresStateBackend(StateBackend):
-    def __init__(self, dsn: str, min_connections: int = 1, max_connections: int = 10) -> None:
+    # Enough for every possible scheduler worker plus the main thread, with
+    # a little slack. Connections are opened lazily up to this cap, so a
+    # generous number costs nothing until it's actually needed.
+    DEFAULT_MAX_CONNECTIONS = MAX_CONCURRENT_RESIZES + 2
+
+    def __init__(self, dsn: str, min_connections: int = 1, max_connections: int = DEFAULT_MAX_CONNECTIONS) -> None:
         self._pool = psycopg2.pool.ThreadedConnectionPool(min_connections, max_connections, dsn)
         with self._cursor(commit=True) as cur:
             # The controller and dashboard are separate processes that each

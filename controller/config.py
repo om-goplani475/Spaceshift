@@ -26,7 +26,7 @@ _VALID_NOTIFICATION_METHODS = {"none", "slack", "email"}
 _VALID_CREDENTIALS_MODES = {"role", "static"}
 
 
-def _require_int(label: str, value: Any, *, minimum: int) -> None:
+def _require_int(label: str, value: Any, *, minimum: int, maximum: int | None = None) -> None:
     """Validate an integer field, rejecting bool (a subclass of int in
     Python) and anything below `minimum`. Every integer setting below has
     gone through only a YAML file until now - a stray typo there was rare
@@ -38,6 +38,17 @@ def _require_int(label: str, value: Any, *, minimum: int) -> None:
     """
     if isinstance(value, bool) or not isinstance(value, int) or value < minimum:
         raise ValueError(f"{label} must be an integer >= {minimum}, got {value!r}")
+    if maximum is not None and value > maximum:
+        raise ValueError(f"{label} must be an integer <= {maximum}, got {value!r}")
+
+
+# Ceiling for scheduler.max_concurrent_resizes. Every worker thread needs
+# its own Postgres connection, and the pool does not block when exhausted -
+# getconn() raises immediately - so a value above the pool size would make
+# workers fail on their first state call and silently skip volumes. The
+# pool is sized from this constant (see PostgresStateBackend), so the two
+# can't drift apart.
+MAX_CONCURRENT_RESIZES = 32
 
 
 # Dotted app_config key -> the nested path into the dict shape
@@ -209,7 +220,12 @@ class Config:
                 f"default_threshold_percent must be between 0 and 100, got {self.default_threshold_percent}"
             )
         _require_int("scheduler.interval_seconds", self.scheduler.interval_seconds, minimum=1)
-        _require_int("scheduler.max_concurrent_resizes", self.scheduler.max_concurrent_resizes, minimum=1)
+        _require_int(
+            "scheduler.max_concurrent_resizes",
+            self.scheduler.max_concurrent_resizes,
+            minimum=1,
+            maximum=MAX_CONCURRENT_RESIZES,
+        )
         _require_int("scheduler.scan_log_retention_days", self.scheduler.scan_log_retention_days, minimum=0)
         _require_int("resize.max_volume_size_gb", self.resize.max_volume_size_gb, minimum=1)
         _require_int("resize.growth_increment_percent", self.resize.growth_increment_percent, minimum=1)
