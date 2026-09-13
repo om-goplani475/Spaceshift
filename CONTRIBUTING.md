@@ -36,7 +36,7 @@ docker rm -f spaceshift-test-pg
 - Type hints throughout; dataclasses for structured records (config sections, `ResizeRecord`, etc).
 - Docstrings explain *why*, not *what* - skip them where the code is already self-explanatory.
 - New connection methods or state backends should implement the abstract interface in `connections/base.py` or `state/base.py` rather than being special-cased elsewhere.
-- Any value that reaches a remote shell command (device paths, mount points, tag-derived data) must be validated and/or passed through `shlex.quote()` - tag values are editable by anyone with `ec2:CreateTags`, which is often loosely granted, so they're treated as semi-trusted input rather than safe to interpolate directly.
+- Any value that reaches a remote shell command (device paths, mount points, filesystem types, anything parsed from instance output or AWS metadata) must pass an allowlist and/or `shlex.quote()`. Instance output is untrusted - a compromised instance can return anything from `df`/`lsblk`/`blkid` - and the database is written by operators over an API, so neither is safe to interpolate directly. See SECURITY.md for the full threat model.
 
 Lint and format with [`ruff`](https://docs.astral.sh/ruff/) (config in `pyproject.toml`):
 

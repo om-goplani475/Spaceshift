@@ -16,14 +16,26 @@ You should receive an acknowledgment within a few days. Once a fix is available,
 
 ## Scope
 
+**What the tool can do, if misdirected:** run arbitrary commands as root on every SSM-managed instance its IAM role reaches (`ssm:SendCommand` with `AWS-RunShellScript`), and grow any EBS volume in the account (`ec2:ModifyVolume`). Anything that lets an attacker steer either of those is a security issue.
+
+**Where the tool's decisions come from:**
+- *Eligibility and thresholds* live in Postgres (`instances.autoresize`, `volumes.autoresize`, `threshold_percent`), written via the dashboard's HTTP API or directly in SQL. The controller reads **no EC2 tags** for these.
+- *Live settings* (`dry_run`, growth increment, size ceiling, and the rest of `app_config`) are also written via the dashboard/API or SQL.
+- *Instance output* (`df`, `lsblk`, `blkid`) and *AWS metadata* (device names, sizes, modification state) are parsed and fed back into remote commands.
+
 In scope:
-- Command injection via tag values, discovered AWS metadata, or instance responses (device names, mount points, filesystem types) reaching a remote shell unsanitized.
-- Anything that could trigger a resize/modify-volume call on a volume the tool wasn't authorized to touch.
-- Credential handling issues (e.g., secrets logged, keys baked into images, unnecessary permission scope).
-- Authentication/authorization bypass in the SSM connection path.
+- Command injection: any value from instance output, AWS metadata, or the database reaching a remote shell without passing the device-path allowlist or `shlex.quote()`.
+- Anything that makes the controller run `modify-volume` or an extend command against a volume or instance it wasn't configured to touch - including via the resize state machine (stale-row recovery, retry logic) or a crafted `app_config` value.
+- Bypass of a control that exists: the device-path allowlist, the `dry_run` guard, the AWS modification-rate guards, the Postgres `threshold_percent` range constraint, or the dashboard's input validation.
+- Credential handling: secrets logged, keys baked into images, the Postgres DSN or a Slack token appearing in error output, unnecessary IAM permission scope in `docs/iam-policy.json`.
+- Authentication or authorization bypass in the SSM connection path.
+
+Known and accepted for now (not a vulnerability report - please don't file it as one):
+- **The dashboard has no authentication.** Anyone who can reach its port can change eligibility and settings. Authentication, role-based access, and an audit log are the next planned release. Until then the README says to bind it to loopback or put it behind an authenticating proxy, and the threat model assumes the dashboard's network is trusted.
 
 Out of scope:
-- Vulnerabilities requiring an attacker to already have `ec2:CreateTags` or equivalent write access to your own AWS account - the threat model assumes tags are semi-trusted input (parsed and range-checked rather than trusted as-is, e.g. `DiskThreshold` is validated as an integer 0-100 and device paths are matched against a strict pattern before use), not that a tag-writer is fully trusted.
+- Anything requiring write access to the controller's Postgres database or its host - that's already full control of the tool by design.
+- Vulnerabilities requiring `ec2:ModifyVolume` or `ssm:SendCommand` in your own AWS account - the tool can't be more privileged than its own role.
 - Issues in third-party dependencies - please report those upstream, though a heads-up here is still appreciated.
 
 ## Supported Versions

@@ -15,7 +15,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `scheduler.max_concurrent_resizes` is capped at 32; the Postgres connection pool is sized to cover it.
 
 ### Added
-- Issue and pull request templates, CODEOWNERS, code of conduct, this changelog.
+- Issue and pull request templates, CODEOWNERS, code of conduct, this changelog, `.dockerignore`.
 - A live-refresh indicator in the dashboard's top bar showing when the page last updated, and whether the last refresh failed.
 - New resize status `MODIFY_FAILED` and scan decision `resize_failed`, shown on the dashboard when AWS rejects a modify-volume call.
 
