@@ -6,7 +6,9 @@ tests/state/test_postgres_backend.py)."""
 from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime, timedelta
 
-from controller.state.base import ResizeStatus
+import pytest
+
+from controller.state.base import LastActiveUserError, ResizeStatus, UsernameTakenError
 from tests.helpers import InMemoryStateBackend
 
 _ACCOUNT = "default"
@@ -192,3 +194,70 @@ def test_list_config_returns_all_keys():
 def test_list_config_empty_by_default():
     backend = InMemoryStateBackend()
     assert backend.list_config() == {}
+
+
+# ---- Users and login attempts ----------------------------------------------
+
+
+def test_create_user_is_case_insensitively_unique(state):
+    state.create_user("alice", "hash")
+    with pytest.raises(UsernameTakenError):
+        state.create_user("Alice", "hash")
+    assert state.get_user_by_username("ALICE").username == "alice"
+
+
+def test_create_first_user_only_if_no_users(state):
+    assert state.create_user("alice", "hash", only_if_no_users=True) is not None
+    assert state.create_user("bob", "hash", only_if_no_users=True) is None
+    assert state.count_users() == 1
+
+
+def test_set_password_bumps_session_generation(state):
+    user = state.create_user("alice", "hash")
+    state.set_password(user.id, "new-hash")
+    updated = state.get_user(user.id)
+    assert updated.password_hash == "new-hash"
+    assert updated.session_generation == user.session_generation + 1
+
+
+def test_deactivate_refuses_last_active_user(state):
+    alice = state.create_user("alice", "hash")
+    with pytest.raises(LastActiveUserError):
+        state.set_active(alice.id, False)
+    assert state.get_user(alice.id).is_active
+
+    bob = state.create_user("bob", "hash")
+    state.set_active(bob.id, False)
+    assert not state.get_user(bob.id).is_active
+    assert state.get_user(bob.id).session_generation == bob.session_generation + 1
+    # bob is now inactive, so alice is the last active user again
+    with pytest.raises(LastActiveUserError):
+        state.set_active(alice.id, False)
+
+
+def test_recent_failure_times_filters_by_username_and_address(state):
+    since = datetime.now(UTC) - timedelta(minutes=15)
+    state.record_login_attempt("alice", "10.0.0.1", succeeded=False)
+    state.record_login_attempt("alice", "10.0.0.2", succeeded=False)
+    state.record_login_attempt("bob", "10.0.0.1", succeeded=False)
+    state.record_login_attempt("alice", "10.0.0.1", succeeded=True)
+
+    assert len(state.recent_failure_times(since, username="alice")) == 2
+    assert len(state.recent_failure_times(since, remote_addr="10.0.0.1")) == 2
+    assert len(state.recent_failure_times(since, username="alice", remote_addr="10.0.0.1")) == 1
+    assert state.recent_failure_times(datetime.now(UTC) + timedelta(seconds=1)) == []
+
+
+def test_clear_login_failures_keeps_other_users_and_successes(state):
+    since = datetime.now(UTC) - timedelta(minutes=15)
+    state.record_login_attempt("alice", "10.0.0.1", succeeded=False)
+    state.record_login_attempt("bob", "10.0.0.1", succeeded=False)
+    state.clear_login_failures("alice")
+    assert state.recent_failure_times(since, username="alice") == []
+    assert len(state.recent_failure_times(since, username="bob")) == 1
+
+
+def test_prune_login_attempts(state):
+    state.record_login_attempt("alice", "10.0.0.1", succeeded=False)
+    state.prune_login_attempts(datetime.now(UTC) + timedelta(seconds=1))
+    assert state.recent_failure_times(datetime.now(UTC) - timedelta(days=1)) == []

@@ -97,6 +97,35 @@ class InstanceRecord:
 
 
 @dataclass
+class UserRecord:
+    """One dashboard login. Every user is implicitly an admin in this
+    phase - roles arrive as a separate join table, not a column here.
+
+    session_generation is baked into each session cookie at login and
+    compared on every request; bumping it (password change, deactivate,
+    unlock) invalidates every cookie issued before the bump.
+    """
+
+    id: int
+    username: str
+    password_hash: str
+    is_active: bool
+    session_generation: int
+    created_at: datetime
+    last_login_at: datetime | None
+
+
+class UsernameTakenError(Exception):
+    """create_user() was asked for a username that already exists
+    (case-insensitively)."""
+
+
+class LastActiveUserError(Exception):
+    """set_active(False) would leave no active user - and with no roles
+    yet, no admin - so it was refused."""
+
+
+@dataclass
 class VolumeRecord:
     """One EBS volume seen by a discovery scan. Same admin-controlled
     autoresize/threshold_percent contract as InstanceRecord."""
@@ -278,6 +307,78 @@ class StateBackend(abc.ABC):
         """Return every key/value currently in app_config. Called once per
         scheduler cycle to re-resolve the effective config - see
         controller.config.refresh_config_from_db."""
+
+    # ---- Dashboard users and login attempts ------------------------------
+
+    @abc.abstractmethod
+    def create_user(self, username: str, password_hash: str, only_if_no_users: bool = False) -> UserRecord | None:
+        """Insert a new active user. Raises UsernameTakenError on a
+        case-insensitive clash.
+
+        only_if_no_users=True is the first-admin (/setup) path: return None
+        without inserting if any user already exists. Must be atomic
+        against concurrent callers so two simultaneous setup submissions
+        can never both succeed.
+        """
+
+    @abc.abstractmethod
+    def get_user(self, user_id: int) -> UserRecord | None:
+        """Return the user with this id, or None."""
+
+    @abc.abstractmethod
+    def get_user_by_username(self, username: str) -> UserRecord | None:
+        """Case-insensitive lookup. Returns None if no such user."""
+
+    @abc.abstractmethod
+    def count_users(self) -> int:
+        """Total users, active or not - zero means /setup is live."""
+
+    @abc.abstractmethod
+    def touch_login(self, user_id: int) -> None:
+        """Record a successful login (last_login_at = now)."""
+
+    @abc.abstractmethod
+    def set_password(self, user_id: int, password_hash: str) -> None:
+        """Replace the password hash and bump session_generation, so every
+        session issued under the old password is logged out."""
+
+    @abc.abstractmethod
+    def set_active(self, user_id: int, is_active: bool) -> None:
+        """Activate or deactivate. Deactivating bumps session_generation.
+        Raises LastActiveUserError rather than deactivate the last active
+        user - must be atomic against a concurrent deactivation of the
+        other remaining user."""
+
+    @abc.abstractmethod
+    def bump_session_generation(self, user_id: int) -> None:
+        """Invalidate every existing session for this user without
+        changing anything else (the CLI's `unlock`)."""
+
+    @abc.abstractmethod
+    def record_login_attempt(self, username: str, remote_addr: str, succeeded: bool) -> None:
+        """Append one login (or setup-token) attempt. `username` is what
+        was typed, lowercased - it need not exist."""
+
+    @abc.abstractmethod
+    def recent_failure_times(
+        self, since: datetime, username: str | None = None, remote_addr: str | None = None
+    ) -> list[datetime]:
+        """attempted_at of every failed attempt since `since` for this
+        username and/or address, newest first. Bounded in practice: the
+        caller stops recording once a key is locked out."""
+
+    @abc.abstractmethod
+    def clear_login_failures(self, username: str) -> None:
+        """Forget this username's failed attempts (the CLI's `unlock`)."""
+
+    @abc.abstractmethod
+    def prune_login_attempts(self, older_than: datetime) -> None:
+        """Delete login attempts older than `older_than` - same bounded-
+        table role as prune_scan_log, called once per scheduler cycle."""
+
+    @abc.abstractmethod
+    def check_connection(self) -> None:
+        """Raise if the database is unreachable. `GET /healthz`'s SELECT 1."""
 
     @abc.abstractmethod
     def close(self) -> None:

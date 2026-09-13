@@ -30,7 +30,10 @@ def postgres_state():
     backend = PostgresStateBackend(os.environ["EBS_AUTO_RESIZE_TEST_POSTGRES_DSN"])
     yield backend
     with backend._cursor(commit=True) as cur:
-        cur.execute("TRUNCATE resize_state, modification_history, scan_log, instances, volumes, app_config")
+        cur.execute(
+            "TRUNCATE resize_state, modification_history, scan_log, instances, volumes, app_config, "
+            "users, login_attempts"
+        )
     backend.close()
 
 
@@ -242,3 +245,74 @@ def test_schema_init_is_idempotent_with_constraints_present():
     dsn = os.environ["EBS_AUTO_RESIZE_TEST_POSTGRES_DSN"]
     PostgresStateBackend(dsn).close()
     PostgresStateBackend(dsn).close()
+
+
+# ---- Users and login attempts ----------------------------------------------
+
+
+def test_username_uniqueness_is_case_insensitive(postgres_state):
+    from controller.state.base import UsernameTakenError
+
+    postgres_state.create_user("alice", "hash")
+    with pytest.raises(UsernameTakenError):
+        postgres_state.create_user("ALICE", "hash")
+    assert postgres_state.get_user_by_username("Alice").username == "alice"
+    # the failed insert must not have poisoned the connection
+    assert postgres_state.count_users() == 1
+
+
+def test_concurrent_first_admin_creation_yields_exactly_one_user(postgres_state):
+    # Two /setup submissions at the same instant (or the CLI racing the
+    # page). Different usernames, so the unique index alone wouldn't stop
+    # both from landing - the advisory lock in create_user has to.
+    def create(name: str):
+        return postgres_state.create_user(name, "hash", only_if_no_users=True)
+
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        results = list(pool.map(create, [f"admin{i}" for i in range(8)]))
+
+    assert sum(1 for r in results if r is not None) == 1
+    assert postgres_state.count_users() == 1
+
+
+def test_concurrent_deactivation_keeps_one_active_user(postgres_state):
+    from controller.state.base import LastActiveUserError
+
+    users = [postgres_state.create_user(f"u{i}", "hash") for i in range(6)]
+
+    def deactivate(user):
+        try:
+            postgres_state.set_active(user.id, False)
+            return True
+        except LastActiveUserError:
+            return False
+
+    with ThreadPoolExecutor(max_workers=6) as pool:
+        results = list(pool.map(deactivate, users))
+
+    assert results.count(False) == 1
+    with postgres_state._cursor() as cur:
+        cur.execute("SELECT COUNT(*) FROM users WHERE is_active")
+        assert cur.fetchone()[0] == 1
+
+
+def test_set_password_bumps_generation_and_login_attempts_round_trip(postgres_state):
+    user = postgres_state.create_user("alice", "hash")
+    postgres_state.set_password(user.id, "new")
+    assert postgres_state.get_user(user.id).session_generation == 1
+
+    postgres_state.record_login_attempt("alice", "10.0.0.1", succeeded=False)
+    postgres_state.record_login_attempt("*setup*", "10.0.0.1", succeeded=False)
+    postgres_state.record_login_attempt("alice", "10.0.0.1", succeeded=True)
+    since = datetime.now(UTC) - timedelta(minutes=15)
+    assert len(postgres_state.recent_failure_times(since, username="alice")) == 1
+    assert len(postgres_state.recent_failure_times(since, remote_addr="10.0.0.1")) == 2
+
+    postgres_state.clear_login_failures("alice")
+    assert postgres_state.recent_failure_times(since, username="alice") == []
+    postgres_state.prune_login_attempts(datetime.now(UTC) + timedelta(seconds=1))
+    assert postgres_state.recent_failure_times(since) == []
+
+
+def test_check_connection_runs_a_query(postgres_state):
+    postgres_state.check_connection()

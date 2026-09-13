@@ -52,6 +52,11 @@ _HEARTBEAT_GRACE = timedelta(minutes=30)
 # exit non-zero and let the container restart policy do the retry.
 _MAX_CONSECUTIVE_FAILURES = 3
 
+# Failed dashboard logins are only consulted over a 15-minute window;
+# a week keeps enough history to look at after an incident without the
+# table growing forever. Not operator-configurable on purpose.
+_LOGIN_ATTEMPT_RETENTION = timedelta(days=7)
+
 
 @dataclass
 class _AccountClients:
@@ -147,8 +152,11 @@ class Scheduler:
             for volume in volumes:
                 pool.submit(self._process_volume, account_name, ec2, ssm, connector, volume, region)
 
-        cutoff = datetime.now(UTC) - timedelta(days=self._config.scheduler.scan_log_retention_days)
-        self._state.prune_scan_log(cutoff)
+        now = datetime.now(UTC)
+        self._state.prune_scan_log(now - timedelta(days=self._config.scheduler.scan_log_retention_days))
+        # The dashboard writes login_attempts but has no loop of its own;
+        # this is the only periodic task in the stack, so it prunes them.
+        self._state.prune_login_attempts(now - _LOGIN_ATTEMPT_RETENTION)
 
     def _process_volume(
         self, account_name: str, ec2, ssm, connector: Connector, volume: EligibleVolume, region: str

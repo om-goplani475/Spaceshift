@@ -16,16 +16,20 @@ from contextlib import contextmanager
 from datetime import UTC, datetime
 
 import psycopg2
+import psycopg2.errors
 import psycopg2.pool
 
 from controller.config import MAX_CONCURRENT_RESIZES
 from controller.state.base import (
     TERMINAL_STATUSES,
     InstanceRecord,
+    LastActiveUserError,
     ResizeRecord,
     ResizeStatus,
     ScanRecord,
     StateBackend,
+    UsernameTakenError,
+    UserRecord,
     VolumeRecord,
 )
 
@@ -129,6 +133,36 @@ CREATE TABLE IF NOT EXISTS app_config (
     value       TEXT NOT NULL,
     updated_at  TIMESTAMPTZ NOT NULL
 );
+
+-- Dashboard logins. No role column: RBAC adds a join table. No email:
+-- nothing sends mail. Usernames are stored lowercase and can't be
+-- renamed (they're the actor in the audit log to come), so uniqueness is
+-- on lower() as belt and braces against a non-lowercased write.
+CREATE TABLE IF NOT EXISTS users (
+    id                 SERIAL PRIMARY KEY,
+    username           TEXT NOT NULL,
+    password_hash      TEXT NOT NULL,
+    is_active          BOOLEAN NOT NULL DEFAULT TRUE,
+    session_generation INTEGER NOT NULL DEFAULT 0,
+    created_at         TIMESTAMPTZ NOT NULL,
+    last_login_at      TIMESTAMPTZ
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_users_username_lower ON users (lower(username));
+
+-- Every login/setup-token attempt, for rate limiting. In the database
+-- rather than in-process so a lockout survives a restart and is shared by
+-- every gunicorn worker. Pruned by the scheduler like scan_log.
+CREATE TABLE IF NOT EXISTS login_attempts (
+    id           BIGSERIAL PRIMARY KEY,
+    username     TEXT NOT NULL,
+    remote_addr  INET NOT NULL,
+    succeeded    BOOLEAN NOT NULL,
+    attempted_at TIMESTAMPTZ NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_login_attempts_username ON login_attempts (username, attempted_at);
+CREATE INDEX IF NOT EXISTS idx_login_attempts_remote_addr ON login_attempts (remote_addr, attempted_at);
 """
 
 _TERMINAL_STATUS_VALUES = [s.value for s in TERMINAL_STATUSES]
@@ -136,6 +170,12 @@ _TERMINAL_STATUS_VALUES = [s.value for s in TERMINAL_STATUSES]
 # Arbitrary constant identifying this app's schema-init lock - only needs to
 # be unique within this database, which this app owns exclusively anyway.
 _SCHEMA_INIT_LOCK_KEY = 727701
+# Serializes the two user writes that have a "look, then act" shape
+# (first-admin creation, last-active-user check). Held for the length of
+# one short transaction, so contention is a non-issue.
+_USERS_LOCK_KEY = 727702
+
+_USER_COLUMNS = "id, username, password_hash, is_active, session_generation, created_at, last_login_at"
 
 
 class PostgresStateBackend(StateBackend):
@@ -478,8 +518,119 @@ class PostgresStateBackend(StateBackend):
             rows = cur.fetchall()
         return dict(rows)
 
+    def create_user(self, username: str, password_hash: str, only_if_no_users: bool = False) -> UserRecord | None:
+        with self._cursor(commit=True) as cur:
+            if only_if_no_users:
+                # Two /setup submissions racing: without the lock both
+                # could see an empty table under READ COMMITTED and both
+                # insert (different usernames don't hit the unique index).
+                cur.execute("SELECT pg_advisory_xact_lock(%s)", (_USERS_LOCK_KEY,))
+                cur.execute("SELECT COUNT(*) FROM users")
+                if cur.fetchone()[0] > 0:
+                    return None
+            try:
+                cur.execute(
+                    f"""
+                    INSERT INTO users (username, password_hash, created_at)
+                    VALUES (%s, %s, %s)
+                    RETURNING {_USER_COLUMNS}
+                    """,
+                    (username, password_hash, datetime.now(UTC)),
+                )
+            except psycopg2.errors.UniqueViolation as exc:
+                raise UsernameTakenError(username) from exc
+            return self._row_to_user(cur.fetchone())
+
+    def get_user(self, user_id: int) -> UserRecord | None:
+        with self._cursor() as cur:
+            cur.execute(f"SELECT {_USER_COLUMNS} FROM users WHERE id = %s", (user_id,))
+            row = cur.fetchone()
+        return self._row_to_user(row) if row is not None else None
+
+    def get_user_by_username(self, username: str) -> UserRecord | None:
+        with self._cursor() as cur:
+            cur.execute(f"SELECT {_USER_COLUMNS} FROM users WHERE lower(username) = lower(%s)", (username,))
+            row = cur.fetchone()
+        return self._row_to_user(row) if row is not None else None
+
+    def count_users(self) -> int:
+        with self._cursor() as cur:
+            cur.execute("SELECT COUNT(*) FROM users")
+            return cur.fetchone()[0]
+
+    def touch_login(self, user_id: int) -> None:
+        with self._cursor(commit=True) as cur:
+            cur.execute("UPDATE users SET last_login_at = %s WHERE id = %s", (datetime.now(UTC), user_id))
+
+    def set_password(self, user_id: int, password_hash: str) -> None:
+        with self._cursor(commit=True) as cur:
+            cur.execute(
+                "UPDATE users SET password_hash = %s, session_generation = session_generation + 1 WHERE id = %s",
+                (password_hash, user_id),
+            )
+
+    def set_active(self, user_id: int, is_active: bool) -> None:
+        with self._cursor(commit=True) as cur:
+            if is_active:
+                cur.execute("UPDATE users SET is_active = TRUE WHERE id = %s", (user_id,))
+                return
+            cur.execute("SELECT pg_advisory_xact_lock(%s)", (_USERS_LOCK_KEY,))
+            cur.execute("SELECT COUNT(*) FROM users WHERE is_active AND id != %s", (user_id,))
+            if cur.fetchone()[0] == 0:
+                raise LastActiveUserError(user_id)
+            cur.execute(
+                "UPDATE users SET is_active = FALSE, session_generation = session_generation + 1 WHERE id = %s",
+                (user_id,),
+            )
+
+    def bump_session_generation(self, user_id: int) -> None:
+        with self._cursor(commit=True) as cur:
+            cur.execute("UPDATE users SET session_generation = session_generation + 1 WHERE id = %s", (user_id,))
+
+    def record_login_attempt(self, username: str, remote_addr: str, succeeded: bool) -> None:
+        with self._cursor(commit=True) as cur:
+            cur.execute(
+                """
+                INSERT INTO login_attempts (username, remote_addr, succeeded, attempted_at)
+                VALUES (%s, %s, %s, %s)
+                """,
+                (username, remote_addr, succeeded, datetime.now(UTC)),
+            )
+
+    def recent_failure_times(
+        self, since: datetime, username: str | None = None, remote_addr: str | None = None
+    ) -> list[datetime]:
+        query = "SELECT attempted_at FROM login_attempts WHERE NOT succeeded AND attempted_at >= %s"
+        params: list = [since]
+        if username is not None:
+            query += " AND username = %s"
+            params.append(username)
+        if remote_addr is not None:
+            query += " AND remote_addr = %s"
+            params.append(remote_addr)
+        query += " ORDER BY attempted_at DESC"
+        with self._cursor() as cur:
+            cur.execute(query, params)
+            return [row[0] for row in cur.fetchall()]
+
+    def clear_login_failures(self, username: str) -> None:
+        with self._cursor(commit=True) as cur:
+            cur.execute("DELETE FROM login_attempts WHERE username = %s AND NOT succeeded", (username,))
+
+    def prune_login_attempts(self, older_than: datetime) -> None:
+        with self._cursor(commit=True) as cur:
+            cur.execute("DELETE FROM login_attempts WHERE attempted_at < %s", (older_than,))
+
+    def check_connection(self) -> None:
+        with self._cursor() as cur:
+            cur.execute("SELECT 1")
+
     def close(self) -> None:
         self._pool.closeall()
+
+    @staticmethod
+    def _row_to_user(row: tuple) -> UserRecord:
+        return UserRecord(*row)
 
     @staticmethod
     def _row_to_record(row: dict) -> ResizeRecord:

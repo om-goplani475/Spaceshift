@@ -10,10 +10,13 @@ from controller.connections.base import CommandResult, ConnectionTarget, Connect
 from controller.state.base import (
     TERMINAL_STATUSES,
     InstanceRecord,
+    LastActiveUserError,
     ResizeRecord,
     ResizeStatus,
     ScanRecord,
     StateBackend,
+    UsernameTakenError,
+    UserRecord,
     VolumeRecord,
 )
 
@@ -52,6 +55,10 @@ class InMemoryStateBackend(StateBackend):
         self._instances: dict[str, InstanceRecord] = {}
         self._volumes: dict[str, VolumeRecord] = {}
         self._app_config: dict[str, str] = {}
+        self._users: dict[int, UserRecord] = {}
+        self._next_user_id = 1
+        # (username, remote_addr, succeeded, attempted_at)
+        self._login_attempts: list[tuple[str, str, bool, datetime]] = []
 
     def create_if_absent(
         self, volume_id: str, instance_id: str, from_size_gb: int, to_size_gb: int
@@ -246,6 +253,90 @@ class InMemoryStateBackend(StateBackend):
 
     def list_config(self) -> dict[str, str]:
         return dict(self._app_config)
+
+    def create_user(self, username: str, password_hash: str, only_if_no_users: bool = False) -> UserRecord | None:
+        with self._lock:
+            if only_if_no_users and self._users:
+                return None
+            if any(u.username.lower() == username.lower() for u in self._users.values()):
+                raise UsernameTakenError(username)
+            user = UserRecord(
+                id=self._next_user_id,
+                username=username,
+                password_hash=password_hash,
+                is_active=True,
+                session_generation=0,
+                created_at=datetime.now(UTC),
+                last_login_at=None,
+            )
+            self._users[user.id] = user
+            self._next_user_id += 1
+            return user
+
+    def get_user(self, user_id: int) -> UserRecord | None:
+        return self._users.get(user_id)
+
+    def get_user_by_username(self, username: str) -> UserRecord | None:
+        return next((u for u in self._users.values() if u.username.lower() == username.lower()), None)
+
+    def count_users(self) -> int:
+        return len(self._users)
+
+    def touch_login(self, user_id: int) -> None:
+        with self._lock:
+            self._users[user_id] = replace(self._users[user_id], last_login_at=datetime.now(UTC))
+
+    def set_password(self, user_id: int, password_hash: str) -> None:
+        with self._lock:
+            user = self._users[user_id]
+            self._users[user_id] = replace(
+                user, password_hash=password_hash, session_generation=user.session_generation + 1
+            )
+
+    def set_active(self, user_id: int, is_active: bool) -> None:
+        with self._lock:
+            user = self._users[user_id]
+            if is_active:
+                self._users[user_id] = replace(user, is_active=True)
+                return
+            if not any(u.is_active for u in self._users.values() if u.id != user_id):
+                raise LastActiveUserError(user_id)
+            self._users[user_id] = replace(user, is_active=False, session_generation=user.session_generation + 1)
+
+    def bump_session_generation(self, user_id: int) -> None:
+        with self._lock:
+            user = self._users[user_id]
+            self._users[user_id] = replace(user, session_generation=user.session_generation + 1)
+
+    def record_login_attempt(self, username: str, remote_addr: str, succeeded: bool) -> None:
+        with self._lock:
+            self._login_attempts.append((username, remote_addr, succeeded, datetime.now(UTC)))
+
+    def recent_failure_times(
+        self, since: datetime, username: str | None = None, remote_addr: str | None = None
+    ) -> list[datetime]:
+        return sorted(
+            (
+                attempted_at
+                for name, addr, succeeded, attempted_at in self._login_attempts
+                if not succeeded
+                and attempted_at >= since
+                and (username is None or name == username)
+                and (remote_addr is None or addr == remote_addr)
+            ),
+            reverse=True,
+        )
+
+    def clear_login_failures(self, username: str) -> None:
+        with self._lock:
+            self._login_attempts = [a for a in self._login_attempts if a[0] != username or a[2]]
+
+    def prune_login_attempts(self, older_than: datetime) -> None:
+        with self._lock:
+            self._login_attempts = [a for a in self._login_attempts if a[3] >= older_than]
+
+    def check_connection(self) -> None:
+        pass
 
     def close(self) -> None:
         pass
