@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Known issues
+- Volume-to-device resolution relies on the attach-time device name. `/dev/sd*` names, unpartitioned volumes, and root volumes with an EFI partition are not handled correctly (see README "Known limitation"). Tracked for a future release; needs validation on real Nitro/Xen, AL2023/Ubuntu instances.
+
 ### Changed
 - Project renamed from ebs-auto-resize to Spaceshift.
 - `controller/dashboard.py` split into a `controller/dashboard/` package. No behavior change; `python -m controller.dashboard` still works.

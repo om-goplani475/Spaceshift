@@ -15,6 +15,8 @@ Resizing an EBS volume is a two-step process (grow the volume via the EC2 API, t
 
 v1 supports **Amazon Linux + Ubuntu, ext4 + XFS**. LVM-based volumes are out of scope for now.
 
+**Known limitation — device naming.** The controller identifies a volume on the instance by the device name AWS reports at attach time (`/dev/xvdf`, `/dev/xvdf1`, `/dev/nvme1n1p1`). That works for partitioned volumes attached under `xvd*`/`nvme*` names, which is the setup it has been run against. It does **not** yet handle volumes attached as `/dev/sd*` (Ubuntu root disks, most marketplace AMIs), unpartitioned volumes with a filesystem directly on the disk, or root volumes with a separate EFI partition — those are either skipped or, in the EFI case, measured on the wrong partition. The fix (resolving the OS device from the volume ID's serial instead of the attach-time name) is designed but needs real-instance validation across Nitro/Xen and AL2023/Ubuntu; see [CHANGELOG.md](CHANGELOG.md). Until then, keep `dry_run` on and check the **Volumes** page shows the mount point you expect before enabling live mode.
+
 ## Quickstart
 
 ```bash
