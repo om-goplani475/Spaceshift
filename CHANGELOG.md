@@ -14,6 +14,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Project renamed from ebs-auto-resize to Spaceshift.
 - `controller/dashboard.py` split into a `controller/dashboard/` package. No behavior change; `python -m controller.dashboard` still works.
 - Dashboard redesigned. The single tabbed page is now four: **Overview** (`/`), **Instances** (`/instances`), **Volumes** (`/volumes`), and **Settings** (`/settings`), with a shared nav. Settings are grouped, with `dry_run` first and each setting's description shown inline rather than in a hover tooltip. Templates, CSS, and JS live in `controller/dashboard/templates/` and `static/` instead of one inline string. The JSON API is unchanged.
+- The dashboard container now runs on gunicorn (`controller/dashboard/wsgi.py`) instead of Flask's development server. `python -m controller.dashboard` still starts the dev server for local work.
 - Runtime dependencies are fully pinned in `requirements.txt` (direct and transitive); test/lint tooling moved to `requirements-dev.txt` and no longer ships in the image. Base images pinned to `python:3.12.14-slim` and `postgres:16.15-alpine`.
 - `scheduler.max_concurrent_resizes` is capped at 32; the Postgres connection pool is sized to cover it.
 

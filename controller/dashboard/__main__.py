@@ -1,6 +1,7 @@
-"""Entrypoint for `python -m controller.dashboard` (the docker-compose
-`dashboard` service). Listens on 8080 inside the container; compose maps
-it to 8089 on the host.
+"""Local-development entrypoint: `python -m controller.dashboard` runs the
+Flask development server. The docker-compose `dashboard` service uses
+gunicorn via controller.dashboard.wsgi instead - the dev server is
+single-threaded and not meant to face a network.
 """
 
 import logging

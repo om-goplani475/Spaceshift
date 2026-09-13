@@ -53,7 +53,18 @@ services:
   # every time for a container this cheap to run alongside the others.
   dashboard:
     build: .
-    command: ["python", "-m", "controller.dashboard"]
+    # gunicorn, not Flask's dev server. 2 workers x 4 threads is plenty for
+    # a status page polled every 10s per open tab; each worker has its own
+    # Postgres pool. No --preload (see controller/dashboard/wsgi.py).
+    # Access logs are off: the 10s poll would make them pure noise.
+    command:
+      - gunicorn
+      - --bind=0.0.0.0:8080
+      - --workers=2
+      - --threads=4
+      - --timeout=30
+      - --graceful-timeout=10
+      - controller.dashboard.wsgi:app
     restart: unless-stopped
     depends_on:
       postgres:
