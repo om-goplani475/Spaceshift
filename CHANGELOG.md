@@ -20,6 +20,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - New resize status `MODIFY_FAILED` and scan decision `resize_failed`, shown on the dashboard when AWS rejects a modify-volume call.
 
 ### Fixed
+- `docs/iam-policy.json` no longer grants `ec2:DescribeImages`, which the controller never calls. A tag-scoped variant (`docs/iam-policy-tag-scoped.json`) is available for accounts that want IAM to limit which instances and volumes the role can act on.
+- `dry_run` now rejects anything other than `true`/`false`. Previously `"0"`, `"null"` or `""` written via the API were accepted and silently selected live mode via truthiness while the Settings switch showed the opposite.
+- Device-path allowlists no longer match a trailing newline (`$` → `\Z`).
+- `threshold_percent` is range-checked (0-100) by a database constraint, since operators set it directly in SQL.
 - Container health now reflects whether scheduler cycles are *succeeding*, not just whether the process is alive. The heartbeat is written only after a successful cycle, with a deadline derived from `scheduler.interval_seconds`, so raising the interval never causes a false "unhealthy".
 - The controller recovers from a Postgres restart instead of failing every cycle forever: dead connections are evicted from the pool.
 - Three consecutive failed cycles now cause a deliberate exit (logged at `CRITICAL`) so `restart: unless-stopped` brings the controller back with a fresh process.

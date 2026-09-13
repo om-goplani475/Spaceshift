@@ -16,10 +16,16 @@ What each statement in that policy is for:
 
 | Statement | Needed for |
 |---|---|
-| `ec2:DescribeVolumes` / `DescribeInstances` / `DescribeImages` / `DescribeVolumesModifications` | Discovery and polling resize progress. AWS requires `Resource: "*"` for these regardless of scope - that's a platform constraint, not something the policy chose to leave open. |
-| `ec2:ModifyVolume` | The actual AWS-side resize. **Not tag-scoped** - eligibility is enforced entirely by the controller's own code checking the `autoresize` column in Postgres, not by IAM (see section 1.3). This is a deliberate trade-off, not an oversight - see `docs/PLAN.md`'s note on why tag-based discovery was replaced. |
+| `ec2:DescribeVolumes` / `DescribeInstances` / `DescribeVolumesModifications` | Discovery and polling resize progress. AWS requires `Resource: "*"` for these regardless of scope - that's a platform constraint, not something the policy chose to leave open. |
+| `ec2:ModifyVolume` | The actual AWS-side resize. **Not tag-scoped** in the default policy - eligibility is enforced by the controller checking the `autoresize` column in Postgres, not by IAM (see section 1.3). See *Understand what this role can do* below for the tag-scoped alternative. |
 | `ssm:SendCommand` / `GetCommandInvocation` / `DescribeInstanceInformation` | How the controller talks to every instance - always needed, since SSM is the only connection method. |
 | `sts:AssumeRole` | Only needed if any entry in `accounts:` sets `assume_role_arn` to centrally manage a different AWS account. Delete this statement if every account entry omits it. |
+
+**Understand what this role can do.** With the default policy, the controller's role can run any shell command as root on **every** SSM-managed instance in the account (`ssm:SendCommand` with `AWS-RunShellScript`, `instance/*`) and resize **any** volume (`ec2:ModifyVolume`, `volume/*`). The controller only ever acts on rows marked `autoresize` in its database - but that's an application-level check, not an IAM one. If someone gains control of the controller (or its unauthenticated dashboard), IAM won't limit the blast radius. Treat the role like a fleet-wide root credential.
+
+If that's too broad for your account, use [`docs/iam-policy-tag-scoped.json`](iam-policy-tag-scoped.json) instead. It's the same policy, but `ModifyVolume` and `SendCommand`-to-instances require the target to carry the tag `spaceshift=managed`. You then tag the instances and volumes you intend to opt in (the tag is a *permission*; the `autoresize` column is still the *switch*). Discovery is unaffected - `Describe*` calls can't be tag-scoped by AWS - so untagged resources still show up on the dashboard; they just can't be acted on. A volume that's eligible in the database but untagged in AWS fails its resize with an `AccessDenied` from `modify-volume`, which the controller records as `MODIFY_FAILED` and alerts on once.
+
+The trade-off, in one line: the default policy is simpler to operate (flip one switch in the dashboard); the tag-scoped one adds a second, IAM-enforced gate at the cost of also tagging every resource you opt in.
 
 ### 1.2 SSM-managed target instances
 
@@ -35,7 +41,7 @@ The controller checks this automatically before attempting a disk check - an ins
 
 ### 1.3 Mark the volumes (or instances) you want managed
 
-Eligibility isn't an AWS tag or a `config.yaml` setting - it's a column in Postgres. Every instance and volume the controller can see gets synced into the `instances`/`volumes` tables **every cycle, regardless of eligibility** (that's the point - see `docs/PLAN.md`'s note on why tag-based discovery was replaced). Nothing is actually resized until its `autoresize` column is `true`.
+Eligibility isn't an AWS tag or a `config.yaml` setting - it's a column in Postgres. Every instance and volume the controller can see gets synced into the `instances`/`volumes` tables **every cycle, regardless of eligibility** (that's the point: tag-based discovery was replaced because it made the fleet view incomplete - you could only see what was already opted in, never what *could* be). Nothing is actually resized until its `autoresize` column is `true`.
 
 The easiest way to flip this is the dashboard (already running as part of `docker compose up` - no separate flag needed; visit `localhost:8089` and open **Instances** or **Volumes** - each row has an `Autoresize` toggle). If you'd rather script it, it's a plain `UPDATE`:
 
@@ -46,7 +52,7 @@ docker compose exec postgres psql -U ebs_auto_resize -d ebs_auto_resize \
 
 Setting `autoresize` on an **instance** row instead makes every volume attached to it eligible, including its root volume - same fallback semantics the old tag model had. A volume's own `threshold_percent` (or its instance's) overrides the `default_threshold_percent` app_config setting (section 5) if set; both default to `NULL` (falls through to the config default) until something sets them.
 
-**Security note:** because eligibility now lives in application data instead of an AWS tag, `ec2:ModifyVolume` in `docs/iam-policy.json` is no longer scoped by an IAM `Condition` - AWS itself will allow the call on any volume; only the controller's own check of the `autoresize` column stands between "eligible" and "not." See `docs/PLAN.md` for the full reasoning behind this trade-off before relying on it in a security-sensitive account.
+**Security note:** because eligibility lives in application data instead of an AWS tag, `ec2:ModifyVolume` in the default `docs/iam-policy.json` is not scoped by an IAM `Condition` - AWS itself will allow the call on any volume; only the controller's own check of the `autoresize` column stands between "eligible" and "not." For an IAM-enforced second gate, use the tag-scoped policy described in section 1.1.
 
 ### 1.4 Multi-account setup (optional, `accounts:`)
 
@@ -133,7 +139,7 @@ docker compose exec postgres psql -U ebs_auto_resize -d ebs_auto_resize \
       ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = EXCLUDED.updated_at;"
 ```
 
-Values are parsed as YAML scalars (so `false`, `true`, `300` parse as bool/int - no quotes needed). **An invalid value (wrong type, out of range) written this way is logged as a warning and ignored that cycle** - the controller keeps running on its last-known-good config rather than crashing, unlike `config.yaml` itself, which still fails loudly at startup if it's broken (see `docs/PLAN.md` for why the two follow different failure philosophies). The dashboard catches the same invalid values immediately instead - direct SQL is the only path where that warn-and-ignore fallback actually gets exercised.
+Values are parsed as YAML scalars (so `false`, `true`, `300` parse as bool/int - no quotes needed). **An invalid value (wrong type, out of range) written this way is logged as a warning and ignored that cycle** - the controller keeps running on its last-known-good config rather than crashing, unlike `config.yaml` itself, which still fails loudly at startup if it's broken (the two follow different failure philosophies on purpose: a broken file is caught once, at deploy time, by the person deploying; a broken live value would otherwise take down a running controller with nobody watching). The dashboard catches the same invalid values immediately instead - direct SQL is the only path where that warn-and-ignore fallback actually gets exercised.
 
 | Key | Default | Meaning |
 |---|---|---|
