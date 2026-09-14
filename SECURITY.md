@@ -22,6 +22,7 @@ You should receive an acknowledgment within a few days. Once a fix is available,
 - *Eligibility and thresholds* live in Postgres (`instances.autoresize`, `volumes.autoresize`, `threshold_percent`), written via the dashboard's HTTP API or directly in SQL. The controller reads **no EC2 tags** for these.
 - *Live settings* (`dry_run`, growth increment, size ceiling, and the rest of `app_config`) are also written via the dashboard/API or SQL.
 - *Who may do that* is decided by the dashboard's login: local username + password (argon2id), a signed session cookie (`SPACESHIFT_SECRET_KEY`), CSRF tokens on every state-changing request, and database-backed login rate limiting. Every signed-in user is an admin in this version.
+- *Who did it* is recorded in the append-only `audit_log` table (docs/SETUP.md section 8): each change is written in the same transaction as its audit row, nothing in the application updates or deletes rows except the retention prune, and sign-ins/failures/lockouts are recorded too.
 - *Instance output* (`df`, `lsblk`, `blkid`) and *AWS metadata* (device names, sizes, modification state) are parsed and fed back into remote commands.
 
 In scope:
@@ -31,9 +32,11 @@ In scope:
 - Credential handling: secrets logged, keys baked into images, the Postgres DSN or a Slack token appearing in error output, unnecessary IAM permission scope in `docs/iam-policy.json`.
 - Authentication or authorization bypass in the SSM connection path.
 - Dashboard authentication: reaching any page or `/api/*` route without a valid session, a CSRF bypass, a session that outlives a password change or deactivation, the `/setup` page being reachable once a user exists, the setup token or a password hash leaking, a way past the login rate limit, an open redirect via `?next=`, or a weakening of the security headers/CSP.
+- Audit log integrity: any way for a dashboard user or the API to make a change without its audit row, to alter or delete a row, to mis-attribute an action to another user, or to get a password/hash/token into the log.
 
 Known and accepted for now (not a vulnerability report - please don't file it as one):
-- **No roles and no audit log yet.** Every signed-in user can change every setting, and there's no per-user record of who changed what. Both are the next planned releases.
+- **No roles yet.** Every signed-in user can change every setting and read the whole audit log. Role-based access is the next planned release.
+- **The audit log is append-only at the application level, not the database level.** The application connects as the database owner, so anyone holding `POSTGRES_PASSWORD` can edit it - that's already full control of the tool (see out of scope). Tamper-evidence (hash chains, a restricted database role, log shipping) is not in this version.
 - **No password breach-list check.** Passwords are length-checked only (12-128); an HIBP k-anonymity lookup is planned.
 - **Plain HTTP by default.** The container has no TLS; the README and `docs/SETUP.md` say to put a TLS-terminating proxy in front and set `SPACESHIFT_BEHIND_TLS_PROXY=true` for anything beyond localhost.
 

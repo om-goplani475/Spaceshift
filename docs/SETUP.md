@@ -147,6 +147,7 @@ Values are parsed as YAML scalars (so `false`, `true`, `300` parse as bool/int -
 | `scheduler.interval_seconds` | `300` | How often a full discovery-and-check cycle runs. The container health check derives its deadline from this value, so raising it here (even live) never needs a Dockerfile change. |
 | `scheduler.max_concurrent_resizes` | `5` | Size of the thread pool processing volumes in parallel each cycle. Raise for a larger fleet. Maximum 32 - each worker holds its own Postgres connection. |
 | `scheduler.scan_log_retention_days` | `7` | How long the dashboard's scan-history table (Postgres `scan_log`) keeps rows before a row older than this gets pruned, once per cycle. Pure observability data, unrelated to `resize_state`. |
+| `scheduler.audit_log_retention_days` | `365` | How long the audit log (section 8) keeps rows. Minimum 30 - a value below that is rejected. Changing it is itself an audit event. |
 | `resize.max_volume_size_gb` | `500` | Hard per-volume ceiling. Crossing it stops auto-resize for that volume and sends a "needs manual review" alert instead of continuing - the guardrail against a runaway log file quietly costing you money forever. |
 | `resize.growth_increment_percent` | `20` | How much bigger each resize makes the volume (e.g. 100GB → 120GB), not the target size itself. |
 | `resize.extend_retry.max_attempts` | `3` | How many times to retry the OS-side extend step (`growpart`/`resize2fs`/`xfs_growfs`) before giving up and alerting. Never re-triggers the AWS-side `modify-volume` call. |
@@ -252,7 +253,33 @@ curl -s -b jar.txt http://localhost:8089/api/volumes
 
 `GET /healthz` is the one unauthenticated endpoint: no data, just `{"status": "ok"}` once Postgres answers `SELECT 1`. It's what the compose healthcheck and a load balancer should use.
 
-## 8. First-run checklist
+## 8. Audit log
+
+Every action a person takes is recorded in the `audit_log` table and shown on the dashboard's **Audit log** page: who (username, or `cli` / `anonymous` / `system`), what (a fixed set of actions), the target, its AWS account where there is one, the client address, and for changes the old and new value.
+
+| Recorded | Actions |
+|---|---|
+| Dashboard changes | `instance.autoresize`, `volume.autoresize`, `config.set` (every setting, including this log's own retention) |
+| Sign-ins | `auth.login`, `auth.login_failed`, `auth.lockout` (once, when a lockout starts), `auth.logout`, `auth.setup_token_rejected`, `user.setup` |
+| CLI (`controller.dashboard.users`) | `user.create`, `user.password_reset`, `user.unlock`, `user.deactivate` - recorded as actor `cli` with the command name; the container has no login, so attribute CLI use through your host's shell/SSH audit |
+| Housekeeping | `audit.prune`, written by the scheduler only when the retention prune deleted something, with the count |
+
+The controller's own resizes are **not** in the audit log - they're already recorded in full in `resize_state`, `modification_history` and `scan_log` (the Overview page). The audit log answers *who*; the Overview answers *what the controller did*.
+
+**Guarantees.** A change and its audit row are written in the same database transaction: a toggle or setting can't change without its row, and a rejected change writes nothing. Nothing in the application updates a row, and the only delete is the retention prune (a test enforces both). Sign-in events are written best-effort - if the audit insert fails the login still completes and the failure is logged, because refusing logins while Postgres is degraded would lock every admin out. The database itself is not protected against someone with the `POSTGRES_PASSWORD`; see SECURITY.md.
+
+**Retention.** `scheduler.audit_log_retention_days` on the Settings page (default 365, minimum 30). The scheduler prunes once per cycle.
+
+**Filtering and export.** The page filters by username, action, target (substring of the volume/instance ID, setting key or username), and date range (dates are whole UTC days; "to" is inclusive), 50 rows a page, newest first. **Export CSV** downloads every row matching the current filters - the same endpoint scripts can use:
+
+```bash
+curl -s -b jar "http://localhost:8089/api/audit?format=csv&since=2026-09-01" > audit.csv
+curl -s -b jar "http://localhost:8089/api/audit?actor=alice&action=config.set&limit=100"   # JSON, with next_before for paging
+```
+
+(`jar` is the cookie jar from 7.6.) The `remote_addr` column is the address the dashboard saw: the real client behind a proxy only with `SPACESHIFT_BEHIND_TLS_PROXY=true` (7.4), otherwise the proxy's.
+
+## 9. First-run checklist
 
 1. IAM role attached to the host running the controller (1.1).
 2. SSM Agent + `AmazonSSMManagedInstanceCore` on every target instance (1.2).
