@@ -32,7 +32,7 @@ def postgres_state():
     with backend._cursor(commit=True) as cur:
         cur.execute(
             "TRUNCATE resize_state, modification_history, scan_log, instances, volumes, app_config, "
-            "users, login_attempts"
+            "users, login_attempts, audit_log"
         )
     backend.close()
 
@@ -316,3 +316,76 @@ def test_set_password_bumps_generation_and_login_attempts_round_trip(postgres_st
 
 def test_check_connection_runs_a_query(postgres_state):
     postgres_state.check_connection()
+
+
+# ---- Audit log ------------------------------------------------------------
+
+
+def _actor():
+    from controller.audit import AuditActor
+
+    return AuditActor.user(1, "alice", "10.0.0.1")
+
+
+def test_audit_row_shares_the_transaction_with_the_change(postgres_state, monkeypatch):
+    from controller.audit import AuditFilters
+
+    postgres_state.set_config("dry_run", "true")
+
+    def explode(cur, event):
+        raise RuntimeError("audit insert failed")
+
+    monkeypatch.setattr(postgres_state, "_insert_audit", explode)
+    with pytest.raises(RuntimeError):
+        postgres_state.set_config("dry_run", "false", audit=_actor())
+    monkeypatch.undo()
+
+    assert postgres_state.get_config("dry_run") == "true"  # rolled back with the failed audit row
+    assert postgres_state.list_audit(AuditFilters(), limit=10) == []
+
+
+def test_toggle_audit_row_carries_previous_value_and_account(postgres_state):
+    from controller.audit import AuditFilters
+
+    postgres_state.upsert_volume("prod", "vol-1", "i-1", "us-east-1", 100, "/dev/xvdf")
+    assert postgres_state.set_volume_autoresize("vol-1", True, audit=_actor())
+    assert not postgres_state.set_volume_autoresize("vol-nope", True, audit=_actor())
+    (row,) = postgres_state.list_audit(AuditFilters(), limit=10)
+    assert row.action == "volume.autoresize" and row.target_id == "vol-1" and row.account_name == "prod"
+    assert row.before == {"autoresize": False} and row.after == {"autoresize": True}
+    assert row.remote_addr == "10.0.0.1" and row.actor_username == "alice"
+    assert postgres_state.list_volumes()[0].autoresize
+
+
+def test_audit_filters_paging_streaming_and_like_escaping(postgres_state):
+    from controller.audit import AuditAction, AuditActor, AuditEvent, AuditFilters
+
+    postgres_state.upsert_volume("prod", "vol-1", "i-1", "us-east-1", 100, "/dev/xvdf")
+    for i in range(5):
+        postgres_state.set_volume_autoresize("vol-1", i % 2 == 0, audit=_actor())
+    postgres_state.record_audit(AuditEvent(AuditActor.anonymous("10.0.0.9", "mallory"), AuditAction.AUTH_LOGIN_FAILED))
+
+    assert len(postgres_state.list_audit(AuditFilters(actor="alice"), limit=10)) == 5
+    assert len(postgres_state.list_audit(AuditFilters(action=AuditAction.AUTH_LOGIN_FAILED), limit=10)) == 1
+    assert len(postgres_state.list_audit(AuditFilters(target="ol-"), limit=10)) == 5
+    # LIKE wildcards typed by an operator are literal characters, not patterns
+    assert postgres_state.list_audit(AuditFilters(target="%"), limit=10) == []
+    assert postgres_state.list_audit(AuditFilters(target="_"), limit=10) == []
+
+    page1 = postgres_state.list_audit(AuditFilters(), limit=4)
+    page2 = postgres_state.list_audit(AuditFilters(), limit=4, before_id=page1[-1].id)
+    ids = [r.id for r in page1 + page2]
+    assert ids == sorted(ids, reverse=True) and len(set(ids)) == 6
+    assert [r.id for r in postgres_state.iter_audit(AuditFilters())] == ids
+    # the export's connection went back to the pool usable
+    assert postgres_state.count_users() == 0
+
+
+def test_prune_audit_log_records_itself(postgres_state):
+    from controller.audit import AuditAction, AuditActor, AuditEvent, AuditFilters
+
+    assert postgres_state.prune_audit_log(datetime.now(UTC), audit=AuditActor.system()) == 0
+    postgres_state.record_audit(AuditEvent(_actor(), AuditAction.AUTH_LOGIN))
+    assert postgres_state.prune_audit_log(datetime.now(UTC) + timedelta(seconds=1), audit=AuditActor.system()) == 1
+    (row,) = postgres_state.list_audit(AuditFilters(), limit=10)
+    assert row.action == "audit.prune" and row.actor_type == "system" and row.detail["deleted"] == 1

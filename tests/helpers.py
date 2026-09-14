@@ -3,12 +3,15 @@
 from __future__ import annotations
 
 import threading
+from collections.abc import Iterator
 from dataclasses import replace
 from datetime import UTC, datetime
 
+from controller.audit import AuditAction, AuditActor, AuditEvent, AuditFilters
 from controller.connections.base import CommandResult, ConnectionTarget, Connector
 from controller.state.base import (
     TERMINAL_STATUSES,
+    AuditRecord,
     InstanceRecord,
     LastActiveUserError,
     ResizeRecord,
@@ -59,6 +62,12 @@ class InMemoryStateBackend(StateBackend):
         self._next_user_id = 1
         # (username, remote_addr, succeeded, attempted_at)
         self._login_attempts: list[tuple[str, str, bool, datetime]] = []
+        self._audit: list[AuditRecord] = []
+        self._next_audit_id = 1
+        # Set by a test to make the next audit insert raise - proves the
+        # change it accompanies is rolled back (the Postgres backend does
+        # this with a real transaction; here the double checks first).
+        self.fail_next_audit_write = False
 
     def create_if_absent(
         self, volume_id: str, instance_id: str, from_size_gb: int, to_size_gb: int
@@ -228,38 +237,81 @@ class InMemoryStateBackend(StateBackend):
             key=lambda r: r.volume_id,
         )
 
-    def set_instance_autoresize(self, instance_id: str, autoresize: bool) -> bool:
+    def set_instance_autoresize(self, instance_id: str, autoresize: bool, audit: AuditActor | None = None) -> bool:
         with self._lock:
             record = self._instances.get(instance_id)
             if record is None:
                 return False
+            if audit is not None:
+                self._append_audit(
+                    AuditEvent(
+                        actor=audit,
+                        action=AuditAction.INSTANCE_AUTORESIZE,
+                        target_type="instance",
+                        target_id=instance_id,
+                        account_name=record.account_name,
+                        before={"autoresize": record.autoresize},
+                        after={"autoresize": autoresize},
+                    )
+                )
             self._instances[instance_id] = replace(record, autoresize=autoresize)
             return True
 
-    def set_volume_autoresize(self, volume_id: str, autoresize: bool) -> bool:
+    def set_volume_autoresize(self, volume_id: str, autoresize: bool, audit: AuditActor | None = None) -> bool:
         with self._lock:
             record = self._volumes.get(volume_id)
             if record is None:
                 return False
+            if audit is not None:
+                self._append_audit(
+                    AuditEvent(
+                        actor=audit,
+                        action=AuditAction.VOLUME_AUTORESIZE,
+                        target_type="volume",
+                        target_id=volume_id,
+                        account_name=record.account_name,
+                        before={"autoresize": record.autoresize},
+                        after={"autoresize": autoresize},
+                    )
+                )
             self._volumes[volume_id] = replace(record, autoresize=autoresize)
             return True
 
     def get_config(self, key: str) -> str | None:
         return self._app_config.get(key)
 
-    def set_config(self, key: str, value: str) -> None:
+    def set_config(self, key: str, value: str, audit: AuditActor | None = None) -> None:
         with self._lock:
+            if audit is not None:
+                self._append_audit(
+                    AuditEvent(
+                        actor=audit,
+                        action=AuditAction.CONFIG_SET,
+                        target_type="config",
+                        target_id=key,
+                        before={"value": self._app_config.get(key)},
+                        after={"value": value},
+                    )
+                )
             self._app_config[key] = value
 
     def list_config(self) -> dict[str, str]:
         return dict(self._app_config)
 
-    def create_user(self, username: str, password_hash: str, only_if_no_users: bool = False) -> UserRecord | None:
+    def create_user(
+        self,
+        username: str,
+        password_hash: str,
+        only_if_no_users: bool = False,
+        audit: AuditEvent | None = None,
+    ) -> UserRecord | None:
         with self._lock:
             if only_if_no_users and self._users:
                 return None
             if any(u.username.lower() == username.lower() for u in self._users.values()):
                 raise UsernameTakenError(username)
+            if audit is not None:
+                self._append_audit(audit)
             user = UserRecord(
                 id=self._next_user_id,
                 username=username,
@@ -286,26 +338,32 @@ class InMemoryStateBackend(StateBackend):
         with self._lock:
             self._users[user_id] = replace(self._users[user_id], last_login_at=datetime.now(UTC))
 
-    def set_password(self, user_id: int, password_hash: str) -> None:
+    def set_password(self, user_id: int, password_hash: str, audit: AuditEvent | None = None) -> None:
         with self._lock:
             user = self._users[user_id]
+            if audit is not None:
+                self._append_audit(audit)
             self._users[user_id] = replace(
                 user, password_hash=password_hash, session_generation=user.session_generation + 1
             )
 
-    def set_active(self, user_id: int, is_active: bool) -> None:
+    def set_active(self, user_id: int, is_active: bool, audit: AuditEvent | None = None) -> None:
         with self._lock:
             user = self._users[user_id]
+            if not is_active and not any(u.is_active for u in self._users.values() if u.id != user_id):
+                raise LastActiveUserError(user_id)
+            if audit is not None:
+                self._append_audit(audit)
             if is_active:
                 self._users[user_id] = replace(user, is_active=True)
-                return
-            if not any(u.is_active for u in self._users.values() if u.id != user_id):
-                raise LastActiveUserError(user_id)
-            self._users[user_id] = replace(user, is_active=False, session_generation=user.session_generation + 1)
+            else:
+                self._users[user_id] = replace(user, is_active=False, session_generation=user.session_generation + 1)
 
-    def bump_session_generation(self, user_id: int) -> None:
+    def bump_session_generation(self, user_id: int, audit: AuditEvent | None = None) -> None:
         with self._lock:
             user = self._users[user_id]
+            if audit is not None:
+                self._append_audit(audit)
             self._users[user_id] = replace(user, session_generation=user.session_generation + 1)
 
     def record_login_attempt(self, username: str, remote_addr: str, succeeded: bool) -> None:
@@ -334,6 +392,68 @@ class InMemoryStateBackend(StateBackend):
     def prune_login_attempts(self, older_than: datetime) -> None:
         with self._lock:
             self._login_attempts = [a for a in self._login_attempts if a[3] >= older_than]
+
+    # ---- Audit log ----------------------------------------------------------
+
+    def _append_audit(self, event: AuditEvent) -> None:
+        if self.fail_next_audit_write:
+            self.fail_next_audit_write = False
+            raise RuntimeError("simulated audit write failure")
+        actor = event.actor
+        self._audit.append(
+            AuditRecord(
+                id=self._next_audit_id,
+                created_at=datetime.now(UTC),
+                actor_type=actor.actor_type.value,
+                actor_user_id=actor.user_id,
+                actor_username=actor.username,
+                action=event.action.value,
+                target_type=event.target_type,
+                target_id=event.target_id,
+                account_name=event.account_name,
+                remote_addr=actor.remote_addr,
+                before=event.before,
+                after=event.after,
+                detail=event.detail,
+            )
+        )
+        self._next_audit_id += 1
+
+    def record_audit(self, event: AuditEvent) -> None:
+        with self._lock:
+            self._append_audit(event)
+
+    def _audit_matches(self, r: AuditRecord, f: AuditFilters) -> bool:
+        return (
+            (f.actor is None or r.actor_username == f.actor)
+            and (f.action is None or r.action == f.action.value)
+            and (f.target is None or (r.target_id is not None and f.target in r.target_id))
+            and (f.since is None or r.created_at >= f.since)
+            and (f.until is None or r.created_at < f.until)
+        )
+
+    def list_audit(self, filters: AuditFilters, limit: int, before_id: int | None = None) -> list[AuditRecord]:
+        rows = [r for r in self._audit if self._audit_matches(r, filters) and (before_id is None or r.id < before_id)]
+        return sorted(rows, key=lambda r: r.id, reverse=True)[:limit]
+
+    def iter_audit(self, filters: AuditFilters) -> Iterator[AuditRecord]:
+        yield from sorted((r for r in self._audit if self._audit_matches(r, filters)), key=lambda r: r.id, reverse=True)
+
+    def prune_audit_log(self, older_than: datetime, audit: AuditActor | None = None) -> int:
+        with self._lock:
+            keep = [r for r in self._audit if r.created_at >= older_than]
+            deleted = len(self._audit) - len(keep)
+            self._audit = keep
+            if audit is not None and deleted > 0:
+                self._append_audit(
+                    AuditEvent(
+                        actor=audit,
+                        action=AuditAction.AUDIT_PRUNE,
+                        target_type="audit_log",
+                        detail={"deleted": deleted, "older_than": older_than.isoformat()},
+                    )
+                )
+            return deleted
 
     def check_connection(self) -> None:
         pass

@@ -15,8 +15,13 @@ from __future__ import annotations
 
 import abc
 import enum
+from collections.abc import Iterator
 from dataclasses import dataclass
 from datetime import datetime
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from controller.audit import AuditActor, AuditEvent, AuditFilters
 
 
 class ResizeStatus(enum.StrEnum):
@@ -113,6 +118,26 @@ class UserRecord:
     session_generation: int
     created_at: datetime
     last_login_at: datetime | None
+
+
+@dataclass
+class AuditRecord:
+    """One audit_log row. See controller/audit.py for the catalogue of
+    actions and who writes them."""
+
+    id: int
+    created_at: datetime
+    actor_type: str
+    actor_user_id: int | None
+    actor_username: str | None
+    action: str
+    target_type: str | None
+    target_id: str | None
+    account_name: str | None
+    remote_addr: str | None
+    before: dict[str, Any] | None
+    after: dict[str, Any] | None
+    detail: dict[str, Any] | None
 
 
 class UsernameTakenError(Exception):
@@ -278,15 +303,22 @@ class StateBackend(abc.ABC):
         """Return known volumes, optionally filtered to one account and/or region."""
 
     @abc.abstractmethod
-    def set_instance_autoresize(self, instance_id: str, autoresize: bool) -> bool:
+    def set_instance_autoresize(self, instance_id: str, autoresize: bool, audit: AuditActor | None = None) -> bool:
         """Set instance_id's eligibility flag. Returns False if no such
         instance is known (e.g. a stale dashboard page for a since-removed
-        instance), True if updated."""
+        instance), True if updated.
+
+        `audit` is who is doing it; when given, an INSTANCE_AUTORESIZE
+        audit row (with the previous value and the row's account_name)
+        is written in the same transaction as the change, so neither
+        can exist without the other. Only the scheduler's own discovery
+        path omits it - and that never changes this flag.
+        """
 
     @abc.abstractmethod
-    def set_volume_autoresize(self, volume_id: str, autoresize: bool) -> bool:
-        """Set volume_id's eligibility flag. Same return contract as
-        set_instance_autoresize."""
+    def set_volume_autoresize(self, volume_id: str, autoresize: bool, audit: AuditActor | None = None) -> bool:
+        """Set volume_id's eligibility flag. Same return and audit
+        contract as set_instance_autoresize."""
 
     @abc.abstractmethod
     def get_config(self, key: str) -> str | None:
@@ -295,12 +327,15 @@ class StateBackend(abc.ABC):
         default," not an error."""
 
     @abc.abstractmethod
-    def set_config(self, key: str, value: str) -> None:
+    def set_config(self, key: str, value: str, audit: AuditActor | None = None) -> None:
         """Insert or update `key`'s value in app_config. Values are stored
         as plain text and parsed back (as YAML scalars - int/bool/etc) by
         controller.config.apply_db_overrides on read, not validated here;
         an invalid value is caught and logged there, not rejected at write
-        time, since app_config has no notion of which key means what."""
+        time, since app_config has no notion of which key means what.
+
+        With `audit`, a CONFIG_SET row carrying the previous value (None
+        if the key was unset) is written in the same transaction."""
 
     @abc.abstractmethod
     def list_config(self) -> dict[str, str]:
@@ -311,7 +346,13 @@ class StateBackend(abc.ABC):
     # ---- Dashboard users and login attempts ------------------------------
 
     @abc.abstractmethod
-    def create_user(self, username: str, password_hash: str, only_if_no_users: bool = False) -> UserRecord | None:
+    def create_user(
+        self,
+        username: str,
+        password_hash: str,
+        only_if_no_users: bool = False,
+        audit: AuditEvent | None = None,
+    ) -> UserRecord | None:
         """Insert a new active user. Raises UsernameTakenError on a
         case-insensitive clash.
 
@@ -319,6 +360,9 @@ class StateBackend(abc.ABC):
         without inserting if any user already exists. Must be atomic
         against concurrent callers so two simultaneous setup submissions
         can never both succeed.
+
+        `audit` (a complete event - the caller knows whether this is
+        USER_SETUP or USER_CREATE) is written in the same transaction.
         """
 
     @abc.abstractmethod
@@ -338,21 +382,24 @@ class StateBackend(abc.ABC):
         """Record a successful login (last_login_at = now)."""
 
     @abc.abstractmethod
-    def set_password(self, user_id: int, password_hash: str) -> None:
+    def set_password(self, user_id: int, password_hash: str, audit: AuditEvent | None = None) -> None:
         """Replace the password hash and bump session_generation, so every
-        session issued under the old password is logged out."""
+        session issued under the old password is logged out. `audit` is
+        written in the same transaction."""
 
     @abc.abstractmethod
-    def set_active(self, user_id: int, is_active: bool) -> None:
+    def set_active(self, user_id: int, is_active: bool, audit: AuditEvent | None = None) -> None:
         """Activate or deactivate. Deactivating bumps session_generation.
         Raises LastActiveUserError rather than deactivate the last active
         user - must be atomic against a concurrent deactivation of the
-        other remaining user."""
+        other remaining user. `audit` is written in the same transaction
+        (and so is not written when the change is refused)."""
 
     @abc.abstractmethod
-    def bump_session_generation(self, user_id: int) -> None:
+    def bump_session_generation(self, user_id: int, audit: AuditEvent | None = None) -> None:
         """Invalidate every existing session for this user without
-        changing anything else (the CLI's `unlock`)."""
+        changing anything else (the CLI's `unlock`). `audit` is written
+        in the same transaction."""
 
     @abc.abstractmethod
     def record_login_attempt(self, username: str, remote_addr: str, succeeded: bool) -> None:
@@ -375,6 +422,35 @@ class StateBackend(abc.ABC):
     def prune_login_attempts(self, older_than: datetime) -> None:
         """Delete login attempts older than `older_than` - same bounded-
         table role as prune_scan_log, called once per scheduler cycle."""
+
+    # ---- Audit log --------------------------------------------------------
+    #
+    # Append-only: there is no update method and the only delete is the
+    # bounded retention prune. Keep it that way.
+
+    @abc.abstractmethod
+    def record_audit(self, event: AuditEvent) -> None:
+        """Append one row. Used directly only for event-only actions
+        (auth events); state changes write their row via their own
+        method's `audit` parameter so it shares the transaction."""
+
+    @abc.abstractmethod
+    def list_audit(self, filters: AuditFilters, limit: int, before_id: int | None = None) -> list[AuditRecord]:
+        """Newest first, at most `limit` rows with id < before_id (keyset
+        paging - ids are monotonic, so pages are stable while new rows
+        arrive at the top)."""
+
+    @abc.abstractmethod
+    def iter_audit(self, filters: AuditFilters) -> Iterator[AuditRecord]:
+        """Every matching row, newest first, streamed - the CSV export.
+        Implementations must not load the whole result into memory."""
+
+    @abc.abstractmethod
+    def prune_audit_log(self, older_than: datetime, audit: AuditActor | None = None) -> int:
+        """Delete rows created before `older_than`; return how many. With
+        `audit`, an AUDIT_PRUNE row (detail: deleted count, cutoff) is
+        written in the same transaction - only when something was deleted,
+        so an idle cycle doesn't add a no-op row."""
 
     @abc.abstractmethod
     def check_connection(self) -> None:

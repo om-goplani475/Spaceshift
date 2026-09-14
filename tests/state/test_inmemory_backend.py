@@ -8,6 +8,7 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
+from controller.audit import AuditAction, AuditActor, AuditEvent, AuditFilters
 from controller.state.base import LastActiveUserError, ResizeStatus, UsernameTakenError
 from tests.helpers import InMemoryStateBackend
 
@@ -261,3 +262,74 @@ def test_prune_login_attempts(state):
     state.record_login_attempt("alice", "10.0.0.1", succeeded=False)
     state.prune_login_attempts(datetime.now(UTC) + timedelta(seconds=1))
     assert state.recent_failure_times(datetime.now(UTC) - timedelta(days=1)) == []
+
+
+# ---- Audit log ------------------------------------------------------------
+
+
+def _actor():
+    return AuditActor.user(1, "alice", "10.0.0.1")
+
+
+def test_toggle_writes_audit_row_with_previous_value_and_account(state):
+    state.upsert_instance("prod", "i-1", "us-east-1", "t3.micro", "running")
+    assert state.set_instance_autoresize("i-1", True, audit=_actor())
+    (row,) = state.list_audit(AuditFilters(), limit=10)
+    assert row.action == "instance.autoresize"
+    assert row.actor_username == "alice" and row.actor_user_id == 1 and row.remote_addr == "10.0.0.1"
+    assert row.target_type == "instance" and row.target_id == "i-1" and row.account_name == "prod"
+    assert row.before == {"autoresize": False} and row.after == {"autoresize": True}
+
+
+def test_refused_change_writes_no_audit_row(state):
+    assert not state.set_volume_autoresize("vol-missing", True, audit=_actor())
+    alice = state.create_user("alice", "hash")
+    with pytest.raises(LastActiveUserError):
+        state.set_active(alice.id, False, audit=AuditEvent(_actor(), AuditAction.USER_DEACTIVATE))
+    assert state.list_audit(AuditFilters(), limit=10) == []
+
+
+def test_failed_audit_write_prevents_the_change(state):
+    state.set_config("dry_run", "true")
+    state.fail_next_audit_write = True
+    with pytest.raises(RuntimeError):
+        state.set_config("dry_run", "false", audit=_actor())
+    assert state.get_config("dry_run") == "true"
+    assert state.list_audit(AuditFilters(), limit=10) == []
+
+
+def test_config_set_records_previous_value_or_none(state):
+    state.set_config("dry_run", "false", audit=_actor())
+    state.set_config("dry_run", "true", audit=_actor())
+    newest, oldest = state.list_audit(AuditFilters(), limit=10)
+    assert oldest.before == {"value": None} and oldest.after == {"value": "false"}
+    assert newest.before == {"value": "false"} and newest.after == {"value": "true"}
+
+
+def test_list_audit_filters_and_keyset_paging(state):
+    state.upsert_volume("prod", "vol-1", "i-1", "us-east-1", 100, "/dev/xvdf")
+    for i in range(5):
+        state.set_volume_autoresize("vol-1", i % 2 == 0, audit=_actor())
+    state.record_audit(AuditEvent(AuditActor.anonymous("10.0.0.9", "mallory"), AuditAction.AUTH_LOGIN_FAILED))
+
+    assert len(state.list_audit(AuditFilters(actor="alice"), limit=10)) == 5
+    assert len(state.list_audit(AuditFilters(action=AuditAction.AUTH_LOGIN_FAILED), limit=10)) == 1
+    assert len(state.list_audit(AuditFilters(target="ol-"), limit=10)) == 5
+    assert state.list_audit(AuditFilters(target="nothing"), limit=10) == []
+
+    page1 = state.list_audit(AuditFilters(), limit=4)
+    page2 = state.list_audit(AuditFilters(), limit=4, before_id=page1[-1].id)
+    ids = [r.id for r in page1 + page2]
+    assert ids == sorted(ids, reverse=True) and len(set(ids)) == 6
+    assert [r.id for r in state.iter_audit(AuditFilters())] == ids
+
+
+def test_prune_audit_log_records_itself_only_when_it_deleted_something(state):
+    assert state.prune_audit_log(datetime.now(UTC), audit=AuditActor.system()) == 0
+    assert state.list_audit(AuditFilters(), limit=10) == []
+
+    state.record_audit(AuditEvent(_actor(), AuditAction.AUTH_LOGIN))
+    assert state.prune_audit_log(datetime.now(UTC) + timedelta(seconds=1), audit=AuditActor.system()) == 1
+    (row,) = state.list_audit(AuditFilters(), limit=10)
+    assert row.action == "audit.prune" and row.actor_type == "system"
+    assert row.detail["deleted"] == 1

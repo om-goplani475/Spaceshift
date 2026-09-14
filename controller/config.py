@@ -49,6 +49,7 @@ def _require_int(label: str, value: Any, *, minimum: int, maximum: int | None = 
 # pool is sized from this constant (see PostgresStateBackend), so the two
 # can't drift apart.
 MAX_CONCURRENT_RESIZES = 32
+MIN_AUDIT_LOG_RETENTION_DAYS = 30
 
 
 # Dotted app_config key -> the nested path into the dict shape
@@ -63,6 +64,7 @@ DB_CONFIG_KEYS: dict[str, tuple[str, ...]] = {
     "scheduler.interval_seconds": ("scheduler", "interval_seconds"),
     "scheduler.max_concurrent_resizes": ("scheduler", "max_concurrent_resizes"),
     "scheduler.scan_log_retention_days": ("scheduler", "scan_log_retention_days"),
+    "scheduler.audit_log_retention_days": ("scheduler", "audit_log_retention_days"),
     "resize.max_volume_size_gb": ("resize", "max_volume_size_gb"),
     "resize.growth_increment_percent": ("resize", "growth_increment_percent"),
     "resize.extend_retry.max_attempts": ("resize", "extend_retry", "max_attempts"),
@@ -77,6 +79,7 @@ class SchedulerConfig:
     interval_seconds: int = 300
     max_concurrent_resizes: int = 5
     scan_log_retention_days: int = 7
+    audit_log_retention_days: int = 365
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> SchedulerConfig:
@@ -85,6 +88,7 @@ class SchedulerConfig:
             interval_seconds=data.get("interval_seconds", d.interval_seconds),
             max_concurrent_resizes=data.get("max_concurrent_resizes", d.max_concurrent_resizes),
             scan_log_retention_days=data.get("scan_log_retention_days", d.scan_log_retention_days),
+            audit_log_retention_days=data.get("audit_log_retention_days", d.audit_log_retention_days),
         )
 
 
@@ -234,6 +238,13 @@ class Config:
             maximum=MAX_CONCURRENT_RESIZES,
         )
         _require_int("scheduler.scan_log_retention_days", self.scheduler.scan_log_retention_days, minimum=0)
+        # Unlike the scan log, an audit log that can be set to "keep nothing"
+        # defeats its purpose - 30 days is the floor.
+        _require_int(
+            "scheduler.audit_log_retention_days",
+            self.scheduler.audit_log_retention_days,
+            minimum=MIN_AUDIT_LOG_RETENTION_DAYS,
+        )
         _require_int("resize.max_volume_size_gb", self.resize.max_volume_size_gb, minimum=1)
         _require_int("resize.growth_increment_percent", self.resize.growth_increment_percent, minimum=1)
         _require_int("resize.extend_retry.max_attempts", self.resize.extend_retry.max_attempts, minimum=1)

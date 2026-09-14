@@ -17,11 +17,14 @@ from datetime import UTC, datetime
 
 import psycopg2
 import psycopg2.errors
+import psycopg2.extras
 import psycopg2.pool
 
+from controller.audit import AuditAction, AuditActor, AuditEvent, AuditFilters
 from controller.config import MAX_CONCURRENT_RESIZES
 from controller.state.base import (
     TERMINAL_STATUSES,
+    AuditRecord,
     InstanceRecord,
     LastActiveUserError,
     ResizeRecord,
@@ -163,6 +166,31 @@ CREATE TABLE IF NOT EXISTS login_attempts (
 
 CREATE INDEX IF NOT EXISTS idx_login_attempts_username ON login_attempts (username, attempted_at);
 CREATE INDEX IF NOT EXISTS idx_login_attempts_remote_addr ON login_attempts (remote_addr, attempted_at);
+
+-- Who did what. Append-only: nothing in the codebase updates a row, and
+-- the only DELETE is the retention prune (see controller/audit.py).
+-- actor_username is a snapshot (usernames can't be renamed, so it stays
+-- true); account_name is filled for per-account targets so RBAC can
+-- filter on it later.
+CREATE TABLE IF NOT EXISTS audit_log (
+    id              BIGSERIAL PRIMARY KEY,
+    created_at      TIMESTAMPTZ NOT NULL,
+    actor_type      TEXT NOT NULL,
+    actor_user_id   INTEGER,
+    actor_username  TEXT,
+    action          TEXT NOT NULL,
+    target_type     TEXT,
+    target_id       TEXT,
+    account_name    TEXT,
+    remote_addr     INET,
+    before          JSONB,
+    after           JSONB,
+    detail          JSONB
+);
+
+CREATE INDEX IF NOT EXISTS idx_audit_log_created_at ON audit_log (created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_audit_log_actor ON audit_log (actor_username, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_audit_log_target ON audit_log (target_type, target_id, created_at DESC);
 """
 
 _TERMINAL_STATUS_VALUES = [s.value for s in TERMINAL_STATUSES]
@@ -176,6 +204,23 @@ _SCHEMA_INIT_LOCK_KEY = 727701
 _USERS_LOCK_KEY = 727702
 
 _USER_COLUMNS = "id, username, password_hash, is_active, session_generation, created_at, last_login_at"
+_AUDIT_COLUMNS = (
+    "id, created_at, actor_type, actor_user_id, actor_username, action, target_type, target_id, "
+    "account_name, remote_addr, before, after, detail"
+)
+
+
+def _jsonb(value: dict | None):
+    return psycopg2.extras.Json(value) if value is not None else None
+
+
+def _prune_event(actor: AuditActor, deleted: int, older_than: datetime) -> AuditEvent:
+    return AuditEvent(
+        actor=actor,
+        action=AuditAction.AUDIT_PRUNE,
+        target_type="audit_log",
+        detail={"deleted": deleted, "older_than": older_than.isoformat()},
+    )
 
 
 class PostgresStateBackend(StateBackend):
@@ -479,21 +524,46 @@ class PostgresStateBackend(StateBackend):
             columns = [desc[0] for desc in cur.description]
         return [VolumeRecord(**dict(zip(columns, row, strict=True))) for row in rows]
 
-    def set_instance_autoresize(self, instance_id: str, autoresize: bool) -> bool:
-        with self._cursor(commit=True) as cur:
-            cur.execute(
-                "UPDATE instances SET autoresize = %s WHERE instance_id = %s",
-                (autoresize, instance_id),
-            )
-            return cur.rowcount > 0
+    def set_instance_autoresize(self, instance_id: str, autoresize: bool, audit: AuditActor | None = None) -> bool:
+        return self._set_autoresize("instances", "instance_id", instance_id, autoresize, audit)
 
-    def set_volume_autoresize(self, volume_id: str, autoresize: bool) -> bool:
+    def set_volume_autoresize(self, volume_id: str, autoresize: bool, audit: AuditActor | None = None) -> bool:
+        return self._set_autoresize("volumes", "volume_id", volume_id, autoresize, audit)
+
+    def _set_autoresize(self, table: str, id_column: str, row_id: str, autoresize: bool, audit) -> bool:
+        # The self-join returns the value being overwritten and the row's
+        # account, so the audit row is exact even under concurrent toggles
+        # - and it's written before the same COMMIT as the change.
         with self._cursor(commit=True) as cur:
             cur.execute(
-                "UPDATE volumes SET autoresize = %s WHERE volume_id = %s",
-                (autoresize, volume_id),
+                f"""
+                UPDATE {table} AS t SET autoresize = %s
+                FROM (
+                    SELECT {id_column}, autoresize, account_name FROM {table} WHERE {id_column} = %s FOR UPDATE
+                ) AS old
+                WHERE t.{id_column} = old.{id_column}
+                RETURNING old.autoresize, old.account_name
+                """,
+                (autoresize, row_id),
             )
-            return cur.rowcount > 0
+            row = cur.fetchone()
+            if row is None:
+                return False
+            if audit is not None:
+                action = AuditAction.INSTANCE_AUTORESIZE if table == "instances" else AuditAction.VOLUME_AUTORESIZE
+                self._insert_audit(
+                    cur,
+                    AuditEvent(
+                        actor=audit,
+                        action=action,
+                        target_type=table[:-1],
+                        target_id=row_id,
+                        account_name=row[1],
+                        before={"autoresize": row[0]},
+                        after={"autoresize": autoresize},
+                    ),
+                )
+            return True
 
     def get_config(self, key: str) -> str | None:
         with self._cursor() as cur:
@@ -501,8 +571,13 @@ class PostgresStateBackend(StateBackend):
             row = cur.fetchone()
             return row[0] if row is not None else None
 
-    def set_config(self, key: str, value: str) -> None:
+    def set_config(self, key: str, value: str, audit: AuditActor | None = None) -> None:
         with self._cursor(commit=True) as cur:
+            before = None
+            if audit is not None:
+                cur.execute("SELECT value FROM app_config WHERE key = %s FOR UPDATE", (key,))
+                row = cur.fetchone()
+                before = row[0] if row is not None else None
             cur.execute(
                 """
                 INSERT INTO app_config (key, value, updated_at)
@@ -511,6 +586,18 @@ class PostgresStateBackend(StateBackend):
                 """,
                 (key, value, datetime.now(UTC)),
             )
+            if audit is not None:
+                self._insert_audit(
+                    cur,
+                    AuditEvent(
+                        actor=audit,
+                        action=AuditAction.CONFIG_SET,
+                        target_type="config",
+                        target_id=key,
+                        before={"value": before},
+                        after={"value": value},
+                    ),
+                )
 
     def list_config(self) -> dict[str, str]:
         with self._cursor() as cur:
@@ -518,7 +605,13 @@ class PostgresStateBackend(StateBackend):
             rows = cur.fetchall()
         return dict(rows)
 
-    def create_user(self, username: str, password_hash: str, only_if_no_users: bool = False) -> UserRecord | None:
+    def create_user(
+        self,
+        username: str,
+        password_hash: str,
+        only_if_no_users: bool = False,
+        audit: AuditEvent | None = None,
+    ) -> UserRecord | None:
         with self._cursor(commit=True) as cur:
             if only_if_no_users:
                 # Two /setup submissions racing: without the lock both
@@ -539,7 +632,10 @@ class PostgresStateBackend(StateBackend):
                 )
             except psycopg2.errors.UniqueViolation as exc:
                 raise UsernameTakenError(username) from exc
-            return self._row_to_user(cur.fetchone())
+            user = self._row_to_user(cur.fetchone())
+            if audit is not None:
+                self._insert_audit(cur, audit)
+            return user
 
     def get_user(self, user_id: int) -> UserRecord | None:
         with self._cursor() as cur:
@@ -562,30 +658,36 @@ class PostgresStateBackend(StateBackend):
         with self._cursor(commit=True) as cur:
             cur.execute("UPDATE users SET last_login_at = %s WHERE id = %s", (datetime.now(UTC), user_id))
 
-    def set_password(self, user_id: int, password_hash: str) -> None:
+    def set_password(self, user_id: int, password_hash: str, audit: AuditEvent | None = None) -> None:
         with self._cursor(commit=True) as cur:
             cur.execute(
                 "UPDATE users SET password_hash = %s, session_generation = session_generation + 1 WHERE id = %s",
                 (password_hash, user_id),
             )
+            if audit is not None:
+                self._insert_audit(cur, audit)
 
-    def set_active(self, user_id: int, is_active: bool) -> None:
+    def set_active(self, user_id: int, is_active: bool, audit: AuditEvent | None = None) -> None:
         with self._cursor(commit=True) as cur:
             if is_active:
                 cur.execute("UPDATE users SET is_active = TRUE WHERE id = %s", (user_id,))
-                return
-            cur.execute("SELECT pg_advisory_xact_lock(%s)", (_USERS_LOCK_KEY,))
-            cur.execute("SELECT COUNT(*) FROM users WHERE is_active AND id != %s", (user_id,))
-            if cur.fetchone()[0] == 0:
-                raise LastActiveUserError(user_id)
-            cur.execute(
-                "UPDATE users SET is_active = FALSE, session_generation = session_generation + 1 WHERE id = %s",
-                (user_id,),
-            )
+            else:
+                cur.execute("SELECT pg_advisory_xact_lock(%s)", (_USERS_LOCK_KEY,))
+                cur.execute("SELECT COUNT(*) FROM users WHERE is_active AND id != %s", (user_id,))
+                if cur.fetchone()[0] == 0:
+                    raise LastActiveUserError(user_id)
+                cur.execute(
+                    "UPDATE users SET is_active = FALSE, session_generation = session_generation + 1 WHERE id = %s",
+                    (user_id,),
+                )
+            if audit is not None:
+                self._insert_audit(cur, audit)
 
-    def bump_session_generation(self, user_id: int) -> None:
+    def bump_session_generation(self, user_id: int, audit: AuditEvent | None = None) -> None:
         with self._cursor(commit=True) as cur:
             cur.execute("UPDATE users SET session_generation = session_generation + 1 WHERE id = %s", (user_id,))
+            if audit is not None:
+                self._insert_audit(cur, audit)
 
     def record_login_attempt(self, username: str, remote_addr: str, succeeded: bool) -> None:
         with self._cursor(commit=True) as cur:
@@ -620,6 +722,104 @@ class PostgresStateBackend(StateBackend):
     def prune_login_attempts(self, older_than: datetime) -> None:
         with self._cursor(commit=True) as cur:
             cur.execute("DELETE FROM login_attempts WHERE attempted_at < %s", (older_than,))
+
+    @staticmethod
+    def _insert_audit(cur, event: AuditEvent) -> None:
+        actor = event.actor
+        cur.execute(
+            """
+            INSERT INTO audit_log
+                (created_at, actor_type, actor_user_id, actor_username, action, target_type, target_id,
+                 account_name, remote_addr, before, after, detail)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            """,
+            (
+                datetime.now(UTC),
+                actor.actor_type.value,
+                actor.user_id,
+                actor.username,
+                event.action.value,
+                event.target_type,
+                event.target_id,
+                event.account_name,
+                actor.remote_addr,
+                _jsonb(event.before),
+                _jsonb(event.after),
+                _jsonb(event.detail),
+            ),
+        )
+
+    def record_audit(self, event: AuditEvent) -> None:
+        with self._cursor(commit=True) as cur:
+            self._insert_audit(cur, event)
+
+    @staticmethod
+    def _audit_where(filters: AuditFilters, before_id: int | None) -> tuple[str, list]:
+        clauses, params = ["TRUE"], []
+        if filters.actor is not None:
+            clauses.append("actor_username = %s")
+            params.append(filters.actor)
+        if filters.action is not None:
+            clauses.append("action = %s")
+            params.append(filters.action.value)
+        if filters.target is not None:
+            # LIKE against operator-typed text: escape its own wildcards
+            # so "vol-%" can't turn into a different query.
+            escaped = filters.target.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+            clauses.append("target_id LIKE %s ESCAPE '\\'")
+            params.append(f"%{escaped}%")
+        if filters.since is not None:
+            clauses.append("created_at >= %s")
+            params.append(filters.since)
+        if filters.until is not None:
+            clauses.append("created_at < %s")
+            params.append(filters.until)
+        if before_id is not None:
+            clauses.append("id < %s")
+            params.append(before_id)
+        return " AND ".join(clauses), params
+
+    def list_audit(self, filters: AuditFilters, limit: int, before_id: int | None = None) -> list[AuditRecord]:
+        where, params = self._audit_where(filters, before_id)
+        with self._cursor() as cur:
+            cur.execute(
+                f"SELECT {_AUDIT_COLUMNS} FROM audit_log WHERE {where} ORDER BY id DESC LIMIT %s", [*params, limit]
+            )
+            return [self._row_to_audit(row) for row in cur.fetchall()]
+
+    def iter_audit(self, filters: AuditFilters) -> Iterator[AuditRecord]:
+        # A server-side (named) cursor streams rows in batches instead of
+        # materializing a year of history in the worker's memory. The
+        # connection is held for the duration of the export - fine for a
+        # pool sized well above the two workers x four threads.
+        where, params = self._audit_where(filters, None)
+        conn = self._pool.getconn()
+        broken = False
+        try:
+            with conn.cursor(name="audit_export") as cur:
+                cur.itersize = 500
+                cur.execute(f"SELECT {_AUDIT_COLUMNS} FROM audit_log WHERE {where} ORDER BY id DESC", params)
+                for row in cur:
+                    yield self._row_to_audit(row)
+            conn.rollback()  # ends the read-only transaction the named cursor opened
+        except (psycopg2.OperationalError, psycopg2.InterfaceError):
+            broken = True
+            raise
+        finally:
+            self._pool.putconn(conn, close=broken)
+
+    def prune_audit_log(self, older_than: datetime, audit: AuditActor | None = None) -> int:
+        with self._cursor(commit=True) as cur:
+            cur.execute("DELETE FROM audit_log WHERE created_at < %s", (older_than,))
+            deleted = cur.rowcount
+            if audit is not None and deleted > 0:
+                self._insert_audit(cur, _prune_event(audit, deleted, older_than))
+            return deleted
+
+    @staticmethod
+    def _row_to_audit(row: tuple) -> AuditRecord:
+        # psycopg2 already gives INET as str and JSONB as dict.
+        return AuditRecord(*row)
 
     def check_connection(self) -> None:
         with self._cursor() as cur:

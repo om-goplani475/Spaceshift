@@ -17,6 +17,7 @@ from dataclasses import asdict, dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
+from controller.audit import AuditActor
 from controller.aws_session import RETRY_CONFIG, build_account_session, build_base_session
 from controller.config import Config, refresh_config_from_db
 from controller.connections.base import ConnectionTarget, Connector
@@ -154,9 +155,14 @@ class Scheduler:
 
         now = datetime.now(UTC)
         self._state.prune_scan_log(now - timedelta(days=self._config.scheduler.scan_log_retention_days))
-        # The dashboard writes login_attempts but has no loop of its own;
-        # this is the only periodic task in the stack, so it prunes them.
+        # The dashboard writes login_attempts and audit_log but has no loop
+        # of its own; this is the only periodic task in the stack, so it
+        # prunes them. The audit prune records itself (when it deleted
+        # anything) so a shrinking log is explained by the log.
         self._state.prune_login_attempts(now - _LOGIN_ATTEMPT_RETENTION)
+        self._state.prune_audit_log(
+            now - timedelta(days=self._config.scheduler.audit_log_retention_days), audit=AuditActor.system()
+        )
 
     def _process_volume(
         self, account_name: str, ec2, ssm, connector: Connector, volume: EligibleVolume, region: str

@@ -45,6 +45,7 @@ _CONFIG_LABELS: dict[str, str] = {
     "scheduler.interval_seconds": "Scan interval (sec)",
     "scheduler.max_concurrent_resizes": "Max concurrent resizes",
     "scheduler.scan_log_retention_days": "Scan log retention (days)",
+    "scheduler.audit_log_retention_days": "Audit log retention (days)",
     "resize.max_volume_size_gb": "Max volume size (GB)",
     "resize.growth_increment_percent": "Growth increment (%)",
     "resize.extend_retry.max_attempts": "Extend retry attempts",
@@ -62,6 +63,9 @@ _CONFIG_DESCRIPTIONS: dict[str, str] = {
     "scheduler.max_concurrent_resizes": "Size of the thread pool processing volumes in parallel each cycle.",
     "scheduler.scan_log_retention_days": (
         "How long the scan-history table keeps rows before a row older than this gets pruned, once per cycle."
+    ),
+    "scheduler.audit_log_retention_days": (
+        "How long the audit log keeps a record of who changed what. Minimum 30 days. Changing this is itself recorded."
     ),
     "resize.max_volume_size_gb": (
         "Hard per-volume ceiling. Crossing it stops auto-resize for that volume and alerts for manual review "
@@ -98,7 +102,12 @@ _CONFIG_GROUPS: list[tuple[str, list[str]]] = [
     ),
     (
         "Scheduling",
-        ["scheduler.interval_seconds", "scheduler.max_concurrent_resizes", "scheduler.scan_log_retention_days"],
+        [
+            "scheduler.interval_seconds",
+            "scheduler.max_concurrent_resizes",
+            "scheduler.scan_log_retention_days",
+            "scheduler.audit_log_retention_days",
+        ],
     ),
     (
         "Retries and recovery",
