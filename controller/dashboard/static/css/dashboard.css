@@ -519,6 +519,11 @@ td.empty {
 }
 .form-actions { display: flex; justify-content: flex-end; margin-top: var(--sp-1); }
 
+/* ---- Error pages ------------------------------------------------------ */
+
+.error-actions { display: flex; align-items: center; gap: var(--sp-4); }
+.error-code { font-family: var(--font-mono); font-size: var(--text-sm); color: var(--text-3); }
+
 /* ---- Small screens ---------------------------------------------------- */
 
 @media (max-width: 720px) {

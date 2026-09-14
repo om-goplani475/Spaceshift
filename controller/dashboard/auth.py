@@ -218,6 +218,8 @@ def init_auth(app: Flask, state: StateBackend, settings: AuthSettings) -> None:
     app.before_request(_require_login)
     app.after_request(_add_security_headers)
     app.register_blueprint(bp)
+    for code in _ERROR_PAGES:
+        app.register_error_handler(code, _render_error)
 
     @app.context_processor
     def _auth_globals() -> dict[str, Any]:
@@ -240,6 +242,40 @@ def _add_security_headers(response):
     # URL, and the only inline handler moved into dashboard.js for this.
     response.headers.setdefault("Content-Security-Policy", "default-src 'self'; frame-ancestors 'none'")
     return response
+
+
+# ---- Error pages -----------------------------------------------------------
+
+# (heading, explanation) per status. The same handler serves JSON to
+# scripts and a page in the dashboard's design to browsers, decided by
+# the Accept header - so `curl /api/config` without a cookie still gets
+# {"error": ...} while a person who types the URL gets a sign-in link.
+_ERROR_PAGES: dict[int, tuple[str, str]] = {
+    401: ("Sign in required", "This needs a signed-in session. Sign in, then come back to this address."),
+    404: (
+        "Page not found",
+        "There's nothing at this address. The setup page, in particular, only exists until the first admin is created.",
+    ),
+    413: ("Request too large", "The body of that request is bigger than anything the dashboard accepts."),
+}
+
+_ERROR_JSON: dict[int, str] = {
+    401: "authentication required - sign in at /login and send the session cookie",
+    404: "not found",
+    413: "request body too large",
+}
+
+
+def _wants_html() -> bool:
+    return request.accept_mimetypes.best_match(["application/json", "text/html"]) == "text/html"
+
+
+def _render_error(error):
+    code = error.code
+    if not _wants_html():
+        return jsonify({"error": _ERROR_JSON[code]}), code
+    heading, explanation = _ERROR_PAGES[code]
+    return render_template("error.html", code=code, heading=heading, explanation=explanation), code
 
 
 # ---- Sessions --------------------------------------------------------------
@@ -293,7 +329,7 @@ def _require_login():
         return None
     if request.path.startswith("/api/"):
         # A script deserves a clear error, not a login page in JSON's place.
-        return jsonify({"error": "authentication required - sign in at /login and send the session cookie"}), 401
+        abort(401)
     if _state().count_users() == 0:
         # Fresh install (or a wiped database): there's nobody to log in
         # as, so the login page would be a dead end. /setup itself

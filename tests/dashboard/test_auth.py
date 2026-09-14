@@ -53,6 +53,27 @@ def test_every_non_public_route_requires_login(app):
             assert response.headers["Location"].startswith("/login"), path
 
 
+def test_error_pages_are_html_for_browsers_and_json_for_scripts(app, client):
+    anonymous = app.test_client()
+    browser = {"Accept": "text/html,application/xhtml+xml,*/*;q=0.8"}
+
+    page = anonymous.get("/api/config", headers=browser)
+    assert page.status_code == 401
+    assert "Sign in required" in page.data.decode()
+    assert 'href="/login?next=/api/config"' in page.data.decode()
+
+    script = anonymous.get("/api/config", headers={"Accept": "application/json"})
+    assert script.status_code == 401
+    assert script.get_json()["error"].startswith("authentication required")
+    # curl's default Accept is */* - a script, not a browser
+    assert anonymous.get("/api/config", headers={"Accept": "*/*"}).get_json()["error"]
+
+    missing = client.get("/setup", headers=browser)
+    assert missing.status_code == 404
+    assert "Page not found" in missing.data.decode()
+    assert client.get("/nope", headers={"Accept": "application/json"}).get_json() == {"error": "not found"}
+
+
 def test_public_routes_do_not_require_login(app):
     anonymous = app.test_client()
     assert anonymous.get("/login").status_code == 200

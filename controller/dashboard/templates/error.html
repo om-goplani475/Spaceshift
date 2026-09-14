@@ -1,0 +1,17 @@
+{% extends "base.html" %}
+{% set standalone = not current_user %}
+
+{% block title %}{{ heading }}{% endblock %}
+{% block heading %}{{ heading }}{% endblock %}
+{% block lede %}<p class="lede">{{ explanation }}</p>{% endblock %}
+
+{% block content %}
+<div class="error-actions">
+  {% if code == 401 %}
+  <a class="btn btn-primary" href="{{ url_for('auth.login', next=request.full_path.rstrip('?')) }}">Sign in</a>
+  {% else %}
+  <a class="btn btn-primary" href="{{ url_for('overview') }}">Back to the overview</a>
+  {% endif %}
+  <span class="error-code">HTTP {{ code }}</span>
+</div>
+{% endblock %}
