@@ -294,6 +294,11 @@ def _require_login():
     if request.path.startswith("/api/"):
         # A script deserves a clear error, not a login page in JSON's place.
         return jsonify({"error": "authentication required - sign in at /login and send the session cookie"}), 401
+    if _state().count_users() == 0:
+        # Fresh install (or a wiped database): there's nobody to log in
+        # as, so the login page would be a dead end. /setup itself
+        # explains what to do whether or not the token is set.
+        return redirect(url_for("auth.setup"))
     return redirect(url_for("auth.login", next=request.full_path.rstrip("?") if request.method == "GET" else None))
 
 
@@ -346,6 +351,8 @@ def healthz():
 def login():
     if g.get("user") is not None:
         return redirect(url_for("overview"))
+    if _state().count_users() == 0:
+        return redirect(url_for("auth.setup"))
     if request.method == "GET":
         return render_template("login.html", username="")
 

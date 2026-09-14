@@ -27,7 +27,7 @@ cp .env.example .env   # fill in POSTGRES_PASSWORD, SPACESHIFT_SECRET_KEY, SPACE
 docker compose up
 ```
 
-Then open `http://localhost:8089/setup` and create the first admin with the setup token from your `.env` (or run `docker compose exec dashboard python -m controller.dashboard.users create-admin <name>` instead). That page works exactly once.
+Then open `http://localhost:8089` - with no users yet it takes you to `/setup` - and create the first admin with the setup token from your `.env` (or run `docker compose exec dashboard python -m controller.dashboard.users create-admin <name>` instead). That page works exactly once.
 
 This starts three containers: the controller, its dashboard (below), and a Postgres container both use to track resize state (no separate database setup needed — they connect to it automatically using the password from `.env`). `docker compose up` refuses to start if `.env` is missing the password or the secret key, rather than silently running with a guessable one.
 

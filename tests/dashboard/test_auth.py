@@ -312,6 +312,14 @@ def _setup_form(**overrides):
     return form
 
 
+def test_fresh_install_redirects_to_setup_instead_of_login(empty_app):
+    client = empty_app.test_client()
+    assert client.get("/").headers["Location"] == "/setup"
+    assert client.get("/login").headers["Location"] == "/setup"
+    # the API stays a 401 - a script shouldn't be bounced to an HTML page
+    assert client.get("/api/status").status_code == 401
+
+
 def test_setup_is_404_once_a_user_exists(app):
     assert app.test_client().get("/setup").status_code == 404
     assert app.test_client().post("/setup", data=_setup_form()).status_code == 404
