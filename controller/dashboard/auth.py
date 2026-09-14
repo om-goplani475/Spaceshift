@@ -39,6 +39,7 @@ from flask import (
 from flask_wtf.csrf import CSRFProtect
 from werkzeug.middleware.proxy_fix import ProxyFix
 
+from controller.audit import ActorType, AuditAction, AuditActor, AuditEvent, record_audit_event
 from controller.state.base import StateBackend, UsernameTakenError, UserRecord
 
 logger = logging.getLogger(__name__)
@@ -372,6 +373,32 @@ def _too_many_attempts(retry_after: int, template: str, **context):
     return response, 429, {"Retry-After": str(retry_after)}
 
 
+def _record_failure(username: str, addr: str, action: AuditAction) -> None:
+    """Record a failed login/setup attempt for rate limiting and in the
+    audit log - plus an AUTH_LOCKOUT row the moment this failure is the
+    one that fills a window, so a lockout is one event, not one per
+    rejected retry."""
+    state = _state()
+    state.record_login_attempt(username, addr, succeeded=False)
+    actor = AuditActor.anonymous(addr, username)
+    record_audit_event(state, AuditEvent(actor, action, target_type="user", target_id=username))
+
+    since = datetime.now(UTC) - RATE_LIMIT_WINDOW
+    if len(state.recent_failure_times(since, username=username)) == MAX_FAILURES_PER_USERNAME:
+        logger.warning("username %r locked out for %s after repeated failures", username, RATE_LIMIT_WINDOW)
+        record_audit_event(state, AuditEvent(actor, AuditAction.AUTH_LOCKOUT, target_type="user", target_id=username))
+    if len(state.recent_failure_times(since, remote_addr=addr)) == MAX_FAILURES_PER_ADDRESS:
+        logger.warning("address %s locked out for %s after repeated failures", addr, RATE_LIMIT_WINDOW)
+        record_audit_event(state, AuditEvent(actor, AuditAction.AUTH_LOCKOUT, target_type="address", target_id=addr))
+
+
+def current_actor() -> AuditActor:
+    """The signed-in user as an audit actor - what every mutating route
+    passes to the state backend."""
+    user: UserRecord = g.user
+    return AuditActor.user(user.id, user.username, _client_addr())
+
+
 # ---- Views -----------------------------------------------------------------
 
 
@@ -407,20 +434,27 @@ def login():
     else:
         ok = user.is_active and verify_password(user.password_hash, password)
 
-    _state().record_login_attempt(username, addr, succeeded=ok)
     if not ok:
+        _record_failure(username, addr, AuditAction.AUTH_LOGIN_FAILED)
         logger.warning("failed login for %r from %s", username, addr)
         return render_template("login.html", error="Invalid username or password.", username=username), 401
 
+    _state().record_login_attempt(username, addr, succeeded=True)
     _state().touch_login(user.id)
     _login_session(user)
+    actor = AuditActor.user(user.id, user.username, addr)
+    record_audit_event(_state(), AuditEvent(actor, AuditAction.AUTH_LOGIN, target_type="user", target_id=user.username))
     logger.info("user %r signed in from %s", user.username, addr)
     return redirect(_safe_next_url())
 
 
 @bp.post("/logout")
 def logout():
+    user: UserRecord = g.user
     session.clear()
+    record_audit_event(
+        _state(), AuditEvent(current_actor(), AuditAction.AUTH_LOGOUT, target_type="user", target_id=user.username)
+    )
     return redirect(url_for("auth.login"))
 
 
@@ -449,7 +483,7 @@ def setup():
         return _too_many_attempts(retry_after, "setup.html", username=username)
 
     if not hmac.compare_digest(submitted_token.encode(), token.encode()):
-        state.record_login_attempt(SETUP_ATTEMPT_USERNAME, addr, succeeded=False)
+        _record_failure(SETUP_ATTEMPT_USERNAME, addr, AuditAction.AUTH_SETUP_TOKEN_REJECTED)
         logger.warning("wrong setup token from %s", addr)
         return render_template("setup.html", error="That setup token is not correct.", username=username), 401
 
@@ -459,8 +493,16 @@ def setup():
     if error is not None:
         return render_template("setup.html", error=error, username=username), 400
 
+    # The actor *is* the user being created; the backend fills in the id
+    # once the row exists (see create_user).
+    setup_event = AuditEvent(
+        AuditActor(ActorType.USER, username=username, remote_addr=addr),
+        AuditAction.USER_SETUP,
+        target_type="user",
+        target_id=username,
+    )
     try:
-        user = state.create_user(username, hash_password(password), only_if_no_users=True)
+        user = state.create_user(username, hash_password(password), only_if_no_users=True, audit=setup_event)
     except UsernameTakenError:
         user = None
     if user is None:

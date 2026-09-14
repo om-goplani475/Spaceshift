@@ -13,6 +13,7 @@ from __future__ import annotations
 
 from collections.abc import Iterator
 from contextlib import contextmanager
+from dataclasses import replace
 from datetime import UTC, datetime
 
 import psycopg2
@@ -20,7 +21,7 @@ import psycopg2.errors
 import psycopg2.extras
 import psycopg2.pool
 
-from controller.audit import AuditAction, AuditActor, AuditEvent, AuditFilters
+from controller.audit import ActorType, AuditAction, AuditActor, AuditEvent, AuditFilters
 from controller.config import MAX_CONCURRENT_RESIZES
 from controller.state.base import (
     TERMINAL_STATUSES,
@@ -212,6 +213,14 @@ _AUDIT_COLUMNS = (
 
 def _jsonb(value: dict | None):
     return psycopg2.extras.Json(value) if value is not None else None
+
+
+def _with_new_user_id(event: AuditEvent, user_id: int) -> AuditEvent:
+    """/setup's actor is the user being created, whose id only exists
+    after the insert - fill it in so the row is fully attributed."""
+    if event.actor.user_id is None and event.actor.actor_type == ActorType.USER:
+        return replace(event, actor=replace(event.actor, user_id=user_id))
+    return event
 
 
 def _prune_event(actor: AuditActor, deleted: int, older_than: datetime) -> AuditEvent:
@@ -634,7 +643,7 @@ class PostgresStateBackend(StateBackend):
                 raise UsernameTakenError(username) from exc
             user = self._row_to_user(cur.fetchone())
             if audit is not None:
-                self._insert_audit(cur, audit)
+                self._insert_audit(cur, _with_new_user_id(audit, user.id))
             return user
 
     def get_user(self, user_id: int) -> UserRecord | None:

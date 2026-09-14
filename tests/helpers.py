@@ -7,7 +7,7 @@ from collections.abc import Iterator
 from dataclasses import replace
 from datetime import UTC, datetime
 
-from controller.audit import AuditAction, AuditActor, AuditEvent, AuditFilters
+from controller.audit import ActorType, AuditAction, AuditActor, AuditEvent, AuditFilters
 from controller.connections.base import CommandResult, ConnectionTarget, Connector
 from controller.state.base import (
     TERMINAL_STATUSES,
@@ -311,6 +311,8 @@ class InMemoryStateBackend(StateBackend):
             if any(u.username.lower() == username.lower() for u in self._users.values()):
                 raise UsernameTakenError(username)
             if audit is not None:
+                if audit.actor.user_id is None and audit.actor.actor_type == ActorType.USER:
+                    audit = replace(audit, actor=replace(audit.actor, user_id=self._next_user_id))
                 self._append_audit(audit)
             user = UserRecord(
                 id=self._next_user_id,

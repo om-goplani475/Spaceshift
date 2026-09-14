@@ -10,7 +10,7 @@ from dataclasses import asdict
 from flask import Flask, jsonify, render_template, request
 
 from controller.config import DB_CONFIG_KEYS, Config, apply_db_overrides
-from controller.dashboard.auth import AuthSettings, init_auth
+from controller.dashboard.auth import AuthSettings, current_actor, init_auth
 from controller.state.base import TERMINAL_STATUSES, ResizeStatus, StateBackend
 
 _SCAN_LIST_LIMIT = 200
@@ -401,7 +401,7 @@ def create_app(state: StateBackend, auth: AuthSettings) -> Flask:
         autoresize = _parse_autoresize_body()
         if autoresize is None:
             return jsonify({"error": "body must be JSON {'autoresize': true|false}"}), 400
-        if not state.set_instance_autoresize(instance_id, autoresize):
+        if not state.set_instance_autoresize(instance_id, autoresize, audit=current_actor()):
             return jsonify({"error": f"no known instance {instance_id!r}"}), 404
         return jsonify({"instance_id": instance_id, "autoresize": autoresize})
 
@@ -410,7 +410,7 @@ def create_app(state: StateBackend, auth: AuthSettings) -> Flask:
         autoresize = _parse_autoresize_body()
         if autoresize is None:
             return jsonify({"error": "body must be JSON {'autoresize': true|false}"}), 400
-        if not state.set_volume_autoresize(volume_id, autoresize):
+        if not state.set_volume_autoresize(volume_id, autoresize, audit=current_actor()):
             return jsonify({"error": f"no known volume {volume_id!r}"}), 404
         return jsonify({"volume_id": volume_id, "autoresize": autoresize})
 
@@ -435,7 +435,7 @@ def create_app(state: StateBackend, auth: AuthSettings) -> Flask:
         except (ValueError, TypeError) as exc:
             return jsonify({"error": str(exc)}), 400
 
-        state.set_config(key, value)
+        state.set_config(key, value, audit=current_actor())
         return jsonify({"key": key, "value": value})
 
     return app

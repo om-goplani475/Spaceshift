@@ -18,6 +18,7 @@ import getpass
 import sys
 from collections.abc import Callable
 
+from controller.audit import AuditAction, AuditActor, AuditEvent
 from controller.dashboard.auth import hash_password, validate_password, validate_username
 from controller.state.base import LastActiveUserError, StateBackend, UsernameTakenError
 
@@ -36,6 +37,20 @@ def _prompt_password(username: str, prompt: Callable[[str], str]) -> str:
     return password
 
 
+def _cli_event(action: AuditAction, username: str, command: str, **changes) -> AuditEvent:
+    """Every CLI command is attributed to `cli` (there's no login inside
+    the container) with the command in `detail` - and never a password."""
+    return AuditEvent(
+        AuditActor.cli(),
+        action,
+        target_type="user",
+        target_id=username,
+        before=changes.get("before"),
+        after=changes.get("after"),
+        detail={"command": command},
+    )
+
+
 def _require_user(state: StateBackend, username: str):
     user = state.get_user_by_username(username)
     if user is None:
@@ -52,7 +67,9 @@ def create_admin(state: StateBackend, username: str, prompt: Callable[[str], str
         raise CliError(f"user {username!r} already exists - use reset-password to change their password")
     password = _prompt_password(username, prompt)
     try:
-        state.create_user(username, hash_password(password))
+        state.create_user(
+            username, hash_password(password), audit=_cli_event(AuditAction.USER_CREATE, username, "create-admin")
+        )
     except UsernameTakenError as exc:
         raise CliError(f"user {username!r} already exists") from exc
     return f"created user {username!r} - sign in at /login"
@@ -61,9 +78,23 @@ def create_admin(state: StateBackend, username: str, prompt: Callable[[str], str
 def reset_password(state: StateBackend, username: str, prompt: Callable[[str], str] = getpass.getpass) -> str:
     user = _require_user(state, username.strip().lower())
     password = _prompt_password(user.username, prompt)
-    state.set_password(user.id, hash_password(password))
+    state.set_password(
+        user.id,
+        hash_password(password),
+        audit=_cli_event(AuditAction.USER_PASSWORD_RESET, user.username, "reset-password"),
+    )
     if not user.is_active:
-        state.set_active(user.id, True)
+        state.set_active(
+            user.id,
+            True,
+            audit=_cli_event(
+                AuditAction.USER_PASSWORD_RESET,
+                user.username,
+                "reset-password",
+                before={"is_active": False},
+                after={"is_active": True},
+            ),
+        )
     return f"password reset for {user.username!r}; every existing session for them is signed out"
 
 
@@ -72,14 +103,24 @@ def unlock(state: StateBackend, username: str) -> str:
     state.clear_login_failures(user.username)
     # Also signs out any session that got in before the lockout - a
     # lockout is a "someone is trying this account" signal.
-    state.bump_session_generation(user.id)
+    state.bump_session_generation(user.id, audit=_cli_event(AuditAction.USER_UNLOCK, user.username, "unlock"))
     return f"cleared failed login attempts for {user.username!r}; every existing session for them is signed out"
 
 
 def deactivate(state: StateBackend, username: str) -> str:
     user = _require_user(state, username.strip().lower())
     try:
-        state.set_active(user.id, False)
+        state.set_active(
+            user.id,
+            False,
+            audit=_cli_event(
+                AuditAction.USER_DEACTIVATE,
+                user.username,
+                "deactivate",
+                before={"is_active": True},
+                after={"is_active": False},
+            ),
+        )
     except LastActiveUserError as exc:
         raise CliError(f"{user.username!r} is the last active user - create another admin first") from exc
     return f"deactivated {user.username!r}; every existing session for them is signed out"
