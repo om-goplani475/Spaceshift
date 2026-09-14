@@ -441,7 +441,7 @@ def test_live_refresh_fetches_the_current_page(state, client):
     # Each page is its own route now - refreshing "/" from /instances
     # would swap in nothing (the ids don't match) and look like a dead poll.
     js = client.get("/static/js/dashboard.js").data.decode()
-    assert "fetch(location.pathname)" in js
+    assert "fetch(location.pathname + location.search)" in js
 
 
 def test_script_includes_live_refresh(state, client):

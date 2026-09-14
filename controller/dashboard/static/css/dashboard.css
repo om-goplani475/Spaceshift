@@ -395,6 +395,7 @@ td.empty {
 }
 .badge-green { color: var(--green); background: color-mix(in srgb, var(--green) 14%, transparent); }
 .badge-red { color: var(--red); background: color-mix(in srgb, var(--red) 14%, transparent); }
+.badge-blue { color: var(--accent); background: color-mix(in srgb, var(--accent) 12%, transparent); }
 .badge-amber { color: var(--amber); background: color-mix(in srgb, var(--amber) 16%, transparent); }
 .badge-muted { color: var(--text-2); background: color-mix(in srgb, var(--text-3) 16%, transparent); }
 
@@ -518,6 +519,14 @@ td.empty {
   font-size: var(--text-sm);
 }
 .form-actions { display: flex; justify-content: flex-end; margin-top: var(--sp-1); }
+
+/* ---- Audit log -------------------------------------------------------- */
+
+.audit-filters input[type="search"] { min-width: 160px; flex: 0 1 200px; }
+.audit-filters input[type="date"] { min-width: 150px; }
+.audit-filters .audit-export { margin-left: auto; }
+.change { font-family: var(--font-mono); font-size: 12.5px; white-space: nowrap; }
+.pager a.btn { text-decoration: none; }
 
 /* ---- Error pages ------------------------------------------------------ */
 

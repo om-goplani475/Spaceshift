@@ -270,7 +270,7 @@ wireSettingsUpdateButton();
 // source of truth for what a row looks like. Filter/search inputs live
 // outside the swapped elements, so they're untouched.
 const POLL_INTERVAL_MS = 10000;
-const SWAP_IDS = ["dashboard-stats", "instances-tbody", "volumes-tbody", "resize-tbody", "scan-tbody"];
+const SWAP_IDS = ["dashboard-stats", "instances-tbody", "volumes-tbody", "resize-tbody", "scan-tbody", "audit-tbody"];
 let refreshInFlight = false;
 let lastRefreshedAt = Date.now();
 
@@ -288,12 +288,13 @@ async function refreshLiveData() {
   refreshInFlight = true;
   if (liveIndicator) liveIndicator.dataset.state = "refreshing";
   try {
-    const resp = await fetch(location.pathname);
+    // Query string included: the audit page's filters live there.
+    const resp = await fetch(location.pathname + location.search);
     // The session expired (or was revoked) and the server sent us to the
     // sign-in page - go there properly instead of silently showing stale
     // data with a green "Live" dot.
     if (resp.redirected && new URL(resp.url).pathname === "/login") {
-      location.href = "/login?next=" + encodeURIComponent(location.pathname);
+      location.href = "/login?next=" + encodeURIComponent(location.pathname + location.search);
       return;
     }
     if (!resp.ok) throw new Error("refresh failed: " + resp.status);

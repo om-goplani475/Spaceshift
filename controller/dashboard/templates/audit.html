@@ -1,0 +1,66 @@
+{% extends "base.html" %}
+{% from "_macros.html" import empty_row with context %}
+
+{% block title %}Audit log{% endblock %}
+{% block heading %}Audit log{% endblock %}
+{% block lede %}
+<p class="lede">Who changed what, when, and from where. Sign-ins, setting changes, autoresize toggles, and user administration - the controller's own resizes are on the <a href="{{ url_for('overview') }}">Overview</a>.</p>
+{% endblock %}
+
+{% block content %}
+<form class="filters audit-filters" method="get" action="{{ url_for('audit') }}">
+  <input type="search" name="actor" value="{{ args.get('actor', '') }}" placeholder="Username" aria-label="Filter by username"
+         autocapitalize="none" spellcheck="false">
+  <select name="action" aria-label="Filter by action">
+    <option value="">All actions</option>
+    {% for a in actions %}<option value="{{ a.value }}" {{ "selected" if args.get('action') == a.value }}>{{ a.value }}</option>{% endfor %}
+  </select>
+  <input type="search" name="target" value="{{ args.get('target', '') }}" placeholder="Target (vol-…, i-…, key)" aria-label="Filter by target">
+  <input type="date" name="since" value="{{ args.get('since', '') }}" aria-label="From date">
+  <input type="date" name="until" value="{{ args.get('until', '') }}" aria-label="To date">
+  <button type="submit" class="btn">Filter</button>
+  {% if filtered %}<a class="btn btn-quiet" href="{{ url_for('audit') }}">Clear</a>{% endif %}
+  <a class="btn btn-quiet audit-export" href="{{ export_url }}" title="Download every matching row as CSV">Export CSV</a>
+</form>
+{% if error %}<p class="form-error" role="alert">{{ error }}</p>{% endif %}
+<div class="panel">
+  <table id="audit-table">
+    <thead><tr>
+      <th>When</th><th>Who</th><th>Action</th><th>Target</th><th>Account</th><th>Change</th><th>From</th>
+    </tr></thead>
+    <tbody id="audit-tbody">
+    {% for row in rows %}
+    {% set r = row.r %}
+    <tr>
+      <td class="ts" data-ts="{{ r.created_at.isoformat() }}"></td>
+      <td>
+        {# Only a signed-in user is a "who". A failed login's typed name is its target, not its actor. #}
+        {% if r.actor_type == "user" %}<span class="mono">{{ r.actor_username }}</span>
+        {% else %}<span class="muted-note">{{ r.actor_type }}</span>{% endif %}
+      </td>
+      <td><span class="badge {{ audit_badge(r.action) }}">{{ r.action }}</span></td>
+      <td class="mono">{{ r.target_id or "" }}</td>
+      <td>{{ r.account_name or "" }}</td>
+      <td>
+        {% if row.change %}<span class="change">{{ row.change }}</span>
+        {% elif r.detail %}<span class="muted-note">{% for k, v in r.detail.items() %}{{ k }}={{ v }}{{ ", " if not loop.last }}{% endfor %}</span>{% endif %}
+      </td>
+      <td class="mono">{{ r.remote_addr or "" }}</td>
+    </tr>
+    {% else %}
+    {% if filtered %}
+    {{ empty_row(7, "Nothing matches these filters.", "") }}
+    {% else %}
+    {{ empty_row(7, "No activity recorded yet.", "Sign-ins and changes made from this dashboard will appear here.") }}
+    {% endif %}
+    {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% if newest_url or older_url %}
+<div class="pager">
+  {% if newest_url %}<a class="btn" href="{{ newest_url }}">Newest</a>{% endif %}
+  {% if older_url %}<a class="btn" href="{{ older_url }}">Older</a>{% endif %}
+</div>
+{% endif %}
+{% endblock %}

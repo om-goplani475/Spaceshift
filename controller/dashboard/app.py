@@ -6,14 +6,19 @@ the scheduler process; it shares nothing with it but the database.
 from __future__ import annotations
 
 from dataclasses import asdict
+from datetime import UTC, datetime, timedelta
 
-from flask import Flask, jsonify, render_template, request
+from flask import Flask, Response, jsonify, render_template, request, stream_with_context, url_for
 
+from controller.audit import AuditAction, AuditFilters, iter_csv, record_to_json
 from controller.config import DB_CONFIG_KEYS, Config, apply_db_overrides
 from controller.dashboard.auth import AuthSettings, current_actor, init_auth
 from controller.state.base import TERMINAL_STATUSES, ResizeStatus, StateBackend
 
 _SCAN_LIST_LIMIT = 200
+_AUDIT_PAGE_SIZE = 50
+_AUDIT_API_DEFAULT_LIMIT = 100
+_AUDIT_API_MAX_LIMIT = 1000
 
 # Dataclass defaults only (no config.yaml involved - the dashboard doesn't
 # load it) - used purely to show "what applies if this key is unset" next
@@ -137,6 +142,21 @@ _DECISION_BADGES = {
 }
 
 
+_AUDIT_BADGES = {
+    AuditAction.AUTH_LOGIN_FAILED: "badge-amber",
+    AuditAction.AUTH_LOCKOUT: "badge-red",
+    AuditAction.AUTH_SETUP_TOKEN_REJECTED: "badge-red",
+    AuditAction.USER_DEACTIVATE: "badge-amber",
+    AuditAction.CONFIG_SET: "badge-blue",
+    AuditAction.INSTANCE_AUTORESIZE: "badge-blue",
+    AuditAction.VOLUME_AUTORESIZE: "badge-blue",
+}
+
+
+def _audit_badge(action: str) -> str:
+    return _AUDIT_BADGES.get(action, "badge-muted")
+
+
 def _status_badge(status: ResizeStatus) -> str:
     return _STATUS_BADGES.get(status, "badge-muted")
 
@@ -254,8 +274,74 @@ _NAV_ITEMS = [
     ("overview", "Overview"),
     ("instances", "Instances"),
     ("volumes", "Volumes"),
+    ("audit", "Audit log"),
     ("settings", "Settings"),
 ]
+
+
+class _BadFilter(ValueError):
+    pass
+
+
+def _parse_date(raw: str | None, *, end_of_day: bool) -> datetime | None:
+    """A date (YYYY-MM-DD, treated as a whole UTC day) or a full ISO 8601
+    timestamp. `until` given as a date means "through that day", so it
+    becomes the next midnight (the filter is exclusive)."""
+    if not raw:
+        return None
+    try:
+        parsed = datetime.fromisoformat(raw)
+    except ValueError as exc:
+        raise _BadFilter(f"{raw!r} is not a date (YYYY-MM-DD) or ISO 8601 timestamp") from exc
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=UTC)
+    if end_of_day and len(raw) == 10:
+        parsed += timedelta(days=1)
+    return parsed
+
+
+def _parse_audit_filters(args) -> AuditFilters:
+    action = args.get("action") or None
+    if action is not None:
+        try:
+            action = AuditAction(action)
+        except ValueError as exc:
+            raise _BadFilter(f"unknown action {action!r}") from exc
+    return AuditFilters(
+        actor=(args.get("actor") or "").strip().lower() or None,
+        action=action,
+        target=(args.get("target") or "").strip() or None,
+        since=_parse_date(args.get("since"), end_of_day=False),
+        until=_parse_date(args.get("until"), end_of_day=True),
+    )
+
+
+def _parse_before(args) -> int | None:
+    raw = args.get("before")
+    if not raw:
+        return None
+    if not raw.isdigit():
+        raise _BadFilter("before must be a row id")
+    return int(raw)
+
+
+def _describe_change(record) -> str | None:
+    """`old → new` for the page, from the before/after JSON. Only the
+    two shapes the catalogue produces; anything else shows nothing here
+    and everything in the export."""
+    before, after = record.before or {}, record.after or {}
+    for key in ("autoresize", "value", "is_active"):
+        if key in before or key in after:
+            return f"{_scalar(before.get(key))} → {_scalar(after.get(key))}"
+    return None
+
+
+def _scalar(value) -> str:
+    if value is None:
+        return "—"
+    if isinstance(value, bool):
+        return "on" if value else "off"
+    return str(value)
 
 
 def create_app(state: StateBackend, auth: AuthSettings) -> Flask:
@@ -266,7 +352,12 @@ def create_app(state: StateBackend, auth: AuthSettings) -> Flask:
 
     @app.context_processor
     def _template_globals():
-        return {"nav_items": _NAV_ITEMS, "status_badge": _status_badge, "decision_badge": _decision_badge}
+        return {
+            "nav_items": _NAV_ITEMS,
+            "status_badge": _status_badge,
+            "decision_badge": _decision_badge,
+            "audit_badge": _audit_badge,
+        }
 
     @app.get("/")
     def overview():
@@ -318,6 +409,61 @@ def create_app(state: StateBackend, auth: AuthSettings) -> Flask:
     @app.get("/settings")
     def settings():
         return render_template("settings.html", setting_groups=_group_settings(_list_settings(state)))
+
+    @app.get("/audit")
+    def audit():
+        # Server-side filtering and keyset paging, unlike the other tables:
+        # this is the one table that legitimately holds a year of rows, and
+        # "what did alice change in March" has to be answerable here, not
+        # only from the CSV. The same query string drives /api/audit.
+        filter_args = {k: v for k, v in request.args.items() if k != "before" and v}
+        context = {
+            "actions": list(AuditAction),
+            "args": request.args,
+            "filtered": bool(filter_args),
+            "export_url": url_for("api_audit", format="csv", **filter_args),
+            "newest_url": url_for("audit", **filter_args) if request.args.get("before") else None,
+            "older_url": None,
+        }
+        try:
+            filters = _parse_audit_filters(request.args)
+            before = _parse_before(request.args)
+        except _BadFilter as exc:
+            return render_template("audit.html", error=str(exc), rows=[], **context), 400
+        rows = state.list_audit(filters, limit=_AUDIT_PAGE_SIZE + 1, before_id=before)
+        if len(rows) > _AUDIT_PAGE_SIZE:
+            rows = rows[:_AUDIT_PAGE_SIZE]
+            context["older_url"] = url_for("audit", before=rows[-1].id, **filter_args)
+        return render_template("audit.html", rows=[{"r": r, "change": _describe_change(r)} for r in rows], **context)
+
+    @app.get("/api/audit")
+    def api_audit():
+        try:
+            filters = _parse_audit_filters(request.args)
+            before = _parse_before(request.args)
+        except _BadFilter as exc:
+            return jsonify({"error": str(exc)}), 400
+
+        if request.args.get("format") == "csv":
+            filename = f"spaceshift-audit-{datetime.now(UTC):%Y-%m-%d}.csv"
+            # Streamed: the backend walks a server-side cursor and the CSV
+            # writer emits a line per row, so an export never buffers the
+            # whole log in the worker. stream_with_context keeps the
+            # request (and its session) alive while the generator runs.
+            return Response(
+                stream_with_context(iter_csv(state.iter_audit(filters))),
+                mimetype="text/csv",
+                headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+            )
+
+        raw_limit = request.args.get("limit", str(_AUDIT_API_DEFAULT_LIMIT))
+        if not raw_limit.isdigit() or not 1 <= int(raw_limit) <= _AUDIT_API_MAX_LIMIT:
+            return jsonify({"error": f"limit must be 1-{_AUDIT_API_MAX_LIMIT}"}), 400
+        limit = int(raw_limit)
+        rows = state.list_audit(filters, limit=limit + 1, before_id=before)
+        has_more = len(rows) > limit
+        rows = rows[:limit]
+        return jsonify({"rows": [record_to_json(r) for r in rows], "next_before": rows[-1].id if has_more else None})
 
     @app.get("/api/status")
     def api_status():
