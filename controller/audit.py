@@ -56,6 +56,11 @@ class AuditAction(enum.StrEnum):
     USER_PASSWORD_RESET = "user.password_reset"
     USER_UNLOCK = "user.unlock"
     USER_DEACTIVATE = "user.deactivate"
+    USER_REACTIVATE = "user.reactivate"
+    USER_PASSWORD_CHANGE = "user.password_change"  # by the user themselves
+    USER_ROLE_SET = "user.role_set"
+    USER_ROLE_REVOKED = "user.role_revoked"
+    ACCESS_DENIED = "access.denied"
     AUTH_LOGIN = "auth.login"
     AUTH_LOGIN_FAILED = "auth.login_failed"
     AUTH_LOCKOUT = "auth.lockout"
@@ -110,14 +115,27 @@ class AuditEvent:
 
 
 @dataclass(frozen=True)
+class AuditScope:
+    """What a non-admin may see: rows in their readable accounts, plus
+    rows about themselves (their own logins, password changes, and admin
+    actions targeting their username). Admins pass no scope at all."""
+
+    account_names: frozenset[str]
+    user_id: int
+    username: str
+
+
+@dataclass(frozen=True)
 class AuditFilters:
-    """What /audit and /api/audit accept. All optional, ANDed."""
+    """What /audit and /api/audit accept. All optional, ANDed. `scope` is
+    not user input - the route sets it from the session."""
 
     actor: str | None = None  # exact username
     action: AuditAction | None = None
     target: str | None = None  # substring of target_id
     since: datetime | None = None  # inclusive
     until: datetime | None = None  # exclusive
+    scope: AuditScope | None = None
 
 
 # Actions where the row is a plain event, not the shadow of a state
@@ -129,6 +147,7 @@ EVENT_ONLY_ACTIONS = frozenset(
         AuditAction.AUTH_LOCKOUT,
         AuditAction.AUTH_SETUP_TOKEN_REJECTED,
         AuditAction.AUTH_LOGOUT,
+        AuditAction.ACCESS_DENIED,
     }
 )
 
@@ -199,6 +218,7 @@ __all__ = [
     "AuditActor",
     "AuditEvent",
     "AuditFilters",
+    "AuditScope",
     "CSV_COLUMNS",
     "EVENT_ONLY_ACTIONS",
     "iter_csv",

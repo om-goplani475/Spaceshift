@@ -20,7 +20,7 @@ from collections.abc import Callable
 
 from controller.audit import AuditAction, AuditActor, AuditEvent
 from controller.dashboard.auth import hash_password, validate_password, validate_username
-from controller.state.base import LastActiveUserError, StateBackend, UsernameTakenError
+from controller.state.base import LastAdminError, StateBackend, UsernameTakenError
 
 
 class CliError(Exception):
@@ -121,8 +121,8 @@ def deactivate(state: StateBackend, username: str) -> str:
                 after={"is_active": False},
             ),
         )
-    except LastActiveUserError as exc:
-        raise CliError(f"{user.username!r} is the last active user - create another admin first") from exc
+    except LastAdminError as exc:
+        raise CliError(f"{user.username!r} is the last active admin - create another admin first") from exc
     return f"deactivated {user.username!r}; every existing session for them is signed out"
 
 

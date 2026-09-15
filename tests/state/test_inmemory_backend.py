@@ -9,7 +9,7 @@ from datetime import UTC, datetime, timedelta
 import pytest
 
 from controller.audit import AuditAction, AuditActor, AuditEvent, AuditFilters
-from controller.state.base import LastActiveUserError, ResizeStatus, UsernameTakenError
+from controller.state.base import LastAdminError, ResizeStatus, UsernameTakenError
 from tests.helpers import InMemoryStateBackend
 
 _ACCOUNT = "default"
@@ -221,19 +221,90 @@ def test_set_password_bumps_session_generation(state):
     assert updated.session_generation == user.session_generation + 1
 
 
-def test_deactivate_refuses_last_active_user(state):
+def test_deactivate_refuses_last_active_admin(state):
     alice = state.create_user("alice", "hash")
-    with pytest.raises(LastActiveUserError):
+    state.set_role(alice.id, "*", "admin", None)
+    with pytest.raises(LastAdminError):
         state.set_active(alice.id, False)
     assert state.get_user(alice.id).is_active
 
     bob = state.create_user("bob", "hash")
+    state.set_role(bob.id, "*", "admin", None)
     state.set_active(bob.id, False)
     assert not state.get_user(bob.id).is_active
     assert state.get_user(bob.id).session_generation == bob.session_generation + 1
-    # bob is now inactive, so alice is the last active user again
-    with pytest.raises(LastActiveUserError):
+    # bob is now inactive, so alice is the last active admin again
+    with pytest.raises(LastAdminError):
         state.set_active(alice.id, False)
+
+    # a non-admin can always be deactivated
+    carol = state.create_user("carol", "hash")
+    state.set_role(carol.id, "prod", "operator", alice.id)
+    state.set_active(carol.id, False)
+
+
+def test_roles_grant_replace_revoke_and_admin_only_on_wildcard(state):
+    alice = state.create_user("alice", "hash")
+    assert state.set_role(alice.id, "prod", "viewer", None) is None
+    previous = state.set_role(alice.id, "prod", "operator", None)
+    assert previous.role == "viewer"
+    with pytest.raises(ValueError):
+        state.set_role(alice.id, "prod", "admin", None)
+    assert [(g.account_name, g.role) for g in state.list_roles(alice.id)] == [("prod", "operator")]
+    assert state.revoke_role(alice.id, "prod").role == "operator"
+    assert state.revoke_role(alice.id, "prod") is None
+    assert state.list_roles(alice.id) == []
+
+
+def test_last_admin_guard_on_demote_and_revoke(state):
+    alice = state.create_user("alice", "hash")
+    state.set_role(alice.id, "*", "admin", None)
+    with pytest.raises(LastAdminError):
+        state.set_role(alice.id, "*", "operator", None)
+    with pytest.raises(LastAdminError):
+        state.revoke_role(alice.id, "*")
+    bob = state.create_user("bob", "hash")
+    state.set_role(bob.id, "*", "admin", None)
+    assert state.count_active_admins() == 2
+    state.revoke_role(alice.id, "*")
+    assert state.count_active_admins() == 1
+
+
+def test_grant_admin_to_all_users_if_no_roles_is_one_time(state):
+    # The pre-RBAC world: users exist, no grants at all. bob was deactivated
+    # back then and must not come back as an admin.
+    alice = state.create_user("alice", "hash")
+    bob = state.create_user("bob", "hash")
+    state.set_active(bob.id, False)
+    assert state.grant_admin_to_all_users_if_no_roles() == ["alice"]
+    assert state.list_roles(alice.id)[0].role == "admin"
+    assert state.grant_admin_to_all_users_if_no_roles() == []
+
+
+def test_sync_accounts_marks_removed_ones_but_keeps_them(state):
+    state.sync_accounts(["prod", "staging"])
+    state.sync_accounts(["prod"])
+    accounts = {a.name: a.in_config for a in state.list_accounts()}
+    assert accounts == {"prod": True, "staging": False}
+
+
+def test_scoped_lists(state):
+    state.upsert_instance("prod", "i-p", "us-east-1", "t3.micro", "running")
+    state.upsert_instance("dev", "i-d", "us-east-1", "t3.micro", "running")
+    state.upsert_volume("prod", "vol-p", "i-p", "us-east-1", 100, "/dev/xvdf")
+    state.upsert_volume("dev", "vol-d", "i-d", "us-east-1", 100, "/dev/xvdf")
+    state.record_scan("prod", "us-east-1", "vol-p", "i-p", 100, 80, 50.0, "below_threshold")
+    state.record_scan("dev", "us-east-1", "vol-d", "i-d", 100, 80, 50.0, "below_threshold")
+    state.create_if_absent("vol-p", "i-p", 100, 120, account_name="prod")
+    state.create_if_absent("vol-d", "i-d", 100, 120, account_name="dev")
+
+    only_dev = frozenset({"dev"})
+    assert [i.instance_id for i in state.list_instances(account_names=only_dev)] == ["i-d"]
+    assert [v.volume_id for v in state.list_volumes(account_names=only_dev)] == ["vol-d"]
+    assert [s.volume_id for s in state.list_scans(account_names=only_dev)] == ["vol-d"]
+    assert [r.volume_id for r in state.list_all(account_names=only_dev)] == ["vol-d"]
+    assert state.list_all(account_names=frozenset()) == []  # empty scope sees nothing
+    assert len(state.list_all()) == 2  # None = unrestricted
 
 
 def test_recent_failure_times_filters_by_username_and_address(state):
@@ -284,7 +355,8 @@ def test_toggle_writes_audit_row_with_previous_value_and_account(state):
 def test_refused_change_writes_no_audit_row(state):
     assert not state.set_volume_autoresize("vol-missing", True, audit=_actor())
     alice = state.create_user("alice", "hash")
-    with pytest.raises(LastActiveUserError):
+    state.set_role(alice.id, "*", "admin", None)
+    with pytest.raises(LastAdminError):
         state.set_active(alice.id, False, audit=AuditEvent(_actor(), AuditAction.USER_DEACTIVATE))
     assert state.list_audit(AuditFilters(), limit=10) == []
 

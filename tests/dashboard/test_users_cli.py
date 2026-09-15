@@ -64,11 +64,13 @@ def test_unlock_clears_failures_and_bumps_generation(state):
     assert state.get_user(alice.id).session_generation == alice.session_generation + 1
 
 
-def test_deactivate_refuses_the_last_active_user(state):
-    state.create_user("alice", hash_password("a long enough password"))
-    with pytest.raises(CliError, match="last active user"):
+def test_deactivate_refuses_the_last_active_admin(state):
+    alice = state.create_user("alice", hash_password("a long enough password"))
+    state.set_role(alice.id, "*", "admin", None)
+    with pytest.raises(CliError, match="last active admin"):
         deactivate(state, "alice")
-    state.create_user("bob", hash_password("a long enough password"))
+    bob = state.create_user("bob", hash_password("a long enough password"))
+    state.set_role(bob.id, "*", "admin", None)
     assert "deactivated 'alice'" in deactivate(state, "alice")
 
 

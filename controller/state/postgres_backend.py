@@ -25,11 +25,14 @@ from controller.audit import ActorType, AuditAction, AuditActor, AuditEvent, Aud
 from controller.config import MAX_CONCURRENT_RESIZES
 from controller.state.base import (
     TERMINAL_STATUSES,
+    WILDCARD_ACCOUNT,
+    AccountRecord,
     AuditRecord,
     InstanceRecord,
-    LastActiveUserError,
+    LastAdminError,
     ResizeRecord,
     ResizeStatus,
+    RoleGrant,
     ScanRecord,
     StateBackend,
     UsernameTakenError,
@@ -192,6 +195,48 @@ CREATE TABLE IF NOT EXISTS audit_log (
 CREATE INDEX IF NOT EXISTS idx_audit_log_created_at ON audit_log (created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_audit_log_actor ON audit_log (actor_username, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_audit_log_target ON audit_log (target_type, target_id, created_at DESC);
+
+-- Set when an admin chose the password (create/reset); the user is sent
+-- to /account until they replace it.
+ALTER TABLE users ADD COLUMN IF NOT EXISTS must_change_password BOOLEAN NOT NULL DEFAULT FALSE;
+
+-- The dashboard scopes resize activity by account. Backfilled below from
+-- the volume row for rows that predate the column.
+ALTER TABLE resize_state ADD COLUMN IF NOT EXISTS account_name TEXT NOT NULL DEFAULT '';
+
+-- Every AWS account the controller manages or once managed. Seeded from
+-- config.yaml by the controller at startup (sync_accounts); never deleted
+-- because instances/volumes/audit rows keep referring to the name.
+CREATE TABLE IF NOT EXISTS accounts (
+    name           TEXT PRIMARY KEY,
+    first_seen_at  TIMESTAMPTZ NOT NULL,
+    last_seen_at   TIMESTAMPTZ NOT NULL,
+    in_config      BOOLEAN NOT NULL
+);
+
+-- One row per (user, account) grant; '*' is the wildcard account. admin
+-- is global by definition, so it may only be granted on '*'. No FK to
+-- accounts: '*' isn't one, and a grant may name an account that is
+-- temporarily out of config.yaml.
+CREATE TABLE IF NOT EXISTS user_account_roles (
+    user_id       INTEGER NOT NULL REFERENCES users(id),
+    account_name  TEXT NOT NULL,
+    role          TEXT NOT NULL CHECK (role IN ('viewer', 'operator', 'admin')),
+    granted_at    TIMESTAMPTZ NOT NULL,
+    granted_by    INTEGER REFERENCES users(id),
+    PRIMARY KEY (user_id, account_name),
+    CHECK (role <> 'admin' OR account_name = '*')
+);
+
+-- One-time backfills for databases from before multi-account support and
+-- before resize_state carried an account. '' was the implicit
+-- single-account name; 'default' is what config.yaml.example calls it.
+-- Idempotent: each touches only rows still at ''.
+UPDATE instances SET account_name = 'default' WHERE account_name = '';
+UPDATE volumes SET account_name = 'default' WHERE account_name = '';
+UPDATE scan_log SET account_name = 'default' WHERE account_name = '';
+UPDATE resize_state r SET account_name = v.account_name
+    FROM volumes v WHERE v.volume_id = r.volume_id AND r.account_name = '';
 """
 
 _TERMINAL_STATUS_VALUES = [s.value for s in TERMINAL_STATUSES]
@@ -204,11 +249,24 @@ _SCHEMA_INIT_LOCK_KEY = 727701
 # one short transaction, so contention is a non-issue.
 _USERS_LOCK_KEY = 727702
 
-_USER_COLUMNS = "id, username, password_hash, is_active, session_generation, created_at, last_login_at"
+_USER_COLUMNS = (
+    "id, username, password_hash, is_active, session_generation, created_at, last_login_at, must_change_password"
+)
 _AUDIT_COLUMNS = (
     "id, created_at, actor_type, actor_user_id, actor_username, action, target_type, target_id, "
     "account_name, remote_addr, before, after, detail"
 )
+
+
+_ROLE_COLUMNS = "user_id, account_name, role, granted_at, granted_by"
+
+
+def _scope_clause(account_names: frozenset[str] | None) -> tuple[str, list]:
+    """WHERE fragment for the dashboard's readable-accounts scope. None is
+    unrestricted (admin); an empty set matches nothing, deliberately."""
+    if account_names is None:
+        return "TRUE", []
+    return "account_name = ANY(%s)", [list(account_names)]
 
 
 def _jsonb(value: dict | None):
@@ -286,7 +344,7 @@ class PostgresStateBackend(StateBackend):
             self._pool.putconn(conn, close=broken)
 
     def create_if_absent(
-        self, volume_id: str, instance_id: str, from_size_gb: int, to_size_gb: int
+        self, volume_id: str, instance_id: str, from_size_gb: int, to_size_gb: int, account_name: str = ""
     ) -> ResizeRecord | None:
         now = datetime.now(UTC)
         with self._cursor(commit=True) as cur:
@@ -299,8 +357,8 @@ class PostgresStateBackend(StateBackend):
                 """
                 INSERT INTO resize_state
                     (volume_id, instance_id, status, from_size_gb, to_size_gb, extend_attempts,
-                     created_at, updated_at)
-                VALUES (%s, %s, %s, %s, %s, 0, %s, %s)
+                     created_at, updated_at, account_name)
+                VALUES (%s, %s, %s, %s, %s, 0, %s, %s, %s)
                 ON CONFLICT (volume_id) DO UPDATE SET
                     instance_id     = EXCLUDED.instance_id,
                     status          = EXCLUDED.status,
@@ -308,7 +366,8 @@ class PostgresStateBackend(StateBackend):
                     to_size_gb      = EXCLUDED.to_size_gb,
                     extend_attempts = 0,
                     created_at      = EXCLUDED.created_at,
-                    updated_at      = EXCLUDED.updated_at
+                    updated_at      = EXCLUDED.updated_at,
+                    account_name    = EXCLUDED.account_name
                 WHERE resize_state.status = ANY(%s)
                 """,
                 (
@@ -319,6 +378,7 @@ class PostgresStateBackend(StateBackend):
                     to_size_gb,
                     now,
                     now,
+                    account_name,
                     _TERMINAL_STATUS_VALUES,
                 ),
             )
@@ -365,9 +425,10 @@ class PostgresStateBackend(StateBackend):
             columns = [desc[0] for desc in cur.description]
         return [self._row_to_record(dict(zip(columns, row, strict=True))) for row in rows]
 
-    def list_all(self, limit: int = 100) -> list[ResizeRecord]:
+    def list_all(self, limit: int = 100, account_names: frozenset[str] | None = None) -> list[ResizeRecord]:
+        where, params = _scope_clause(account_names)
         with self._cursor() as cur:
-            cur.execute("SELECT * FROM resize_state ORDER BY updated_at DESC LIMIT %s", (limit,))
+            cur.execute(f"SELECT * FROM resize_state WHERE {where} ORDER BY updated_at DESC LIMIT %s", [*params, limit])
             rows = cur.fetchall()
             columns = [desc[0] for desc in cur.description]
         return [self._row_to_record(dict(zip(columns, row, strict=True))) for row in rows]
@@ -419,9 +480,10 @@ class PostgresStateBackend(StateBackend):
                 ),
             )
 
-    def list_scans(self, limit: int = 200) -> list[ScanRecord]:
+    def list_scans(self, limit: int = 200, account_names: frozenset[str] | None = None) -> list[ScanRecord]:
+        where, params = _scope_clause(account_names)
         with self._cursor() as cur:
-            cur.execute("SELECT * FROM scan_log ORDER BY timestamp DESC LIMIT %s", (limit,))
+            cur.execute(f"SELECT * FROM scan_log WHERE {where} ORDER BY timestamp DESC LIMIT %s", [*params, limit])
             rows = cur.fetchall()
             columns = [desc[0] for desc in cur.description]
         return [ScanRecord(**dict(zip(columns, row, strict=True))) for row in rows]
@@ -494,10 +556,14 @@ class PostgresStateBackend(StateBackend):
             )
 
     def list_instances(
-        self, account_name: str | None = None, region: str | None = None, include_stale: bool = False
+        self,
+        account_name: str | None = None,
+        region: str | None = None,
+        include_stale: bool = False,
+        account_names: frozenset[str] | None = None,
     ) -> list[InstanceRecord]:
-        query = "SELECT * FROM instances WHERE TRUE"
-        params: list = []
+        scope_where, params = _scope_clause(account_names)
+        query = f"SELECT * FROM instances WHERE {scope_where}"
         if account_name is not None:
             query += " AND account_name = %s"
             params.append(account_name)
@@ -514,10 +580,14 @@ class PostgresStateBackend(StateBackend):
         return [InstanceRecord(**dict(zip(columns, row, strict=True))) for row in rows]
 
     def list_volumes(
-        self, account_name: str | None = None, region: str | None = None, include_stale: bool = False
+        self,
+        account_name: str | None = None,
+        region: str | None = None,
+        include_stale: bool = False,
+        account_names: frozenset[str] | None = None,
     ) -> list[VolumeRecord]:
-        query = "SELECT * FROM volumes WHERE TRUE"
-        params: list = []
+        scope_where, params = _scope_clause(account_names)
+        query = f"SELECT * FROM volumes WHERE {scope_where}"
         if account_name is not None:
             query += " AND account_name = %s"
             params.append(account_name)
@@ -532,6 +602,24 @@ class PostgresStateBackend(StateBackend):
             rows = cur.fetchall()
             columns = [desc[0] for desc in cur.description]
         return [VolumeRecord(**dict(zip(columns, row, strict=True))) for row in rows]
+
+    def get_instance(self, instance_id: str) -> InstanceRecord | None:
+        with self._cursor() as cur:
+            cur.execute("SELECT * FROM instances WHERE instance_id = %s", (instance_id,))
+            row = cur.fetchone()
+            if row is None:
+                return None
+            columns = [desc[0] for desc in cur.description]
+        return InstanceRecord(**dict(zip(columns, row, strict=True)))
+
+    def get_volume(self, volume_id: str) -> VolumeRecord | None:
+        with self._cursor() as cur:
+            cur.execute("SELECT * FROM volumes WHERE volume_id = %s", (volume_id,))
+            row = cur.fetchone()
+            if row is None:
+                return None
+            columns = [desc[0] for desc in cur.description]
+        return VolumeRecord(**dict(zip(columns, row, strict=True)))
 
     def set_instance_autoresize(self, instance_id: str, autoresize: bool, audit: AuditActor | None = None) -> bool:
         return self._set_autoresize("instances", "instance_id", instance_id, autoresize, audit)
@@ -667,11 +755,26 @@ class PostgresStateBackend(StateBackend):
         with self._cursor(commit=True) as cur:
             cur.execute("UPDATE users SET last_login_at = %s WHERE id = %s", (datetime.now(UTC), user_id))
 
-    def set_password(self, user_id: int, password_hash: str, audit: AuditEvent | None = None) -> None:
+    def list_users(self) -> list[UserRecord]:
+        with self._cursor() as cur:
+            cur.execute(f"SELECT {_USER_COLUMNS} FROM users ORDER BY username")
+            return [self._row_to_user(row) for row in cur.fetchall()]
+
+    def set_password(
+        self,
+        user_id: int,
+        password_hash: str,
+        audit: AuditEvent | None = None,
+        must_change: bool = False,
+    ) -> None:
         with self._cursor(commit=True) as cur:
             cur.execute(
-                "UPDATE users SET password_hash = %s, session_generation = session_generation + 1 WHERE id = %s",
-                (password_hash, user_id),
+                """
+                UPDATE users
+                SET password_hash = %s, session_generation = session_generation + 1, must_change_password = %s
+                WHERE id = %s
+                """,
+                (password_hash, must_change, user_id),
             )
             if audit is not None:
                 self._insert_audit(cur, audit)
@@ -681,16 +784,139 @@ class PostgresStateBackend(StateBackend):
             if is_active:
                 cur.execute("UPDATE users SET is_active = TRUE WHERE id = %s", (user_id,))
             else:
-                cur.execute("SELECT pg_advisory_xact_lock(%s)", (_USERS_LOCK_KEY,))
-                cur.execute("SELECT COUNT(*) FROM users WHERE is_active AND id != %s", (user_id,))
-                if cur.fetchone()[0] == 0:
-                    raise LastActiveUserError(user_id)
+                self._guard_last_admin(cur, user_id)
                 cur.execute(
                     "UPDATE users SET is_active = FALSE, session_generation = session_generation + 1 WHERE id = %s",
                     (user_id,),
                 )
             if audit is not None:
                 self._insert_audit(cur, audit)
+
+    @staticmethod
+    def _guard_last_admin(cur, user_id: int) -> None:
+        """Under the users advisory lock: raise if `user_id` is the only
+        active global admin. Two concurrent removals therefore serialize
+        and the second one sees the first's result."""
+        cur.execute("SELECT pg_advisory_xact_lock(%s)", (_USERS_LOCK_KEY,))
+        cur.execute(
+            """
+            SELECT COUNT(*) FROM user_account_roles r JOIN users u ON u.id = r.user_id
+            WHERE r.account_name = %s AND r.role = 'admin' AND u.is_active AND u.id != %s
+            """,
+            (WILDCARD_ACCOUNT, user_id),
+        )
+        others = cur.fetchone()[0]
+        cur.execute(
+            "SELECT 1 FROM user_account_roles WHERE user_id = %s AND account_name = %s AND role = 'admin'",
+            (user_id, WILDCARD_ACCOUNT),
+        )
+        is_admin = cur.fetchone() is not None
+        if is_admin and others == 0:
+            raise LastAdminError(user_id)
+
+    # ---- Accounts and roles ------------------------------------------------
+
+    def sync_accounts(self, names: list[str]) -> None:
+        now = datetime.now(UTC)
+        with self._cursor(commit=True) as cur:
+            for name in names:
+                cur.execute(
+                    """
+                    INSERT INTO accounts (name, first_seen_at, last_seen_at, in_config)
+                    VALUES (%s, %s, %s, TRUE)
+                    ON CONFLICT (name) DO UPDATE SET last_seen_at = EXCLUDED.last_seen_at, in_config = TRUE
+                    """,
+                    (name, now, now),
+                )
+            cur.execute("UPDATE accounts SET in_config = FALSE WHERE name != ALL(%s)", (list(names),))
+
+    def list_accounts(self) -> list[AccountRecord]:
+        with self._cursor() as cur:
+            cur.execute("SELECT name, first_seen_at, last_seen_at, in_config FROM accounts ORDER BY name")
+            return [AccountRecord(*row) for row in cur.fetchall()]
+
+    def list_roles(self, user_id: int) -> list[RoleGrant]:
+        with self._cursor() as cur:
+            cur.execute(
+                f"SELECT {_ROLE_COLUMNS} FROM user_account_roles WHERE user_id = %s ORDER BY account_name",
+                (user_id,),
+            )
+            return [RoleGrant(*row) for row in cur.fetchall()]
+
+    def set_role(
+        self,
+        user_id: int,
+        account_name: str,
+        role: str,
+        granted_by: int | None,
+        audit: AuditEvent | None = None,
+    ) -> RoleGrant | None:
+        if role == "admin" and account_name != WILDCARD_ACCOUNT:
+            raise ValueError("admin is global - grant it on '*'")
+        with self._cursor(commit=True) as cur:
+            if account_name == WILDCARD_ACCOUNT and role != "admin":
+                # Replacing a '*' admin grant with something lower is a demotion.
+                self._guard_last_admin(cur, user_id)
+            cur.execute(
+                f"SELECT {_ROLE_COLUMNS} FROM user_account_roles WHERE user_id = %s AND account_name = %s FOR UPDATE",
+                (user_id, account_name),
+            )
+            row = cur.fetchone()
+            previous = RoleGrant(*row) if row is not None else None
+            cur.execute(
+                """
+                INSERT INTO user_account_roles (user_id, account_name, role, granted_at, granted_by)
+                VALUES (%s, %s, %s, %s, %s)
+                ON CONFLICT (user_id, account_name) DO UPDATE SET
+                    role = EXCLUDED.role, granted_at = EXCLUDED.granted_at, granted_by = EXCLUDED.granted_by
+                """,
+                (user_id, account_name, role, datetime.now(UTC), granted_by),
+            )
+            if audit is not None:
+                self._insert_audit(cur, audit)
+            return previous
+
+    def revoke_role(self, user_id: int, account_name: str, audit: AuditEvent | None = None) -> RoleGrant | None:
+        with self._cursor(commit=True) as cur:
+            if account_name == WILDCARD_ACCOUNT:
+                self._guard_last_admin(cur, user_id)
+            cur.execute(
+                f"DELETE FROM user_account_roles WHERE user_id = %s AND account_name = %s RETURNING {_ROLE_COLUMNS}",
+                (user_id, account_name),
+            )
+            row = cur.fetchone()
+            if row is None:
+                return None
+            if audit is not None:
+                self._insert_audit(cur, audit)
+            return RoleGrant(*row)
+
+    def count_active_admins(self) -> int:
+        with self._cursor() as cur:
+            cur.execute(
+                """
+                SELECT COUNT(*) FROM user_account_roles r JOIN users u ON u.id = r.user_id
+                WHERE r.account_name = %s AND r.role = 'admin' AND u.is_active
+                """,
+                (WILDCARD_ACCOUNT,),
+            )
+            return cur.fetchone()[0]
+
+    def grant_admin_to_all_users_if_no_roles(self) -> list[str]:
+        with self._cursor(commit=True) as cur:
+            cur.execute("SELECT pg_advisory_xact_lock(%s)", (_USERS_LOCK_KEY,))
+            cur.execute("SELECT 1 FROM user_account_roles LIMIT 1")
+            if cur.fetchone() is not None:
+                return []
+            cur.execute(
+                """
+                INSERT INTO user_account_roles (user_id, account_name, role, granted_at, granted_by)
+                SELECT id, %s, 'admin', %s, NULL FROM users WHERE is_active
+                RETURNING (SELECT username FROM users WHERE users.id = user_account_roles.user_id)
+                """,
+                (WILDCARD_ACCOUNT, datetime.now(UTC)),
+            )
+            return [row[0] for row in cur.fetchall()]
 
     def bump_session_generation(self, user_id: int, audit: AuditEvent | None = None) -> None:
         with self._cursor(commit=True) as cur:
@@ -786,6 +1012,12 @@ class PostgresStateBackend(StateBackend):
         if before_id is not None:
             clauses.append("id < %s")
             params.append(before_id)
+        if filters.scope is not None:
+            # Rows in the caller's accounts, or about the caller.
+            clauses.append(
+                "(account_name = ANY(%s) OR actor_user_id = %s OR (target_type = 'user' AND target_id = %s))"
+            )
+            params.extend([list(filters.scope.account_names), filters.scope.user_id, filters.scope.username])
         return " AND ".join(clauses), params
 
     def list_audit(self, filters: AuditFilters, limit: int, before_id: int | None = None) -> list[AuditRecord]:
@@ -852,4 +1084,5 @@ class PostgresStateBackend(StateBackend):
             extend_attempts=row["extend_attempts"],
             created_at=row["created_at"],
             updated_at=row["updated_at"],
+            account_name=row["account_name"],
         )

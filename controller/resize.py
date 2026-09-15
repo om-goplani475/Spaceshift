@@ -70,6 +70,7 @@ def start_resize(
     volume_id: str,
     instance_id: str,
     current_size_gb: int,
+    account_name: str = "",
 ) -> bool:
     """Attempt to start the AWS-side resize for volume_id.
 
@@ -117,7 +118,7 @@ def start_resize(
         return False
 
     previous = state.get(volume_id)
-    record = state.create_if_absent(volume_id, instance_id, current_size_gb, target_size_gb)
+    record = state.create_if_absent(volume_id, instance_id, current_size_gb, target_size_gb, account_name)
     if record is None:
         return False  # a resize is already in flight for this volume
 

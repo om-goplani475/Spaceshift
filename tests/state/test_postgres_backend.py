@@ -32,7 +32,7 @@ def postgres_state():
     with backend._cursor(commit=True) as cur:
         cur.execute(
             "TRUNCATE resize_state, modification_history, scan_log, instances, volumes, app_config, "
-            "users, login_attempts, audit_log"
+            "users, login_attempts, audit_log, accounts, user_account_roles"
         )
     backend.close()
 
@@ -275,25 +275,89 @@ def test_concurrent_first_admin_creation_yields_exactly_one_user(postgres_state)
     assert postgres_state.count_users() == 1
 
 
-def test_concurrent_deactivation_keeps_one_active_user(postgres_state):
-    from controller.state.base import LastActiveUserError
+def test_concurrent_admin_removal_keeps_one_active_admin(postgres_state):
+    from controller.state.base import LastAdminError
 
     users = [postgres_state.create_user(f"u{i}", "hash") for i in range(6)]
+    for user in users:
+        postgres_state.set_role(user.id, "*", "admin", None)
 
-    def deactivate(user):
+    def remove(user):
         try:
-            postgres_state.set_active(user.id, False)
+            # alternate between the three ways of losing admin
+            if user.id % 3 == 0:
+                postgres_state.set_active(user.id, False)
+            elif user.id % 3 == 1:
+                postgres_state.revoke_role(user.id, "*")
+            else:
+                postgres_state.set_role(user.id, "*", "viewer", None)
             return True
-        except LastActiveUserError:
+        except LastAdminError:
             return False
 
     with ThreadPoolExecutor(max_workers=6) as pool:
-        results = list(pool.map(deactivate, users))
+        results = list(pool.map(remove, users))
 
     assert results.count(False) == 1
-    with postgres_state._cursor() as cur:
-        cur.execute("SELECT COUNT(*) FROM users WHERE is_active")
-        assert cur.fetchone()[0] == 1
+    assert postgres_state.count_active_admins() == 1
+
+
+def test_admin_on_named_account_is_refused_by_the_database_too(postgres_state):
+    import psycopg2
+
+    user = postgres_state.create_user("alice", "hash")
+    with pytest.raises(ValueError):
+        postgres_state.set_role(user.id, "prod", "admin", None)
+    with pytest.raises(psycopg2.errors.CheckViolation):
+        with postgres_state._cursor(commit=True) as cur:
+            cur.execute("INSERT INTO user_account_roles VALUES (%s, 'prod', 'admin', now(), NULL)", (user.id,))
+
+
+def test_legacy_blank_account_rows_are_renamed_and_resize_state_backfilled():
+    from controller.state.postgres_backend import PostgresStateBackend
+
+    dsn = os.environ["EBS_AUTO_RESIZE_TEST_POSTGRES_DSN"]
+    backend = PostgresStateBackend(dsn)
+    backend.upsert_volume("", "vol-old", "i-old", "us-east-1", 100, "/dev/xvdf")
+    backend.upsert_instance("", "i-old", "us-east-1", "t3.micro", "running")
+    backend.create_if_absent("vol-old", "i-old", 100, 120)  # no account, like an old row
+    backend.close()
+
+    backend = PostgresStateBackend(dsn)  # schema init runs the backfills
+    try:
+        assert backend.get_volume("vol-old").account_name == "default"
+        assert backend.get_instance("i-old").account_name == "default"
+        assert backend.get("vol-old").account_name == "default"
+    finally:
+        with backend._cursor(commit=True) as cur:
+            cur.execute("TRUNCATE resize_state, instances, volumes")
+        backend.close()
+
+
+def test_scoped_lists_and_audit_scope(postgres_state):
+    from controller.audit import AuditActor, AuditFilters, AuditScope
+
+    postgres_state.upsert_volume("prod", "vol-p", "i-p", "us-east-1", 100, "/dev/xvdf")
+    postgres_state.upsert_volume("dev", "vol-d", "i-d", "us-east-1", 100, "/dev/xvdf")
+    postgres_state.record_scan("prod", "us-east-1", "vol-p", "i-p", 100, 80, 50.0, "below_threshold")
+    postgres_state.create_if_absent("vol-d", "i-d", 100, 120, account_name="dev")
+    alice = postgres_state.create_user("alice", "hash")
+    bob = postgres_state.create_user("bob", "hash")
+    postgres_state.set_volume_autoresize("vol-p", True, audit=AuditActor.user(alice.id, "alice", "10.0.0.1"))
+    postgres_state.set_volume_autoresize("vol-d", True, audit=AuditActor.user(alice.id, "alice", "10.0.0.1"))
+    postgres_state.set_config("dry_run", "false", audit=AuditActor.user(alice.id, "alice", "10.0.0.1"))
+    postgres_state.set_role(bob.id, "dev", "viewer", alice.id)
+
+    dev = frozenset({"dev"})
+    assert [v.volume_id for v in postgres_state.list_volumes(account_names=dev)] == ["vol-d"]
+    assert postgres_state.list_scans(account_names=dev) == []
+    assert [r.volume_id for r in postgres_state.list_all(account_names=dev)] == ["vol-d"]
+    assert postgres_state.list_all(account_names=frozenset()) == []
+
+    scope = AuditScope(account_names=dev, user_id=bob.id, username="bob")
+    rows = postgres_state.list_audit(AuditFilters(scope=scope), limit=10)
+    assert sorted((r.action, r.target_id) for r in rows) == [("volume.autoresize", "vol-d")]
+    assert [r.target_id for r in postgres_state.iter_audit(AuditFilters(scope=scope))] == ["vol-d"]
 
 
 def test_set_password_bumps_generation_and_login_attempts_round_trip(postgres_state):

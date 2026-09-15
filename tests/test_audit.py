@@ -58,6 +58,10 @@ def test_every_action_has_a_place():
         AuditAction.USER_PASSWORD_RESET,
         AuditAction.USER_UNLOCK,
         AuditAction.USER_DEACTIVATE,
+        AuditAction.USER_REACTIVATE,
+        AuditAction.USER_PASSWORD_CHANGE,
+        AuditAction.USER_ROLE_SET,
+        AuditAction.USER_ROLE_REVOKED,
         AuditAction.AUDIT_PRUNE,
     }
     assert transactional | EVENT_ONLY_ACTIONS == set(AuditAction)
