@@ -281,6 +281,19 @@ def _with_new_user_id(event: AuditEvent, user_id: int) -> AuditEvent:
     return event
 
 
+def _migration_grant_event(user_id: int, username: str) -> AuditEvent:
+    return AuditEvent(
+        AuditActor.system(),
+        AuditAction.USER_ROLE_SET,
+        target_type="user",
+        target_id=username,
+        account_name=WILDCARD_ACCOUNT,
+        before={"role": None},
+        after={"role": "admin"},
+        detail={"reason": "pre-RBAC user", "user_id": user_id},
+    )
+
+
 def _prune_event(actor: AuditActor, deleted: int, older_than: datetime) -> AuditEvent:
     return AuditEvent(
         actor=actor,
@@ -912,11 +925,14 @@ class PostgresStateBackend(StateBackend):
                 """
                 INSERT INTO user_account_roles (user_id, account_name, role, granted_at, granted_by)
                 SELECT id, %s, 'admin', %s, NULL FROM users WHERE is_active
-                RETURNING (SELECT username FROM users WHERE users.id = user_account_roles.user_id)
+                RETURNING user_id, (SELECT username FROM users WHERE users.id = user_account_roles.user_id)
                 """,
                 (WILDCARD_ACCOUNT, datetime.now(UTC)),
             )
-            return [row[0] for row in cur.fetchall()]
+            granted = cur.fetchall()
+            for user_id, username in granted:
+                self._insert_audit(cur, _migration_grant_event(user_id, username))
+            return [username for _, username in granted]
 
     def bump_session_generation(self, user_id: int, audit: AuditEvent | None = None) -> None:
         with self._cursor(commit=True) as cur:

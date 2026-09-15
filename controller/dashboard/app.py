@@ -5,14 +5,15 @@ the scheduler process; it shares nothing with it but the database.
 
 from __future__ import annotations
 
-from dataclasses import asdict
+from dataclasses import asdict, replace
 from datetime import UTC, datetime, timedelta
 
-from flask import Flask, Response, jsonify, render_template, request, stream_with_context, url_for
+from flask import Flask, Response, g, jsonify, render_template, request, stream_with_context, url_for
 
 from controller.audit import AuditAction, AuditFilters, iter_csv, record_to_json
 from controller.config import DB_CONFIG_KEYS, Config, apply_db_overrides
 from controller.dashboard.auth import AuthSettings, current_actor, init_auth
+from controller.dashboard.rbac import require_admin, require_operator
 from controller.state.base import TERMINAL_STATUSES, ResizeStatus, StateBackend
 
 _SCAN_LIST_LIMIT = 200
@@ -257,8 +258,17 @@ def _resolve_volume_row(volume, instances_by_id: dict, default_threshold: int) -
     }
 
 
+def _readable() -> frozenset[str] | None:
+    """The signed-in user's readable accounts - passed to every list the
+    dashboard renders. None only for admins."""
+    return g.scope.readable
+
+
 def _build_volume_rows(state: StateBackend, volumes: list) -> list[dict]:
-    instances_by_id = {i.instance_id: i for i in state.list_instances()}
+    # Resolution must see every instance a volume could be attached to;
+    # a volume is only ever in the same account as its instance, so the
+    # same scope is right here too.
+    instances_by_id = {i.instance_id: i for i in state.list_instances(account_names=_readable())}
     default_threshold = _effective_default_threshold(state)
     return [{"v": v, **_resolve_volume_row(v, instances_by_id, default_threshold)} for v in volumes]
 
@@ -277,6 +287,7 @@ _NAV_ITEMS = [
     ("audit", "Audit log"),
     ("settings", "Settings"),
 ]
+_ADMIN_NAV_ENDPOINTS = frozenset({"settings"})
 
 
 class _BadFilter(ValueError):
@@ -352,8 +363,11 @@ def create_app(state: StateBackend, auth: AuthSettings) -> Flask:
 
     @app.context_processor
     def _template_globals():
+        scope = g.get("scope")
+        nav = [item for item in _NAV_ITEMS if item[0] not in _ADMIN_NAV_ENDPOINTS or (scope and scope.is_admin)]
         return {
-            "nav_items": _NAV_ITEMS,
+            "nav_items": nav,
+            "scope": scope,
             "status_badge": _status_badge,
             "decision_badge": _decision_badge,
             "audit_badge": _audit_badge,
@@ -361,9 +375,9 @@ def create_app(state: StateBackend, auth: AuthSettings) -> Flask:
 
     @app.get("/")
     def overview():
-        records = state.list_all()
-        scans = state.list_scans(limit=_SCAN_LIST_LIMIT)
-        volume_rows = _build_volume_rows(state, state.list_volumes())
+        records = state.list_all(account_names=_readable())
+        scans = state.list_scans(limit=_SCAN_LIST_LIMIT, account_names=_readable())
+        volume_rows = _build_volume_rows(state, state.list_volumes(account_names=_readable()))
         return render_template(
             "overview.html",
             records=records,
@@ -379,13 +393,13 @@ def create_app(state: StateBackend, auth: AuthSettings) -> Flask:
 
     @app.get("/instances")
     def instances():
-        scans = state.list_scans(limit=_SCAN_LIST_LIMIT)
+        scans = state.list_scans(limit=_SCAN_LIST_LIMIT, account_names=_readable())
         # Stopped instances aren't being monitored (nothing to check disk
         # usage on while it's off) - hidden here so the page only shows
         # what's actually relevant, not everything ever discovered.
         # /api/instances is unfiltered - the full record is still there for
         # anything scripting against it.
-        instances = [i for i in state.list_instances() if i.state != "stopped"]
+        instances = [i for i in state.list_instances(account_names=_readable()) if i.state != "stopped"]
         return render_template(
             "instances.html",
             instances=instances,
@@ -396,8 +410,8 @@ def create_app(state: StateBackend, auth: AuthSettings) -> Flask:
 
     @app.get("/volumes")
     def volumes():
-        scans = state.list_scans(limit=_SCAN_LIST_LIMIT)
-        volumes = state.list_volumes()
+        scans = state.list_scans(limit=_SCAN_LIST_LIMIT, account_names=_readable())
+        volumes = state.list_volumes(account_names=_readable())
         return render_template(
             "volumes.html",
             volume_rows=_build_volume_rows(state, volumes),
@@ -408,6 +422,7 @@ def create_app(state: StateBackend, auth: AuthSettings) -> Flask:
 
     @app.get("/settings")
     def settings():
+        require_admin()
         return render_template("settings.html", setting_groups=_group_settings(_list_settings(state)))
 
     @app.get("/audit")
@@ -430,6 +445,7 @@ def create_app(state: StateBackend, auth: AuthSettings) -> Flask:
             before = _parse_before(request.args)
         except _BadFilter as exc:
             return render_template("audit.html", error=str(exc), rows=[], **context), 400
+        filters = replace(filters, scope=g.scope.audit_scope)
         rows = state.list_audit(filters, limit=_AUDIT_PAGE_SIZE + 1, before_id=before)
         if len(rows) > _AUDIT_PAGE_SIZE:
             rows = rows[:_AUDIT_PAGE_SIZE]
@@ -443,6 +459,7 @@ def create_app(state: StateBackend, auth: AuthSettings) -> Flask:
             before = _parse_before(request.args)
         except _BadFilter as exc:
             return jsonify({"error": str(exc)}), 400
+        filters = replace(filters, scope=g.scope.audit_scope)
 
         if request.args.get("format") == "csv":
             filename = f"spaceshift-audit-{datetime.now(UTC):%Y-%m-%d}.csv"
@@ -478,7 +495,7 @@ def create_app(state: StateBackend, auth: AuthSettings) -> Flask:
                     "extend_attempts": r.extend_attempts,
                     "updated_at": r.updated_at.isoformat(),
                 }
-                for r in state.list_all()
+                for r in state.list_all(account_names=_readable())
             ]
         )
 
@@ -497,7 +514,7 @@ def create_app(state: StateBackend, auth: AuthSettings) -> Flask:
                     "percent_used": s.percent_used,
                     "decision": s.decision,
                 }
-                for s in state.list_scans(limit=_SCAN_LIST_LIMIT)
+                for s in state.list_scans(limit=_SCAN_LIST_LIMIT, account_names=_readable())
             ]
         )
 
@@ -515,7 +532,7 @@ def create_app(state: StateBackend, auth: AuthSettings) -> Flask:
                     "threshold_percent": i.threshold_percent,
                     "last_seen_at": i.last_seen_at.isoformat(),
                 }
-                for i in state.list_instances()
+                for i in state.list_instances(account_names=_readable())
             ]
         )
 
@@ -534,12 +551,13 @@ def create_app(state: StateBackend, auth: AuthSettings) -> Flask:
                     "threshold_percent": v.threshold_percent,
                     "last_seen_at": v.last_seen_at.isoformat(),
                 }
-                for v in state.list_volumes()
+                for v in state.list_volumes(account_names=_readable())
             ]
         )
 
     @app.get("/api/config")
     def api_config():
+        require_admin()
         return jsonify(_list_settings(state))
 
     @app.post("/api/instances/<instance_id>/autoresize")
@@ -547,6 +565,12 @@ def create_app(state: StateBackend, auth: AuthSettings) -> Flask:
         autoresize = _parse_autoresize_body()
         if autoresize is None:
             return jsonify({"error": "body must be JSON {'autoresize': true|false}"}), 400
+        # The account comes from the row, never the request; unknown and
+        # unreadable both end as the same 404.
+        instance = state.get_instance(instance_id)
+        if instance is None:
+            return jsonify({"error": f"no known instance {instance_id!r}"}), 404
+        require_operator(instance.account_name, "instance", instance_id)
         if not state.set_instance_autoresize(instance_id, autoresize, audit=current_actor()):
             return jsonify({"error": f"no known instance {instance_id!r}"}), 404
         return jsonify({"instance_id": instance_id, "autoresize": autoresize})
@@ -556,12 +580,17 @@ def create_app(state: StateBackend, auth: AuthSettings) -> Flask:
         autoresize = _parse_autoresize_body()
         if autoresize is None:
             return jsonify({"error": "body must be JSON {'autoresize': true|false}"}), 400
+        volume = state.get_volume(volume_id)
+        if volume is None:
+            return jsonify({"error": f"no known volume {volume_id!r}"}), 404
+        require_operator(volume.account_name, "volume", volume_id)
         if not state.set_volume_autoresize(volume_id, autoresize, audit=current_actor()):
             return jsonify({"error": f"no known volume {volume_id!r}"}), 404
         return jsonify({"volume_id": volume_id, "autoresize": autoresize})
 
     @app.post("/api/config/<key>")
     def set_app_config(key: str):
+        require_admin()
         if key not in DB_CONFIG_KEYS:
             return jsonify({"error": f"unknown config key {key!r}"}), 404
         body = request.get_json(silent=True)

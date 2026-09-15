@@ -6,6 +6,8 @@ admin is locked out (there's no email, so no "forgot password").
     docker compose exec dashboard python -m controller.dashboard.users reset-password <name>
     docker compose exec dashboard python -m controller.dashboard.users unlock <name>
     docker compose exec dashboard python -m controller.dashboard.users deactivate <name>
+    docker compose exec dashboard python -m controller.dashboard.users grant <name> <account|*> <viewer|operator|admin>
+    docker compose exec dashboard python -m controller.dashboard.users revoke <name> <account|*>
 
 Passwords are prompted for, never taken on the command line - an argv
 password lands in shell history and `ps` output.
@@ -20,7 +22,7 @@ from collections.abc import Callable
 
 from controller.audit import AuditAction, AuditActor, AuditEvent
 from controller.dashboard.auth import hash_password, validate_password, validate_username
-from controller.state.base import LastAdminError, StateBackend, UsernameTakenError
+from controller.state.base import WILDCARD_ACCOUNT, LastAdminError, StateBackend, UsernameTakenError
 
 
 class CliError(Exception):
@@ -67,12 +69,70 @@ def create_admin(state: StateBackend, username: str, prompt: Callable[[str], str
         raise CliError(f"user {username!r} already exists - use reset-password to change their password")
     password = _prompt_password(username, prompt)
     try:
-        state.create_user(
+        user = state.create_user(
             username, hash_password(password), audit=_cli_event(AuditAction.USER_CREATE, username, "create-admin")
         )
     except UsernameTakenError as exc:
         raise CliError(f"user {username!r} already exists") from exc
-    return f"created user {username!r} - sign in at /login"
+    state.set_role(
+        user.id,
+        WILDCARD_ACCOUNT,
+        "admin",
+        granted_by=None,
+        audit=_role_event(username, WILDCARD_ACCOUNT, None, "admin", "create-admin"),
+    )
+    return f"created admin {username!r} - sign in at /login"
+
+
+def _role_event(username: str, account: str, before: str | None, after: str | None, command: str) -> AuditEvent:
+    action = AuditAction.USER_ROLE_REVOKED if after is None else AuditAction.USER_ROLE_SET
+    return AuditEvent(
+        AuditActor.cli(),
+        action,
+        target_type="user",
+        target_id=username,
+        account_name=account,
+        before={"role": before},
+        after={"role": after},
+        detail={"command": command},
+    )
+
+
+def grant(state: StateBackend, username: str, account: str, role: str) -> str:
+    user = _require_user(state, username.strip().lower())
+    if role not in ("viewer", "operator", "admin"):
+        raise CliError("role must be viewer, operator or admin")
+    if role == "admin" and account != WILDCARD_ACCOUNT:
+        raise CliError("admin is global - grant it on '*'")
+    existing = next((g for g in state.list_roles(user.id) if g.account_name == account), None)
+    try:
+        previous = state.set_role(
+            user.id,
+            account,
+            role,
+            granted_by=None,
+            audit=_role_event(user.username, account, existing.role if existing else None, role, "grant"),
+        )
+    except LastAdminError as exc:
+        raise CliError(f"{user.username!r} is the last active admin - make someone else admin first") from exc
+    was = f" (was {previous.role})" if previous else ""
+    return f"granted {role} on {account!r} to {user.username!r}{was}"
+
+
+def revoke(state: StateBackend, username: str, account: str) -> str:
+    user = _require_user(state, username.strip().lower())
+    existing = next((g for g in state.list_roles(user.id) if g.account_name == account), None)
+    try:
+        previous = state.revoke_role(
+            user.id,
+            account,
+            audit=_role_event(user.username, account, existing.role if existing else None, None, "revoke"),
+        )
+    except LastAdminError as exc:
+        raise CliError(f"{user.username!r} is the last active admin - make someone else admin first") from exc
+    if previous is None:
+        raise CliError(f"{user.username!r} has no role on {account!r}")
+    return f"revoked {previous.role} on {account!r} from {user.username!r}"
 
 
 def reset_password(state: StateBackend, username: str, prompt: Callable[[str], str] = getpass.getpass) -> str:
@@ -130,12 +190,19 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="python -m controller.dashboard.users", description=__doc__.split("\n\n")[0])
     sub = parser.add_subparsers(dest="command", required=True)
     for name, help_text in (
-        ("create-admin", "create a user (every user is an admin in this version)"),
+        ("create-admin", "create a user with admin on every account"),
         ("reset-password", "set a new password and sign out their existing sessions; re-activates a deactivated user"),
         ("unlock", "clear a username's failed-login lockout"),
-        ("deactivate", "disable a user (refused for the last active one)"),
+        ("deactivate", "disable a user (refused for the last active admin)"),
     ):
         sub.add_parser(name, help=help_text).add_argument("username")
+    grant_parser = sub.add_parser("grant", help="give a user a role on one account, or '*' for every account")
+    grant_parser.add_argument("username")
+    grant_parser.add_argument("account", help="an account name from config.yaml, or '*'")
+    grant_parser.add_argument("role", choices=["viewer", "operator", "admin"])
+    revoke_parser = sub.add_parser("revoke", help="remove a user's role on one account (or '*')")
+    revoke_parser.add_argument("username")
+    revoke_parser.add_argument("account")
     return parser
 
 
@@ -148,7 +215,12 @@ def run(argv: list[str], state: StateBackend) -> int:
         "deactivate": deactivate,
     }
     try:
-        print(commands[args.command](state, args.username))
+        if args.command == "grant":
+            print(grant(state, args.username, args.account, args.role))
+        elif args.command == "revoke":
+            print(revoke(state, args.username, args.account))
+        else:
+            print(commands[args.command](state, args.username))
     except CliError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1

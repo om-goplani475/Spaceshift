@@ -544,8 +544,9 @@ class StateBackend(abc.ABC):
     def grant_admin_to_all_users_if_no_roles(self) -> list[str]:
         """One-time RBAC migration: if no grant exists at all but users do,
         give every active user admin on '*' (exactly the privilege they
-        had before roles existed). Returns the usernames granted; empty
-        on every later call."""
+        had before roles existed), each with a USER_ROLE_SET audit row by
+        the system actor in the same transaction. Returns the usernames
+        granted; empty on every later call."""
 
     # ---- Audit log --------------------------------------------------------
     #

@@ -506,6 +506,18 @@ class InMemoryStateBackend(StateBackend):
                     self._roles[(user.id, WILDCARD_ACCOUNT)] = RoleGrant(
                         user.id, WILDCARD_ACCOUNT, "admin", datetime.now(UTC), None
                     )
+                    self._append_audit(
+                        AuditEvent(
+                            AuditActor.system(),
+                            AuditAction.USER_ROLE_SET,
+                            target_type="user",
+                            target_id=user.username,
+                            account_name=WILDCARD_ACCOUNT,
+                            before={"role": None},
+                            after={"role": "admin"},
+                            detail={"reason": "pre-RBAC user", "user_id": user.id},
+                        )
+                    )
                     granted.append(user.username)
             return granted
 

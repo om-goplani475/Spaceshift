@@ -118,7 +118,8 @@ def _prompts(*answers):
 
 
 def test_cli_commands_are_recorded_as_cli_without_secrets(state):
-    state.create_user("keeper", hash_password("keeper's long password"))
+    keeper = state.create_user("keeper", hash_password("keeper's long password"))
+    state.set_role(keeper.id, "*", "admin", None)
     create_admin(state, "bob", prompt=_prompts("a very secret passphrase", "a very secret passphrase"))
     reset_password(state, "bob", prompt=_prompts("another secret passphrase", "another secret passphrase"))
     unlock(state, "bob")
@@ -133,5 +134,7 @@ def test_cli_commands_are_recorded_as_cli_without_secrets(state):
         row = _only(state, action)
         assert row.actor_type == "cli" and row.actor_username is None and row.target_id == "bob"
         assert row.detail == {"command": command}
+    granted = _only(state, AuditAction.USER_ROLE_SET)
+    assert granted.account_name == "*" and granted.after == {"role": "admin"} and granted.target_id == "bob"
     dump = repr(_rows(state))
     assert "secret passphrase" not in dump and "$argon2" not in dump

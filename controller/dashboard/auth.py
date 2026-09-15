@@ -40,7 +40,8 @@ from flask_wtf.csrf import CSRFProtect
 from werkzeug.middleware.proxy_fix import ProxyFix
 
 from controller.audit import ActorType, AuditAction, AuditActor, AuditEvent, record_audit_event
-from controller.state.base import StateBackend, UsernameTakenError, UserRecord
+from controller.dashboard.rbac import load_scope
+from controller.state.base import WILDCARD_ACCOUNT, StateBackend, UsernameTakenError, UserRecord
 
 logger = logging.getLogger(__name__)
 
@@ -216,6 +217,11 @@ def init_auth(app: Flask, state: StateBackend, settings: AuthSettings) -> None:
     if settings.setup_token is not None and state.count_users() > 0:
         logger.info("SPACESHIFT_SETUP_TOKEN is set but setup is complete; you can remove it from .env")
 
+    # First start with roles: users from before RBAC were all implicitly
+    # admins, so that's what they get. One-time; empty on every later start.
+    for username in state.grant_admin_to_all_users_if_no_roles():
+        logger.warning("RBAC migration: granted admin on every account to existing user %r", username)
+
     app.before_request(_require_login)
     app.after_request(_add_security_headers)
     app.register_blueprint(bp)
@@ -253,6 +259,10 @@ def _add_security_headers(response):
 # {"error": ...} while a person who types the URL gets a sign-in link.
 _ERROR_PAGES: dict[int, tuple[str, str]] = {
     401: ("Sign in required", "This needs a signed-in session. Sign in, then come back to this address."),
+    403: (
+        "Not allowed",
+        "Your account doesn't have the role this needs. An administrator can change that on the Users page.",
+    ),
     404: (
         "Page not found",
         "There's nothing at this address. The setup page, in particular, only exists until the first admin is created.",
@@ -262,6 +272,7 @@ _ERROR_PAGES: dict[int, tuple[str, str]] = {
 
 _ERROR_JSON: dict[int, str] = {
     401: "authentication required - sign in at /login and send the session cookie",
+    403: "forbidden - your role does not allow this",
     404: "not found",
     413: "request body too large",
 }
@@ -324,9 +335,16 @@ def _expire_session(message: str) -> None:
 
 def _require_login():
     """before_request: every endpoint is private unless it's on the
-    allowlist, so a new route can't be forgotten - it has to opt out."""
+    allowlist, so a new route can't be forgotten - it has to opt out.
+    For a signed-in user this also resolves g.scope (their roles, fresh
+    from the database every request) and enforces the forced password
+    change."""
     g.user = load_current_user()
-    if request.endpoint in _PUBLIC_ENDPOINTS or g.user is not None:
+    g.scope = None
+    if g.user is not None:
+        g.scope = load_scope(_state(), g.user)
+        return None
+    if request.endpoint in _PUBLIC_ENDPOINTS:
         return None
     if request.path.startswith("/api/"):
         # A script deserves a clear error, not a login page in JSON's place.
@@ -510,6 +528,22 @@ def setup():
         # is the admin now; this page is a 404 from here on.
         abort(404)
 
+    state.set_role(
+        user.id,
+        WILDCARD_ACCOUNT,
+        "admin",
+        granted_by=None,
+        audit=AuditEvent(
+            AuditActor.user(user.id, user.username, addr),
+            AuditAction.USER_ROLE_SET,
+            target_type="user",
+            target_id=user.username,
+            account_name=WILDCARD_ACCOUNT,
+            before={"role": None},
+            after={"role": "admin"},
+            detail={"reason": "first admin"},
+        ),
+    )
     state.record_login_attempt(SETUP_ATTEMPT_USERNAME, addr, succeeded=True)
     _login_session(user)
     logger.info("first admin %r created via /setup from %s", user.username, addr)

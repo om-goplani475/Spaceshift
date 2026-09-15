@@ -141,7 +141,8 @@ def test_wrong_password_and_unknown_user_get_the_same_answer(app):
 
 
 def test_deactivated_user_cannot_log_in(app, state, admin):
-    state.create_user("bob", hash_password("another long password"))
+    bob = state.create_user("bob", hash_password("another long password"))
+    state.set_role(bob.id, "*", "admin", None)
     state.set_active(admin.id, False)
     assert sign_in(app.test_client()).status_code == 401
 
@@ -222,7 +223,8 @@ def test_password_change_signs_out_other_sessions(app, state, admin):
 
 
 def test_deactivation_signs_out_existing_sessions(app, state, admin):
-    state.create_user("bob", hash_password("another long password"))
+    bob = state.create_user("bob", hash_password("another long password"))
+    state.set_role(bob.id, "*", "admin", None)
     client = app.test_client()
     sign_in(client)
     state.set_active(admin.id, False)

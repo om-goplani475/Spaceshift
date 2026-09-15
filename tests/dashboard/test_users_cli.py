@@ -6,7 +6,7 @@ from __future__ import annotations
 import pytest
 
 from controller.dashboard.auth import hash_password, verify_password
-from controller.dashboard.users import CliError, create_admin, deactivate, reset_password, run, unlock
+from controller.dashboard.users import CliError, create_admin, deactivate, grant, reset_password, revoke, run, unlock
 
 
 def _prompts(*answers: str):
@@ -16,7 +16,9 @@ def _prompts(*answers: str):
 
 def test_create_admin_prompts_twice_and_hashes(state):
     message = create_admin(state, "Alice", prompt=_prompts("a long enough password", "a long enough password"))
-    assert "created user 'alice'" in message
+    assert "created admin 'alice'" in message
+    user = state.get_user_by_username("alice")
+    assert [(g.account_name, g.role) for g in state.list_roles(user.id)] == [("*", "admin")]
     user = state.get_user_by_username("alice")
     assert user.password_hash != "a long enough password"
     assert verify_password(user.password_hash, "a long enough password")
@@ -72,6 +74,21 @@ def test_deactivate_refuses_the_last_active_admin(state):
     bob = state.create_user("bob", hash_password("a long enough password"))
     state.set_role(bob.id, "*", "admin", None)
     assert "deactivated 'alice'" in deactivate(state, "alice")
+
+
+def test_grant_and_revoke(state):
+    alice = state.create_user("alice", hash_password("a long enough password"))
+    state.set_role(alice.id, "*", "admin", None)
+    state.create_user("bob", hash_password("a long enough password"))
+    assert "granted viewer on 'prod' to 'bob'" in grant(state, "bob", "prod", "viewer")
+    assert "(was viewer)" in grant(state, "bob", "prod", "operator")
+    with pytest.raises(CliError, match="admin is global"):
+        grant(state, "bob", "prod", "admin")
+    with pytest.raises(CliError, match="last active admin"):
+        revoke(state, "alice", "*")
+    assert "revoked operator on 'prod' from 'bob'" in revoke(state, "bob", "prod")
+    with pytest.raises(CliError, match="has no role"):
+        revoke(state, "bob", "prod")
 
 
 def test_unknown_user_is_an_error(state):
