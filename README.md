@@ -42,12 +42,13 @@ docker compose exec postgres psql -U ebs_auto_resize -d ebs_auto_resize \
 
 ### Dashboard
 
-Already running as part of `docker compose up` above — no separate command needed. Served at `http://localhost:8089`, behind a login (every user is an admin for now; see [docs/SETUP.md](docs/SETUP.md) section 7 for users, passwords, and recovery):
+Already running as part of `docker compose up` above — no separate command needed. Served at `http://localhost:8089`, behind a login with per-account roles — viewer, operator, or global admin — so a user sees and touches only the AWS accounts they've been given (see [docs/SETUP.md](docs/SETUP.md) section 7):
 
 - **Overview** — the numbers that matter (volumes scanned, watched, resizes completed, in progress, needs attention), every resize the controller has started and where it got to, and the most recent disk checks.
 - **Instances** and **Volumes** — everything discovered, with an `Autoresize` toggle per row (this is how you mark things eligible). The Volumes page shows what's *actually* in effect after a volume's own flag, its instance's flag, and the default threshold are resolved.
 - **Audit log** — who changed what, when, and from where: every toggle, setting change, sign-in, failed sign-in and CLI user command, filterable and exportable as CSV. Kept for a year by default ([docs/SETUP.md](docs/SETUP.md) section 8).
-- **Settings** — `dry_run` and every other live-editable setting (see [docs/SETUP.md](docs/SETUP.md) section 5), grouped and described inline, no SQL and no restart.
+- **Users** (admins) — create users, hand over a one-time temporary password, set roles per account, deactivate, reset, unlock.
+- **Settings** (admins) — `dry_run` and every other live-editable setting (see [docs/SETUP.md](docs/SETUP.md) section 5), grouped and described inline, no SQL and no restart.
 
 Managing more than one AWS account (see [docs/SETUP.md](docs/SETUP.md) section 1.4)? Every table is filterable by account alongside region. Pages keep themselves up to date (a 10s poll while the tab is visible, paused when it isn't) — the indicator in the top-right says when the last refresh happened. JSON is also available at `/api/status`, `/api/scans`, `/api/instances`, `/api/volumes`, `/api/config`, `/api/audit` — with the same session cookie a browser gets from `/login` (a `curl` recipe is in [docs/SETUP.md](docs/SETUP.md) 7.6). The container serves plain HTTP with gunicorn — if it's reachable beyond localhost, put it behind a TLS-terminating reverse proxy (nginx, Caddy, an ALB) and set `SPACESHIFT_BEHIND_TLS_PROXY=true` so the session cookie is only ever sent over HTTPS.
 

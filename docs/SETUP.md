@@ -207,22 +207,49 @@ docker compose exec dashboard python -m controller.dashboard.users create-admin 
 
 Wrong tokens count against the same rate limit as failed logins (7.5), so a 16+ character token can't be brute-forced. If you wipe the database (`docker compose down -v`), `users` is empty again and `/setup` is live again with the same token.
 
-### 7.3 Usernames, passwords, and recovery
+### 7.3 Users and roles
+
+Every user holds a **role per AWS account** (the `accounts:` names in `config.yaml`), or a global `admin`:
+
+| | viewer | operator | admin |
+|---|---|---|---|
+| See the account's instances, volumes, scans, resizes and audit rows | ✓ | ✓ | ✓ (every account) |
+| Toggle autoresize in the account | | ✓ | ✓ |
+| Settings page, `/api/config` | | | ✓ |
+| Users page, roles | | | ✓ |
+| Audit rows that aren't about one account (settings, other users, pruning) | | | ✓ |
+
+A user sees **nothing** outside their accounts - not in tables, stats, filter dropdowns, the JSON API or the audit export. Touching a resource in an account they can't see is a 404, exactly as if it didn't exist; touching one they can see without the role is a 403, and every 403 is recorded in the audit log as `access.denied`.
+
+**The `*` row** on a user's page is "every account, including ones added to `config.yaml` later". A role on a specific account overrides it in either direction - `operator` on `*` plus `viewer` on `prod` means operator everywhere except prod. `admin` can only be granted on `*`: it's global by definition (settings and users aren't per-account). A single team that doesn't need scoping just gives people `operator` on `*`.
+
+**Managing users** is the **Users** page (admins only): create a user (a temporary password is generated and shown to you exactly once - hand it over out of band; they're forced to choose their own on first sign-in), set roles, reset a password (same one-time display, same forced change), unlock, deactivate and reactivate. Users are never deleted - the audit log refers to them - so deactivate is the end state. You can't deactivate yourself, and the last active admin can't be demoted or deactivated by anyone.
+
+**Everyone** can change their own password from the username link in the top bar (`/account`); it requires the current password and signs out their other browsers.
+
+**Upgrading from a version without roles:** on first start every existing active user is granted `admin` on `*` (the privilege they already had), logged at startup and recorded in the audit log by the `system` actor. Adjust from the Users page.
+
+**Accounts** are seeded by the controller from `config.yaml` at every start. An account removed from the file stays in the role picker marked "no longer in config" so grants on it can still be cleaned up; the account's rows keep their name.
+
+### 7.4 Usernames, passwords, and recovery
 
 - **Usernames** are 3-32 characters of `a-z 0-9 . _ -`, stored lowercase, unique case-insensitively, and can't be renamed (they will be the actor in the audit log). Deactivate and create a new one instead.
 - **Passwords** are 12-128 characters. Length is the only rule - no character classes, no expiry, no forced rotation ([NIST 800-63B](https://pages.nist.gov/800-63-3/sp800-63b.html)). A password can't be the username or contain "spaceshift". Passwords are **not yet checked against breach lists** (planned: an HIBP k-anonymity lookup that never sends the password off the host); until then, use a password manager or a long passphrase.
 - **Every user is an admin.** Roles arrive in a later release.
-- **Lost the password, or locked out?** There's no email, so recovery is the same CLI:
+- **Lost the password, or locked out?** Another admin can do all of it from the Users page. When there's no other admin, the CLI inside the container is the break-glass path:
 
   ```bash
-  docker compose exec dashboard python -m controller.dashboard.users reset-password <name>   # prompts; signs their other sessions out; re-activates if deactivated
-  docker compose exec dashboard python -m controller.dashboard.users unlock <name>           # clears a failed-login lockout early
-  docker compose exec dashboard python -m controller.dashboard.users deactivate <name>       # refused for the last active user
+  docker compose exec dashboard python -m controller.dashboard.users create-admin <name>            # prompts; grants admin on *
+  docker compose exec dashboard python -m controller.dashboard.users reset-password <name>          # prompts; they must change it at next sign-in
+  docker compose exec dashboard python -m controller.dashboard.users unlock <name>                  # clears a failed-login lockout early
+  docker compose exec dashboard python -m controller.dashboard.users deactivate <name>              # refused for the last active admin
+  docker compose exec dashboard python -m controller.dashboard.users grant <name> <account|*> <viewer|operator|admin>
+  docker compose exec dashboard python -m controller.dashboard.users revoke <name> <account|*>
   ```
 
 Changing a password, deactivating a user, or `unlock` signs out every existing session for that user. Sessions otherwise last 12 hours, or 1 hour without activity - fixed, not configurable. The dashboard's 10-second refresh counts as activity while the tab is visible.
 
-### 7.4 Behind an HTTPS proxy
+### 7.5 Behind an HTTPS proxy
 
 The container speaks plain HTTP. On `localhost` or through an SSH tunnel that's fine. If the dashboard is reachable over a network, put a TLS-terminating proxy in front and set `SPACESHIFT_BEHIND_TLS_PROXY=true`, which (a) marks the session cookie `Secure` so browsers never send it over HTTP and (b) trusts `X-Forwarded-For`/`X-Forwarded-Proto` from exactly one hop, so login rate limiting sees real client addresses instead of the proxy's. Don't set it without the proxy: the cookie is silently dropped over HTTP and login never "takes", and any client could spoof its address with a header.
 
@@ -236,11 +263,11 @@ dashboard.example.com {
 
 Caddy sets both headers and provisions the certificate itself. For nginx, `proxy_set_header X-Forwarded-For $remote_addr; proxy_set_header X-Forwarded-Proto $scheme;` inside the `location` block does the same.
 
-### 7.5 Rate limiting
+### 7.6 Rate limiting
 
 5 failed logins for one username in 15 minutes locks that username for 15 minutes; 20 from one address locks the address. Both lift on their own (`unlock` lifts the username one early). The response is the same "Invalid username or password" either way, with HTTP 429 and a `Retry-After` header. Failures are logged at `WARNING` and kept in the `login_attempts` table for 7 days.
 
-### 7.6 Scripting against the API
+### 7.7 Scripting against the API
 
 `/api/*` needs the session cookie - there are no API tokens yet. Sign in once with a cookie jar and reuse it (the login form is CSRF-protected, so fetch a token first):
 
@@ -277,7 +304,9 @@ curl -s -b jar "http://localhost:8089/api/audit?format=csv&since=2026-09-01" > a
 curl -s -b jar "http://localhost:8089/api/audit?actor=alice&action=config.set&limit=100"   # JSON, with next_before for paging
 ```
 
-(`jar` is the cookie jar from 7.6.) The `remote_addr` column is the address the dashboard saw: the real client behind a proxy only with `SPACESHIFT_BEHIND_TLS_PROXY=true` (7.4), otherwise the proxy's.
+(`jar` is the cookie jar from 7.7.) The `remote_addr` column is the address the dashboard saw: the real client behind a proxy only with `SPACESHIFT_BEHIND_TLS_PROXY=true` (7.5), otherwise the proxy's.
+
+**Who sees what:** admins see every row. Anyone else sees rows from their own accounts plus rows about themselves (their sign-ins, password changes, and admin actions on their user) - never settings changes, other users' administration, or the prune. The export follows the same rule.
 
 ## 9. First-run checklist
 
