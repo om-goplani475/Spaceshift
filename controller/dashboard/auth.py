@@ -94,6 +94,8 @@ _hasher = PasswordHasher()
 _DUMMY_HASH = _hasher.hash("spaceshift-timing-equalizer")
 
 _PUBLIC_ENDPOINTS = frozenset({"static", "auth.login", "auth.setup", "auth.healthz"})
+# Where a user who must change their password may go until they have.
+_MUST_CHANGE_ALLOWED = frozenset({"static", "auth.logout", "auth.healthz", "users.account"})
 
 bp = Blueprint("auth", __name__)
 
@@ -225,6 +227,9 @@ def init_auth(app: Flask, state: StateBackend, settings: AuthSettings) -> None:
     app.before_request(_require_login)
     app.after_request(_add_security_headers)
     app.register_blueprint(bp)
+    from controller.dashboard.users_pages import bp as users_bp  # circular at module level
+
+    app.register_blueprint(users_bp)
     for code in _ERROR_PAGES:
         app.register_error_handler(code, _render_error)
 
@@ -293,7 +298,7 @@ def _render_error(error):
 # ---- Sessions --------------------------------------------------------------
 
 
-def _login_session(user: UserRecord) -> None:
+def login_session(user: UserRecord) -> None:
     now = datetime.now(UTC).timestamp()
     session.clear()
     session["user_id"] = user.id
@@ -343,6 +348,12 @@ def _require_login():
     g.scope = None
     if g.user is not None:
         g.scope = load_scope(_state(), g.user)
+        if g.user.must_change_password and request.endpoint not in _MUST_CHANGE_ALLOWED:
+            # An admin chose this password; nothing else happens until the
+            # user replaces it. API calls get a 403 rather than HTML.
+            if request.path.startswith("/api/"):
+                abort(403)
+            return redirect(url_for("users.account"))
         return None
     if request.endpoint in _PUBLIC_ENDPOINTS:
         return None
@@ -459,7 +470,7 @@ def login():
 
     _state().record_login_attempt(username, addr, succeeded=True)
     _state().touch_login(user.id)
-    _login_session(user)
+    login_session(user)
     actor = AuditActor.user(user.id, user.username, addr)
     record_audit_event(_state(), AuditEvent(actor, AuditAction.AUTH_LOGIN, target_type="user", target_id=user.username))
     logger.info("user %r signed in from %s", user.username, addr)
@@ -545,7 +556,7 @@ def setup():
         ),
     )
     state.record_login_attempt(SETUP_ATTEMPT_USERNAME, addr, succeeded=True)
-    _login_session(user)
+    login_session(user)
     logger.info("first admin %r created via /setup from %s", user.username, addr)
     flash(f"Welcome, {user.username}. You're the first admin - the setup page is now closed.", "info")
     return redirect(url_for("overview"))

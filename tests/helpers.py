@@ -328,6 +328,7 @@ class InMemoryStateBackend(StateBackend):
         password_hash: str,
         only_if_no_users: bool = False,
         audit: AuditEvent | None = None,
+        must_change: bool = False,
     ) -> UserRecord | None:
         with self._lock:
             if only_if_no_users and self._users:
@@ -346,6 +347,7 @@ class InMemoryStateBackend(StateBackend):
                 session_generation=0,
                 created_at=datetime.now(UTC),
                 last_login_at=None,
+                must_change_password=must_change,
             )
             self._users[user.id] = user
             self._next_user_id += 1

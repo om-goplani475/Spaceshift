@@ -49,7 +49,7 @@ def test_reset_password_bumps_generation_and_reactivates(state):
 
     updated = state.get_user(alice.id)
     assert verify_password(updated.password_hash, "a brand new password")
-    assert updated.is_active
+    assert updated.is_active and updated.must_change_password
     assert updated.session_generation > alice.session_generation
 
 

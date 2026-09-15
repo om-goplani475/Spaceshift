@@ -417,6 +417,7 @@ class StateBackend(abc.ABC):
         password_hash: str,
         only_if_no_users: bool = False,
         audit: AuditEvent | None = None,
+        must_change: bool = False,
     ) -> UserRecord | None:
         """Insert a new active user. Raises UsernameTakenError on a
         case-insensitive clash.

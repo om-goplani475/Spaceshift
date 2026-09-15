@@ -1,0 +1,40 @@
+{% extends "base.html" %}
+{% from "_macros.html" import empty_row with context %}
+
+{% block title %}Users{% endblock %}
+{% block heading %}Users{% endblock %}
+{% block lede %}
+<p class="lede">Who can sign in, and what they may see and do. Roles are per AWS account; <code>admin</code> is global. {{ admins }} active admin{{ "s" if admins != 1 }}.</p>
+{% endblock %}
+
+{% block content %}
+<form class="filters" method="post" action="{{ url_for('users.create_user') }}">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+  <input type="text" name="username" placeholder="new username" aria-label="New username" autocapitalize="none"
+         spellcheck="false" required pattern="[a-z0-9._\-]{3,32}" title="3-32 characters: a-z 0-9 . _ -">
+  <button type="submit" class="btn btn-primary">Create user</button>
+  <span class="count">A temporary password is generated and shown once; they must change it on first sign-in.</span>
+</form>
+<div class="panel">
+  <table id="users-table">
+    <thead><tr><th>Username</th><th>Status</th><th>Roles</th><th>Last sign-in</th><th>Created</th></tr></thead>
+    <tbody>
+    {% for row in rows %}
+    <tr>
+      <td class="mono"><a href="{{ url_for('users.show_user', username=row.user.username) }}">{{ row.user.username }}</a></td>
+      <td>
+        {% if not row.user.is_active %}<span class="badge badge-red">deactivated</span>
+        {% elif row.user.must_change_password %}<span class="badge badge-amber">must change password</span>
+        {% else %}<span class="badge badge-green">active</span>{% endif %}
+      </td>
+      <td>{{ row.summary }}</td>
+      <td>{% if row.user.last_login_at %}<span class="ts" data-ts="{{ row.user.last_login_at.isoformat() }}"></span>{% else %}<span class="muted-note">never</span>{% endif %}</td>
+      <td class="ts" data-ts="{{ row.user.created_at.isoformat() }}"></td>
+    </tr>
+    {% else %}
+    {{ empty_row(5, "No users.", "") }}
+    {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endblock %}

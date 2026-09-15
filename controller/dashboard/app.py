@@ -286,8 +286,9 @@ _NAV_ITEMS = [
     ("volumes", "Volumes"),
     ("audit", "Audit log"),
     ("settings", "Settings"),
+    ("users.list_users", "Users"),
 ]
-_ADMIN_NAV_ENDPOINTS = frozenset({"settings"})
+_ADMIN_NAV_ENDPOINTS = frozenset({"settings", "users.list_users"})
 
 
 class _BadFilter(ValueError):

@@ -1,0 +1,100 @@
+{% extends "base.html" %}
+
+{% block title %}{{ user.username }}{% endblock %}
+{% block heading %}{{ user.username }}{% endblock %}
+{% block lede %}
+<p class="lede">
+  {% if not user.is_active %}<span class="badge badge-red">deactivated</span>
+  {% elif user.must_change_password %}<span class="badge badge-amber">must change password</span>
+  {% else %}<span class="badge badge-green">active</span>{% endif %}
+  · created <span class="ts" data-ts="{{ user.created_at.isoformat() }}"></span>
+  {% if user.last_login_at %}· last sign-in <span class="ts" data-ts="{{ user.last_login_at.isoformat() }}"></span>{% endif %}
+  · <a href="{{ url_for('users.list_users') }}">all users</a>
+</p>
+{% endblock %}
+
+{% block content %}
+{% if temp_password %}
+<div class="panel secret-panel">
+  <p class="secret-title">Temporary password for <span class="mono">{{ user.username }}</span> - shown once, not stored anywhere readable:</p>
+  <p class="secret-value mono">{{ temp_password }}</p>
+  <p class="muted-note">Hand it over out of band. They'll be asked to choose their own password the first time they sign in.</p>
+</div>
+{% endif %}
+
+<section class="settings-group">
+  <h2>Roles</h2>
+  <form method="post" action="{{ url_for('users.set_roles', username=user.username) }}">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    {% for row in role_rows %}
+    <div class="setting">
+      <div class="setting-text">
+        <span class="setting-label mono">{{ "every account (*)" if row.account == "*" else row.account }}</span>
+        <p class="setting-description">
+          {% if row.account == "*" %}Applies to every account, including ones added to config.yaml later. A role on a specific account below overrides it.
+          {% elif not row.in_config %}No longer in config.yaml - the grant stays until you remove it.
+          {% endif %}
+        </p>
+      </div>
+      <div class="setting-control">
+        <select name="role:{{ row.account }}" aria-label="Role on {{ row.account }}">
+          <option value="" {{ "selected" if not row.role }}>none</option>
+          {% for choice in row.choices %}<option value="{{ choice }}" {{ "selected" if row.role == choice }}>{{ choice }}</option>{% endfor %}
+        </select>
+      </div>
+    </div>
+    {% endfor %}
+    <div class="settings-actions">
+      <button type="submit" class="btn btn-primary">Save roles</button>
+      {% if last_admin %}<span class="config-status">Last active admin - can't be demoted or deactivated.</span>{% endif %}
+    </div>
+  </form>
+</section>
+
+<section class="settings-group">
+  <h2>Account actions</h2>
+  <div class="setting">
+    <div class="setting-text">
+      <span class="setting-label">Reset password</span>
+      <p class="setting-description">Generates a temporary password (shown once) and signs out every session. They must change it on next sign-in.</p>
+    </div>
+    <div class="setting-control">
+      <form method="post" action="{{ url_for('users.reset_password', username=user.username) }}">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <button type="submit" class="btn">Reset password</button>
+      </form>
+    </div>
+  </div>
+  <div class="setting">
+    <div class="setting-text">
+      <span class="setting-label">Unlock</span>
+      <p class="setting-description">Clears a failed-login lockout early and signs out every session.</p>
+    </div>
+    <div class="setting-control">
+      <form method="post" action="{{ url_for('users.unlock', username=user.username) }}">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <button type="submit" class="btn">Unlock</button>
+      </form>
+    </div>
+  </div>
+  <div class="setting">
+    <div class="setting-text">
+      <span class="setting-label">{{ "Reactivate" if not user.is_active else "Deactivate" }}</span>
+      <p class="setting-description">{% if user.is_active %}They can't sign in and every session is signed out. Roles are kept. Users are never deleted - the audit log refers to them.{% else %}Lets them sign in again with their existing roles.{% endif %}</p>
+    </div>
+    <div class="setting-control">
+      {% if user.is_active %}
+      <form method="post" action="{{ url_for('users.deactivate', username=user.username) }}">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <button type="submit" class="btn btn-danger" {{ "disabled" if last_admin or is_self }}>Deactivate</button>
+      </form>
+      {% else %}
+      <form method="post" action="{{ url_for('users.reactivate', username=user.username) }}">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <button type="submit" class="btn">Reactivate</button>
+      </form>
+      {% endif %}
+    </div>
+  </div>
+</section>
+{% endblock %}

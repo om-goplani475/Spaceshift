@@ -721,6 +721,7 @@ class PostgresStateBackend(StateBackend):
         password_hash: str,
         only_if_no_users: bool = False,
         audit: AuditEvent | None = None,
+        must_change: bool = False,
     ) -> UserRecord | None:
         with self._cursor(commit=True) as cur:
             if only_if_no_users:
@@ -734,11 +735,11 @@ class PostgresStateBackend(StateBackend):
             try:
                 cur.execute(
                     f"""
-                    INSERT INTO users (username, password_hash, created_at)
-                    VALUES (%s, %s, %s)
+                    INSERT INTO users (username, password_hash, created_at, must_change_password)
+                    VALUES (%s, %s, %s, %s)
                     RETURNING {_USER_COLUMNS}
                     """,
-                    (username, password_hash, datetime.now(UTC)),
+                    (username, password_hash, datetime.now(UTC), must_change),
                 )
             except psycopg2.errors.UniqueViolation as exc:
                 raise UsernameTakenError(username) from exc

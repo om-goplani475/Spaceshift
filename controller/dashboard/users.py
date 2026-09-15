@@ -138,10 +138,12 @@ def revoke(state: StateBackend, username: str, account: str) -> str:
 def reset_password(state: StateBackend, username: str, prompt: Callable[[str], str] = getpass.getpass) -> str:
     user = _require_user(state, username.strip().lower())
     password = _prompt_password(user.username, prompt)
+    # Whoever runs this chose the password, so the user must replace it.
     state.set_password(
         user.id,
         hash_password(password),
         audit=_cli_event(AuditAction.USER_PASSWORD_RESET, user.username, "reset-password"),
+        must_change=True,
     )
     if not user.is_active:
         state.set_active(
@@ -155,7 +157,9 @@ def reset_password(state: StateBackend, username: str, prompt: Callable[[str], s
                 after={"is_active": True},
             ),
         )
-    return f"password reset for {user.username!r}; every existing session for them is signed out"
+    return (
+        f"password reset for {user.username!r}; they must change it at next sign-in; existing sessions are signed out"
+    )
 
 
 def unlock(state: StateBackend, username: str) -> str:

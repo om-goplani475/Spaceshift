@@ -528,6 +528,20 @@ td.empty {
 .change { font-family: var(--font-mono); font-size: 12.5px; white-space: nowrap; }
 .pager a.btn { text-decoration: none; }
 
+/* ---- Users ------------------------------------------------------------ */
+
+.btn-danger { color: var(--red); border-color: color-mix(in srgb, var(--red) 40%, var(--border-strong)); }
+.btn-danger:hover:not(:disabled) { background: color-mix(in srgb, var(--red) 10%, var(--surface)); }
+.secret-panel { padding: var(--sp-4); margin-bottom: var(--sp-4); border-left: 3px solid var(--amber); }
+.secret-title { font-size: var(--text-sm); color: var(--text-2); }
+.secret-value { font-size: var(--text-lg); margin: var(--sp-2) 0; user-select: all; }
+.flash-error { border-left-color: var(--red); }
+.setting-control select {
+  font: inherit; font-size: var(--text-sm); color: var(--text); background: var(--surface);
+  border: 1px solid var(--border-strong); border-radius: var(--radius); padding: 6px 10px; min-width: 9rem;
+}
+a.user-name:hover { text-decoration: underline; }
+
 /* ---- Error pages ------------------------------------------------------ */
 
 .error-actions { display: flex; align-items: center; gap: var(--sp-4); }
