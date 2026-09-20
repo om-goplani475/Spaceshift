@@ -41,7 +41,7 @@ def test_the_only_delete_from_audit_log_is_the_bounded_prune():
 
 def test_record_audit_event_is_only_for_event_actions():
     state = InMemoryStateBackend()
-    with pytest.raises(AssertionError):
+    with pytest.raises(ValueError):
         record_audit_event(state, AuditEvent(AuditActor.system(), AuditAction.CONFIG_SET))
     record_audit_event(state, AuditEvent(AuditActor.system(), AuditAction.AUTH_LOGOUT))
     assert AuditAction.AUTH_LOGOUT in EVENT_ONLY_ACTIONS

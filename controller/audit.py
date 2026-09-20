@@ -155,7 +155,10 @@ EVENT_ONLY_ACTIONS = frozenset(
 def record_audit_event(state: StateBackend, event: AuditEvent) -> None:
     """Best-effort write for auth events. Everything else goes through a
     state-change method's `audit=` parameter so it's transactional."""
-    assert event.action in EVENT_ONLY_ACTIONS, f"{event.action} must be written with its state change"
+    if event.action not in EVENT_ONLY_ACTIONS:
+        # A real error, not an assert: python -O must not turn a
+        # non-transactional write of a state change into a silent one.
+        raise ValueError(f"{event.action} must be written with its state change, not record_audit_event()")
     try:
         state.record_audit(event)
     except Exception:

@@ -188,10 +188,6 @@ class LastAdminError(Exception):
     last one, or removing/demoting their admin grant) - refused."""
 
 
-# Kept as an alias so the auth-phase call sites and tests keep working;
-# the guard itself is now "last active *admin*".
-LastActiveUserError = LastAdminError
-
 
 @dataclass
 class VolumeRecord:
