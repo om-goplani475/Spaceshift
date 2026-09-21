@@ -7,14 +7,14 @@ from collections.abc import Iterator
 import pytest
 from moto import mock_aws
 
-from controller.config import Config, load_config
+from controller.config import Config
 from controller.notifications import Notifier
 from tests.helpers import InMemoryStateBackend
 
 
 @pytest.fixture
 def config() -> Config:
-    return load_config("config.yaml.example")
+    return Config.from_dict({})
 
 
 @pytest.fixture
@@ -24,7 +24,7 @@ def state() -> InMemoryStateBackend:
 
 @pytest.fixture
 def notifier(config: Config) -> Notifier:
-    return Notifier(config)
+    return Notifier(config, slack_bot_token=None)
 
 
 @pytest.fixture

@@ -1,5 +1,6 @@
 # secrets / local config
 .env
+# No longer read by the controller, but an old copy holds AWS keys - never commit it.
 config.yaml
 *.pem
 *.key

@@ -6,24 +6,33 @@ import pytest
 
 import controller.notifications as notifications_module
 from controller.config import Config
-from controller.notifications import Notifier
+from controller.notifications import NotificationError, Notifier
 
 
 def test_none_method_does_not_raise():
-    notifier = Notifier(Config.from_dict({"notifications": {"method": "none"}}))
+    notifier = Notifier(Config.from_dict({"notifications": {"method": "none"}}), slack_bot_token=None)
     notifier.send("subject", "message")
 
 
-def test_slack_without_token_or_channel_logs_warning_and_does_not_raise(caplog):
-    notifier = Notifier(Config.from_dict({"notifications": {"method": "slack"}}))
+def test_slack_without_token_logs_warning_and_does_not_raise(caplog):
+    config = Config.from_dict({"notifications": {"method": "slack", "slack_channel_id": "C1"}})
+    notifier = Notifier(config, slack_bot_token=None)
     notifier.send("subject", "message")
-    assert "slack_bot_token/slack_channel_id are not set" in caplog.text
+    assert "SPACESHIFT_SLACK_BOT_TOKEN is not set" in caplog.text
+    with pytest.raises(NotificationError, match="SPACESHIFT_SLACK_BOT_TOKEN"):
+        notifier.deliver("subject", "message")
 
 
-def test_email_is_not_implemented():
-    notifier = Notifier(Config.from_dict({"notifications": {"method": "email"}}))
-    with pytest.raises(NotImplementedError):
-        notifier.send("subject", "message")
+def test_token_is_read_from_the_environment_by_default(monkeypatch):
+    monkeypatch.setenv("SPACESHIFT_SLACK_BOT_TOKEN", "xoxb-from-env")
+    notifier = Notifier(Config.from_dict({}))
+    assert notifier._slack_bot_token == "xoxb-from-env"
+
+
+def test_config_is_replaceable_so_settings_changes_apply_live():
+    notifier = Notifier(Config.from_dict({}), slack_bot_token="xoxb")
+    notifier.config = Config.from_dict({"notifications": {"method": "slack", "slack_channel_id": "C1"}})
+    assert notifier.config.notifications.method == "slack"
 
 
 class _FakeResponse:
@@ -42,15 +51,8 @@ class _FakeResponse:
 
 def _slack_notifier():
     return Notifier(
-        Config.from_dict(
-            {
-                "notifications": {
-                    "method": "slack",
-                    "slack_bot_token": "xoxb-test-token",
-                    "slack_channel_id": "C0123456789",
-                }
-            }
-        )
+        Config.from_dict({"notifications": {"method": "slack", "slack_channel_id": "C0123456789"}}),
+        slack_bot_token="xoxb-test-token",
     )
 
 
@@ -85,5 +87,6 @@ def test_slack_api_error_in_response_body_logs_warning(monkeypatch, caplog):
     monkeypatch.setattr(notifications_module.urllib_request, "urlopen", fake_urlopen)
 
     _slack_notifier().send("subject", "message")
-
     assert "channel_not_found" in caplog.text
+    with pytest.raises(NotificationError, match="channel_not_found"):
+        _slack_notifier().deliver("subject", "message")

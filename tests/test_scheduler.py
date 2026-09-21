@@ -9,7 +9,7 @@ import pytest
 from controller.discovery import EligibleVolume
 from controller.disk_check import DiskUsage
 from controller.resize import ModifyVolumeError
-from controller.scheduler import Scheduler
+from controller.scheduler import Scheduler, TickFailed
 from controller.state.base import ResizeStatus
 
 _ACCOUNT = "default"
@@ -17,8 +17,10 @@ _ACCOUNT = "default"
 
 @pytest.fixture
 def scheduler(config, state, notifier):
-    with patch("boto3.client", return_value=MagicMock()):
-        return Scheduler(config, state, notifier)
+    state.create_account(_ACCOUNT, None, ["us-east-1"])
+    with patch("boto3.Session") as session_cls:
+        session_cls.return_value.client.return_value = MagicMock()
+        return Scheduler(state, notifier, config)
 
 
 @pytest.fixture
@@ -128,32 +130,41 @@ def test_ssm_not_ready_still_records_scan(scheduler, volume, state):
     assert scans[0].percent_used is None
 
 
-def test_run_region_prunes_scan_log(scheduler, state):
+def test_run_once_prunes_scan_log(scheduler, state):
     state.record_scan(_ACCOUNT, "us-east-1", "vol-old", "i-1", 100, 80, 10, "below_threshold")
     # retention of 0 days means "prune anything not from this exact instant" -
     # the simplest way to deterministically exercise the prune call itself
     # without waiting on real time to pass.
-    scheduler._config.scheduler.scan_log_retention_days = 0
-    with patch("controller.scheduler.discover_eligible_volumes", return_value=[]):
-        scheduler._run_region(_ACCOUNT, "us-east-1")
+    state.set_config("scheduler.scan_log_retention_days", "0")
+    with patch("controller.scheduler.SsmConnector"), patch.object(scheduler, "_run_region"):
+        scheduler.run_once()
     assert state.list_scans() == []
 
 
 # --- multi-account routing ----------------------------------------------------
 
 
-def test_run_once_visits_every_account_and_region(config, state, notifier):
-    from controller.config import AccountConfig
+def _scheduler_with(state, notifier, config, *accounts):
+    for name, regions in accounts:
+        state.create_account(name, None, list(regions))
+    with patch("boto3.Session") as session_cls:
+        session_cls.return_value.client.return_value = MagicMock()
+        return Scheduler(state, notifier, config)
 
-    config.accounts = [
-        AccountConfig(name="account-a", regions=["us-east-1"]),
-        AccountConfig(name="account-b", regions=["us-east-1", "eu-west-1"]),
-    ]
-    with patch("boto3.client", return_value=MagicMock()):
-        scheduler = Scheduler(config, state, notifier)
+
+def test_run_once_visits_every_enabled_account_and_region(config, state, notifier):
+    scheduler = _scheduler_with(
+        state, notifier, config, ("account-a", ["us-east-1"]), ("account-b", ["us-east-1", "eu-west-1"])
+    )
+    state.create_account("account-c", None, ["us-east-1"])
+    state.set_account_enabled("account-c", False)
+    state.create_account("account-d", None, [])  # no regions: nothing to do
 
     visited = []
-    with patch.object(scheduler, "_run_region", side_effect=lambda a, r: visited.append((a, r))):
+    with (
+        patch("controller.scheduler.SsmConnector"),
+        patch.object(scheduler, "_run_region", side_effect=lambda a, r: visited.append((a, r))),
+    ):
         scheduler.run_once()
 
     assert sorted(visited) == [
@@ -161,17 +172,100 @@ def test_run_once_visits_every_account_and_region(config, state, notifier):
         ("account-b", "eu-west-1"),
         ("account-b", "us-east-1"),
     ]
+    assert state.get_account("account-a").last_ok_at is not None
+    assert state.get_account("account-c").last_ok_at is None
+
+
+def test_clients_are_reconciled_from_the_table_each_cycle(config, state, notifier):
+    scheduler = _scheduler_with(state, notifier, config, ("account-a", ["us-east-1"]))
+    with patch("controller.scheduler.SsmConnector"), patch.object(scheduler, "_run_region"):
+        scheduler.run_once()
+        first = scheduler._accounts["account-a"]
+        scheduler.run_once()
+        assert scheduler._accounts["account-a"] is first  # unchanged row -> same clients
+
+        state.update_account("account-a", None, ["us-east-1", "eu-west-1"])
+        state.create_account("account-b", None, ["us-east-1"])
+        scheduler.run_once()
+        assert scheduler._accounts["account-a"] is not first and set(scheduler._accounts) == {"account-a", "account-b"}
+
+        state.set_account_enabled("account-b", False)
+        scheduler.run_once()
+        assert set(scheduler._accounts) == {"account-a"}
+
+
+def test_one_failing_account_never_stops_the_others(config, state, notifier):
+    scheduler = _scheduler_with(state, notifier, config, ("bad", ["us-east-1"]), ("good", ["us-east-1"]))
+
+    def run_region(account, region):
+        if account == "bad":
+            raise RuntimeError("AccessDenied: not authorized to DescribeInstances")
+
+    with patch("controller.scheduler.SsmConnector"), patch.object(scheduler, "_run_region", side_effect=run_region):
+        scheduler.run_once()  # no exception: the tick succeeded
+
+    assert "AccessDenied" in state.get_account("bad").last_error and state.get_account("bad").last_ok_at is None
+    assert state.get_account("good").last_ok_at is not None and state.get_account("good").last_error is None
+
+
+def test_tick_fails_only_when_every_account_fails(config, state, notifier):
+    scheduler = _scheduler_with(state, notifier, config, ("a", ["us-east-1"]), ("b", ["us-east-1"]))
+    with (
+        patch("controller.scheduler.SsmConnector"),
+        patch.object(scheduler, "_run_region", side_effect=RuntimeError("down")),
+        pytest.raises(TickFailed),
+    ):
+        scheduler.run_once()
+
+
+def test_unbuildable_clients_are_recorded_and_retried(config, state, notifier):
+    scheduler = _scheduler_with(state, notifier, config, ("prod", ["us-east-1"]))
+    state.update_account("prod", "arn:aws:iam::1:role/nope", ["us-east-1"])
+    with (
+        patch("controller.scheduler.build_account_session", side_effect=RuntimeError("AssumeRole denied")),
+        patch.object(scheduler, "_run_region") as run_region,
+        pytest.raises(TickFailed),  # the only account failed -> tick failure
+    ):
+        scheduler.run_once()
+    run_region.assert_not_called()
+    assert "AssumeRole denied" in state.get_account("prod").last_error
+    assert "prod" not in scheduler._accounts  # nothing cached; next cycle tries again
+
+
+def test_zero_accounts_is_a_quiet_successful_tick(config, state, notifier):
+    with patch("boto3.Session"):
+        scheduler = Scheduler(state, notifier, config)
+    scheduler.run_once()  # nothing raised, prunes still ran
+    assert scheduler._accounts == {}
+
+
+def test_verify_now_is_serviced_between_cycles(config, state, notifier):
+    scheduler = _scheduler_with(state, notifier, config, ("prod", ["us-east-1"]))
+    state.request_account_verify("prod")
+    sts = MagicMock()
+    sts.get_caller_identity.return_value = {"Arn": "arn:aws:sts::1:assumed-role/x"}
+    session = MagicMock()
+    session.client.side_effect = lambda service, **kw: sts if service == "sts" else MagicMock()
+    with (
+        patch("controller.scheduler.build_account_session", return_value=session),
+        patch("controller.scheduler.time.sleep"),
+    ):
+        scheduler._sleep_servicing_verify_requests(1)
+    prod = state.get_account("prod")
+    assert prod.last_ok_at is not None and prod.verify_requested_at is None
+
+    state.request_account_verify("prod")
+    sts.get_caller_identity.side_effect = RuntimeError("InvalidClientTokenId")
+    with (
+        patch("controller.scheduler.build_account_session", return_value=session),
+        patch("controller.scheduler.time.sleep"),
+    ):
+        scheduler._sleep_servicing_verify_requests(1)
+    assert "InvalidClientTokenId" in state.get_account("prod").last_error
 
 
 def test_ssm_not_ready_alert_keyed_per_account(config, state, notifier):
-    from controller.config import AccountConfig
-
-    config.accounts = [
-        AccountConfig(name="account-a", regions=["us-east-1"]),
-        AccountConfig(name="account-b", regions=["us-east-1"]),
-    ]
-    with patch("boto3.client", return_value=MagicMock()):
-        scheduler = Scheduler(config, state, notifier)
+    scheduler = _scheduler_with(state, notifier, config, ("account-a", ["us-east-1"]), ("account-b", ["us-east-1"]))
 
     sent = []
     scheduler._notifier.send = lambda subject, message: sent.append(subject)
@@ -193,7 +287,10 @@ def test_run_once_applies_live_app_config(scheduler, state):
     assert scheduler._config.dry_run is True
     state.set_config("dry_run", "false")
 
-    with patch("controller.scheduler.discover_eligible_volumes", return_value=[]):
+    with (
+        patch("controller.scheduler.SsmConnector"),
+        patch("controller.scheduler.discover_eligible_volumes", return_value=[]),
+    ):
         scheduler.run_once()
 
     assert scheduler._config.dry_run is False
@@ -203,7 +300,10 @@ def test_run_once_keeps_previous_config_on_invalid_app_config_value(scheduler, s
     original_interval = scheduler._config.scheduler.interval_seconds
     state.set_config("scheduler.interval_seconds", "not-a-number")
 
-    with patch("controller.scheduler.discover_eligible_volumes", return_value=[]):
+    with (
+        patch("controller.scheduler.SsmConnector"),
+        patch("controller.scheduler.discover_eligible_volumes", return_value=[]),
+    ):
         scheduler.run_once()
 
     assert scheduler._config.scheduler.interval_seconds == original_interval
@@ -356,6 +456,7 @@ def test_heartbeat_deadline_tracks_the_live_interval(scheduler, state, tmp_path)
     state.set_config("scheduler.interval_seconds", "3600")
     with (
         patch("controller.scheduler.HEARTBEAT_PATH", str(heartbeat)),
+        patch("controller.scheduler.SsmConnector"),
         patch("controller.scheduler.discover_eligible_volumes", return_value=[]),
     ):
         scheduler.run_once()  # picks up the 3600s interval from app_config

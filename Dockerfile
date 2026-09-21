@@ -6,7 +6,6 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 COPY controller/ controller/
-COPY config.yaml.example .
 
 # Non-root by default. State lives in the separate postgres container/volume
 # (see docker-compose.yml), not on disk here, so there's nothing else to chown.

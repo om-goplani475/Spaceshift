@@ -25,10 +25,16 @@
                    {{ "checked" if (s.value if s.value is not none else s.default) == "true" }}>
             <span class="slider"></span>
           </label>
+          {% elif s.key == "notifications.method" %}
+          <select id="setting-{{ s.key }}" class="config-value-input" data-key="{{ s.key }}">
+            {% for choice in ("none", "slack") %}
+            <option value="{{ choice }}" {{ "selected" if (s.value if s.value is not none else s.default) == choice }}>{{ choice }}</option>
+            {% endfor %}
+          </select>
           {% else %}
           <input type="text" id="setting-{{ s.key }}" class="config-value-input" data-key="{{ s.key }}"
                  value="{{ s.value if s.value is not none else '' }}" placeholder="{{ s.default }}"
-                 inputmode="numeric" autocomplete="off">
+                 {{ 'inputmode="numeric"' if not s.key.startswith("notifications.") }} autocomplete="off">
           {% endif %}
           <span class="config-status" aria-live="polite"></span>
         </div>

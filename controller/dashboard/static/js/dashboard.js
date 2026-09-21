@@ -187,7 +187,7 @@ function wireConfigDirtyTracking(root) {
   root.querySelectorAll(".config-value-input, .config-bool-input").forEach(function (input) {
     const row = input.closest(".setting");
     const statusEl = row.querySelector(".config-status");
-    const eventName = input.type === "checkbox" ? "change" : "input";
+    const eventName = input.type === "checkbox" || input.tagName === "SELECT" ? "change" : "input";
     input.addEventListener(eventName, function () {
       row.dataset.dirty = "true";
       statusEl.textContent = "Unsaved";

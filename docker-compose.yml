@@ -34,13 +34,10 @@ services:
       # Must match the postgres service's password above - same variable,
       # so the two never disagree without extra config.
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env - see .env.example}
-    # No AWS keys here - attach an IAM role to the host running this
-    # container instead (see docs/SETUP.md), and boto3 picks it up
-    # automatically with zero config. If no instance role is available
-    # (your own server, another cloud, etc), set credentials.mode: static
-    # and the access key in config.yaml instead - see docs/SETUP.md.
-    volumes:
-      - ./config.yaml:/app/config.yaml:ro
+    # No AWS keys here by default - attach an IAM role to the host running
+    # this container (see docs/SETUP.md) and boto3 picks it up with zero
+    # config. Without an instance role, set AWS_ACCESS_KEY_ID and
+    # AWS_SECRET_ACCESS_KEY in .env (passed through below).
     logging:
       driver: json-file
       options:

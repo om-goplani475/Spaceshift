@@ -11,7 +11,6 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from controller.config import Config
 from controller.main import build_state_backend, main
 
 
@@ -20,12 +19,12 @@ def test_main_startup_does_not_crash_before_run_forever():
     # allow access to any attribute, including ones that no longer exist,
     # which is exactly how the config.connection.mode bug went unnoticed.
     with (
-        patch("controller.main.load_config", return_value=Config.from_dict({})),
         patch("controller.main.build_state_backend") as build_state_backend,
         patch("controller.main.Notifier"),
         patch("controller.main.Scheduler") as scheduler_cls,
     ):
         state = MagicMock()
+        state.list_accounts.return_value = []
         build_state_backend.return_value = state
         scheduler_cls.return_value.run_forever.side_effect = RuntimeError("stop after startup")
 
@@ -68,3 +67,22 @@ def test_build_state_backend_percent_encodes_uri_structural_characters(monkeypat
     backend_cls.assert_called_once_with(
         "postgresql://ebs_auto_resize:p%40ss%2Fw%25rd%3Ax%3Fy@postgres:5432/ebs_auto_resize"
     )
+
+
+def test_stray_config_yaml_only_warns(tmp_path, monkeypatch, caplog):
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "config.yaml").write_text("accounts: []\n")
+    with (
+        patch("controller.main.build_state_backend") as build_state_backend,
+        patch("controller.main.Notifier"),
+        patch("controller.main.Scheduler") as scheduler_cls,
+        caplog.at_level("WARNING"),
+    ):
+        build_state_backend.return_value.list_accounts.return_value = []
+        scheduler_cls.return_value.run_forever.side_effect = RuntimeError("stop")
+        try:
+            main()
+        except RuntimeError:
+            pass
+    assert "config.yaml is no longer read" in caplog.text
+    assert "no AWS accounts" in caplog.text

@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 from urllib import request as urllib_request
 from urllib.error import URLError
 
@@ -18,31 +19,51 @@ from controller.config import Config
 logger = logging.getLogger(__name__)
 
 
-class Notifier:
-    """Sends a notification through whichever method config.notifications.method selects."""
+SLACK_TOKEN_ENV = "SPACESHIFT_SLACK_BOT_TOKEN"
 
-    def __init__(self, config: Config) -> None:
-        self._config = config
+
+class NotificationError(Exception):
+    """A send that didn't reach anyone, with the reason Slack (or the
+    network) gave - what the Settings page's test button shows."""
+
+
+class Notifier:
+    """Sends a notification through whichever method the live config's
+    notifications.method selects. `config` is replaced by the scheduler
+    every cycle so a change on the Settings page applies to the next
+    alert; the bot token is read from the environment, never from
+    config or the database."""
+
+    def __init__(self, config: Config, slack_bot_token: str | None = None) -> None:
+        self.config = config
+        self._slack_bot_token = slack_bot_token if slack_bot_token is not None else os.environ.get(SLACK_TOKEN_ENV)
 
     def send(self, subject: str, message: str) -> None:
-        method = self._config.notifications.method
+        """Best-effort: an alert that can't be delivered is logged, never
+        raised - the resize it describes already happened."""
+        try:
+            self.deliver(subject, message)
+        except NotificationError as exc:
+            logger.warning("notification not delivered: %s", exc)
+
+    def deliver(self, subject: str, message: str) -> None:
+        """Like send(), but raises NotificationError with Slack's own
+        reason - for the Settings page's test button."""
+        method = self.config.notifications.method
         if method == "none":
             logger.info("[notify:none] %s - %s", subject, message)
             return
         if method == "slack":
             self._send_slack(subject, message)
             return
-        if method == "email":
-            self._send_email(subject, message)
-            return
-        raise ValueError(f"Unknown notification method: {method!r}")
+        raise NotificationError(f"unknown notification method {method!r}")
 
     def _send_slack(self, subject: str, message: str) -> None:
-        bot_token = self._config.notifications.slack_bot_token
-        channel_id = self._config.notifications.slack_channel_id
-        if not bot_token or not channel_id:
-            logger.warning("notifications.method is slack but slack_bot_token/slack_channel_id are not set; skipping")
-            return
+        channel_id = self.config.notifications.slack_channel_id
+        if not self._slack_bot_token:
+            raise NotificationError(f"notifications.method is slack but {SLACK_TOKEN_ENV} is not set in .env")
+        if not channel_id:
+            raise NotificationError("notifications.method is slack but notifications.slack_channel_id is not set")
 
         payload = json.dumps({"channel": channel_id, "text": f"*{subject}*\n{message}"}).encode("utf-8")
         req = urllib_request.Request(
@@ -50,7 +71,7 @@ class Notifier:
             data=payload,
             headers={
                 "Content-Type": "application/json; charset=utf-8",
-                "Authorization": f"Bearer {bot_token}",
+                "Authorization": f"Bearer {self._slack_bot_token}",
             },
         )
         try:
@@ -60,15 +81,7 @@ class Notifier:
                 # the real result is in the JSON body's "ok" field, not the
                 # status code, so that's what has to be checked here.
                 body = json.loads(response.read().decode("utf-8"))
-                if not body.get("ok"):
-                    logger.warning("Slack API returned an error: %s", body.get("error"))
         except URLError as exc:
-            logger.warning("Failed to send Slack notification: %s", exc)
-
-    def _send_email(self, subject: str, message: str) -> None:
-        # config.py's NotificationsConfig only models what's needed for
-        # slack today (method + bot token + channel id). Email needs SMTP
-        # host/port/from/to that don't exist yet in the schema - rather
-        # than guess at settings nobody has asked for, this stays an
-        # explicit not-implemented until a real use case defines them.
-        raise NotImplementedError("notifications.method: email is not implemented yet - use slack or none")
+            raise NotificationError(f"could not reach Slack: {exc.reason}") from exc
+        if not body.get("ok"):
+            raise NotificationError(f"Slack refused the message: {body.get('error', 'unknown error')}")

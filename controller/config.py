@@ -1,17 +1,16 @@
-"""Loads config.yaml into a typed, defaulted Config object.
+"""The live settings: a typed, defaulted Config built from the app_config
+table every scheduler cycle (see refresh_config_from_db).
 
-Every setting has a default matching config.yaml.example, so a user can
-start the controller with zero configuration and override only what they
-need to change.
+Nothing here comes from a file. AWS accounts live in the accounts table
+(state/contracts/accounts.py) and secrets in the environment; every
+default below is what an empty app_config table means.
 """
 
 from __future__ import annotations
 
 import copy
 import logging
-import os
 from dataclasses import dataclass, field
-from pathlib import Path
 from typing import Any
 
 import yaml
@@ -20,10 +19,7 @@ from controller.state.base import StateBackend
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_CONFIG_PATH = Path(os.environ.get("EBS_AUTO_RESIZE_CONFIG", "config.yaml"))
-
-_VALID_NOTIFICATION_METHODS = {"none", "slack", "email"}
-_VALID_CREDENTIALS_MODES = {"role", "static"}
+VALID_NOTIFICATION_METHODS = ("none", "slack")
 
 
 def _require_int(label: str, value: Any, *, minimum: int, maximum: int | None = None) -> None:
@@ -71,6 +67,8 @@ DB_CONFIG_KEYS: dict[str, tuple[str, ...]] = {
     "resize.extend_retry.backoff_seconds": ("resize", "extend_retry", "backoff_seconds"),
     "resize.stale_lock_timeout_minutes": ("resize", "stale_lock_timeout_minutes"),
     "dry_run": ("dry_run",),
+    "notifications.method": ("notifications", "method"),
+    "notifications.slack_channel_id": ("notifications", "slack_channel_id"),
 }
 
 
@@ -126,68 +124,24 @@ class ResizeConfig:
 
 @dataclass
 class NotificationsConfig:
+    # The Slack bot token is deliberately not here: it's a secret, so it
+    # comes from SPACESHIFT_SLACK_BOT_TOKEN in the environment.
     method: str = "none"
-    slack_bot_token: str | None = None
     slack_channel_id: str | None = None
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> NotificationsConfig:
         d = cls()
+        channel = data.get("slack_channel_id", d.slack_channel_id)
         return cls(
             method=data.get("method", d.method),
-            slack_bot_token=data.get("slack_bot_token", d.slack_bot_token),
-            slack_channel_id=data.get("slack_channel_id", d.slack_channel_id),
-        )
-
-
-@dataclass
-class AccountConfig:
-    # One entry per AWS account the controller centrally manages. Every
-    # account authenticates through the same base credentials.* identity;
-    # assume_role_arn (per-account, not global) is what actually lets one
-    # controller process manage several accounts at once.
-    name: str
-    assume_role_arn: str | None = None
-    regions: list[str] = field(default_factory=lambda: ["us-east-1"])
-
-    @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> AccountConfig:
-        if not data.get("name"):
-            raise ValueError("each entry in accounts: must have a non-empty name")
-        d = cls(name=data["name"])
-        return cls(
-            name=data["name"],
-            assume_role_arn=data.get("assume_role_arn", d.assume_role_arn),
-            regions=data.get("regions", d.regions),
-        )
-
-
-@dataclass
-class CredentialsConfig:
-    # "role" (default): use the controller's own default credential chain -
-    # an EC2 instance role, typically. "static": authenticate with the
-    # access key below instead, for deployments with no instance role
-    # available (own server, another cloud, local testing).
-    mode: str = "role"
-    aws_access_key_id: str | None = None
-    aws_secret_access_key: str | None = None
-    aws_session_token: str | None = None
-
-    @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> CredentialsConfig:
-        d = cls()
-        return cls(
-            mode=data.get("mode", d.mode),
-            aws_access_key_id=data.get("aws_access_key_id", d.aws_access_key_id),
-            aws_secret_access_key=data.get("aws_secret_access_key", d.aws_secret_access_key),
-            aws_session_token=data.get("aws_session_token", d.aws_session_token),
+            # An empty Settings field means "unset", not the string "".
+            slack_channel_id=str(channel) if channel not in (None, "") else None,
         )
 
 
 @dataclass
 class Config:
-    accounts: list[AccountConfig] = field(default_factory=lambda: [AccountConfig(name="default")])
-    credentials: CredentialsConfig = field(default_factory=CredentialsConfig)
     default_threshold_percent: int = 80
     scheduler: SchedulerConfig = field(default_factory=SchedulerConfig)
     resize: ResizeConfig = field(default_factory=ResizeConfig)
@@ -195,24 +149,6 @@ class Config:
     notifications: NotificationsConfig = field(default_factory=NotificationsConfig)
 
     def __post_init__(self) -> None:
-        if not self.accounts:
-            raise ValueError("accounts: must have at least one entry")
-        names = [a.name for a in self.accounts]
-        if len(names) != len(set(names)):
-            raise ValueError(f"accounts: names must be unique, got {names}")
-        for account in self.accounts:
-            if not account.regions:
-                raise ValueError(f"accounts: {account.name!r} must have at least one region")
-        if self.credentials.mode not in _VALID_CREDENTIALS_MODES:
-            raise ValueError(
-                f"credentials.mode must be one of {sorted(_VALID_CREDENTIALS_MODES)}, got {self.credentials.mode!r}"
-            )
-        if self.credentials.mode == "static" and not (
-            self.credentials.aws_access_key_id and self.credentials.aws_secret_access_key
-        ):
-            raise ValueError(
-                "credentials.mode is 'static' but aws_access_key_id and aws_secret_access_key are not both set"
-            )
         # app_config values arrive as YAML-parsed text: "0", "null", "" and
         # "banana" are all falsy-or-truthy *non-bools* that would silently
         # pick live mode (or dry-run) while the Settings switch shows the
@@ -220,11 +156,13 @@ class Config:
         # that decides whether real AWS calls happen.
         if not isinstance(self.dry_run, bool):
             raise ValueError(f"dry_run must be true or false, got {self.dry_run!r}")
-        if self.notifications.method not in _VALID_NOTIFICATION_METHODS:
+        if self.notifications.method not in VALID_NOTIFICATION_METHODS:
             raise ValueError(
-                f"notifications.method must be one of {sorted(_VALID_NOTIFICATION_METHODS)}, "
+                f"notifications.method must be one of {list(VALID_NOTIFICATION_METHODS)}, "
                 f"got {self.notifications.method!r}"
             )
+        if self.notifications.method == "slack" and not self.notifications.slack_channel_id:
+            raise ValueError("notifications.method is slack but notifications.slack_channel_id is not set")
         _require_int("default_threshold_percent", self.default_threshold_percent, minimum=0)
         if self.default_threshold_percent > 100:
             raise ValueError(
@@ -254,15 +192,7 @@ class Config:
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> Config:
         defaults_source = _RAW_DEFAULTS
-        accounts_data = data.get("accounts")
-        accounts = (
-            [AccountConfig(name="default")]
-            if accounts_data is None
-            else [AccountConfig.from_dict(a) for a in accounts_data]
-        )
         return cls(
-            accounts=accounts,
-            credentials=CredentialsConfig.from_dict(data.get("credentials", {})),
             default_threshold_percent=data.get(
                 "default_threshold_percent", defaults_source["default_threshold_percent"]
             ),
@@ -277,21 +207,6 @@ _RAW_DEFAULTS = {
     "default_threshold_percent": 80,
     "dry_run": True,
 }
-
-
-def load_config(path: str | Path | None = None) -> Config:
-    """Load config.yaml from `path` (default: $EBS_AUTO_RESIZE_CONFIG or ./config.yaml).
-
-    A missing file is not an error — the returned Config just falls back to
-    defaults everywhere, so the controller can run with zero setup.
-    """
-    config_path = Path(path) if path else DEFAULT_CONFIG_PATH
-    if config_path.exists():
-        with config_path.open() as f:
-            raw = yaml.safe_load(f) or {}
-    else:
-        raw = {}
-    return Config.from_dict(raw)
 
 
 def apply_db_overrides(base: dict[str, Any], overrides: dict[str, str]) -> dict[str, Any]:

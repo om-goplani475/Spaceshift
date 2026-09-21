@@ -33,7 +33,7 @@ from controller.resize import (
     should_retry_extend_now,
     start_resize,
 )
-from controller.state.base import ResizeStatus, StateBackend
+from controller.state.base import AccountRecord, ResizeStatus, StateBackend
 
 logger = logging.getLogger(__name__)
 
@@ -59,43 +59,51 @@ _MAX_CONSECUTIVE_FAILURES = 3
 _LOGIN_ATTEMPT_RETENTION = timedelta(days=7)
 
 
+# How long run_forever() sleeps between checks for a "verify now" request
+# from the Accounts page - the page polls every 10 s, so an answer within
+# this is one refresh away.
+_VERIFY_POLL_SECONDS = 5
+
+
 @dataclass
 class _AccountClients:
-    """Per-account, per-region AWS clients - one of these per entry in
-    config.accounts, all authenticated through that account's own session
-    (see build_account_session)."""
+    """Per-account, per-region AWS clients, all authenticated through that
+    account's own session (see build_account_session). `key` is what
+    they were built from; when the accounts row changes they're rebuilt."""
 
+    key: tuple
     ec2_clients: dict[str, object]
     ssm_clients: dict[str, object]
     connectors: dict[str, Connector]
 
 
+def _clients_key(account: AccountRecord) -> tuple:
+    return (account.name, account.assume_role_arn, tuple(account.regions))
+
+
+class TickFailed(Exception):
+    """Every enabled account failed this cycle - the process-level signal
+    run_forever() counts toward its restart, as opposed to one account's
+    problem, which is recorded on that account and never stops the rest."""
+
+
 class Scheduler:
-    def __init__(self, config: Config, state: StateBackend, notifier: Notifier) -> None:
-        self._config = config
+    def __init__(self, state: StateBackend, notifier: Notifier, config: Config | None = None) -> None:
         self._state = state
         self._notifier = notifier
+        # Every default, fully resolved - the fixed base that app_config is
+        # overlaid onto every cycle in run_once(). Nothing comes from a
+        # file any more; `config` is a test hook.
+        self._config = config if config is not None else Config.from_dict({})
+        self._base_config_dict = asdict(Config.from_dict({}))
 
-        # config.yaml's own values, fully resolved (every dataclass default
-        # already filled in by Config.from_dict()) - the fixed base that
-        # app_config is overlaid onto every cycle in run_once(). Captured
-        # once here rather than re-reading config.yaml, since the file
-        # itself is never re-read after startup - only app_config is live.
-        self._base_config_dict = asdict(config)
-
-        # One base identity shared by every account, then one session per
-        # account (assumed-role or the base identity itself) - assume_role_arn
+        # One base identity shared by every account (the instance role or
+        # AWS_* env vars), then one session per account, built lazily by
+        # _reconcile_clients() from the accounts table - assume_role_arn
         # only actually provides multi-account support if *everything* for
         # that account, including the SSM connector, authenticates through it.
-        base_session = build_base_session(config)
+        self._base_session = build_base_session()
         self._accounts: dict[str, _AccountClients] = {}
-        for account in config.accounts:
-            session = build_account_session(base_session, account)
-            self._accounts[account.name] = _AccountClients(
-                ec2_clients={r: session.client("ec2", region_name=r, config=RETRY_CONFIG) for r in account.regions},
-                ssm_clients={r: session.client("ssm", region_name=r, config=RETRY_CONFIG) for r in account.regions},
-                connectors={r: SsmConnector(region=r, session=session) for r in account.regions},
-            )
 
         # In-memory, not state-backed: a controller restart may repeat one
         # alert, which is an acceptable trade-off for "don't spam every
@@ -128,7 +136,43 @@ class Scheduler:
             else:
                 consecutive_failures = 0
                 self._write_heartbeat()
-            time.sleep(self._config.scheduler.interval_seconds)
+            self._sleep_servicing_verify_requests(self._config.scheduler.interval_seconds)
+
+    def _sleep_servicing_verify_requests(self, seconds: int) -> None:
+        """Sleep the interval in short slices, answering "verify now" from
+        the Accounts page in between - the only thing that may touch AWS
+        between cycles, and only for the account that asked."""
+        remaining = seconds
+        while remaining > 0:
+            try:
+                for name in self._state.list_verify_requests():
+                    self.verify_account(name)
+            except Exception:
+                logger.exception("could not service verify requests this slice")
+            step = min(_VERIFY_POLL_SECONDS, remaining)
+            time.sleep(step)
+            remaining -= step
+
+    def verify_account(self, name: str) -> None:
+        """STS GetCallerIdentity through the account's own session (a fresh
+        one, so a fixed ARN is picked up immediately), then record the
+        verdict on the row. Never raises - the verdict *is* the result."""
+        account = self._state.get_account(name)
+        if account is None:
+            return
+        try:
+            session = build_account_session(self._base_session, account.assume_role_arn)
+            identity = session.client("sts", config=RETRY_CONFIG).get_caller_identity()
+            if account.regions:
+                session.client("ec2", region_name=account.regions[0], config=RETRY_CONFIG).describe_regions(
+                    RegionNames=list(account.regions)
+                )
+        except Exception as exc:
+            logger.warning("account %r failed verification: %s", name, exc)
+            self._state.record_account_check(name, _describe(exc))
+            return
+        logger.info("account %r verified as %s", name, identity.get("Arn"))
+        self._state.record_account_check(name, None)
 
     def _write_heartbeat(self) -> None:
         deadline = datetime.now(UTC) + timedelta(seconds=self._config.scheduler.interval_seconds) + _HEARTBEAT_GRACE
@@ -136,9 +180,56 @@ class Scheduler:
 
     def run_once(self) -> None:
         self._config = refresh_config_from_db(self._base_config_dict, self._state, self._config)
-        for account in self._config.accounts:
+        self._notifier.config = self._config
+
+        accounts = [a for a in self._state.list_accounts(enabled_only=True) if a.regions]
+        self._reconcile_clients(accounts)
+
+        # Each account is its own failure domain: a bad ARN or a throttled
+        # DescribeInstances in one account is recorded on that account and
+        # never stops the others. Only "everything failed" is a tick failure.
+        failed = 0
+        for account in accounts:
+            if account.name not in self._accounts:
+                failed += 1  # clients couldn't be built - already recorded
+                continue
+            error = None
             for region in account.regions:
-                self._run_region(account.name, region)
+                try:
+                    self._run_region(account.name, region)
+                except Exception as exc:
+                    logger.exception("account %r region %s failed this cycle", account.name, region)
+                    error = f"{region}: {_describe(exc)}"
+            self._state.record_account_check(account.name, error)
+            if error is not None:
+                failed += 1
+
+        self._prune()
+        if accounts and failed == len(accounts):
+            raise TickFailed(f"every enabled account failed this cycle ({failed})")
+
+    def _reconcile_clients(self, accounts: list[AccountRecord]) -> None:
+        """Build clients for new or changed accounts, drop the rest. An
+        account whose session can't be built (AssumeRole denied, bad ARN)
+        gets the error on its row and is retried next cycle - no back-off
+        state to get stuck in."""
+        wanted = {a.name: _clients_key(a) for a in accounts}
+        for name in [n for n in self._accounts if self._accounts[n].key != wanted.get(n)]:
+            del self._accounts[name]
+        for account in accounts:
+            if account.name in self._accounts:
+                continue
+            try:
+                session = build_account_session(self._base_session, account.assume_role_arn)
+                self._accounts[account.name] = _AccountClients(
+                    key=wanted[account.name],
+                    ec2_clients={r: session.client("ec2", region_name=r, config=RETRY_CONFIG) for r in account.regions},
+                    ssm_clients={r: session.client("ssm", region_name=r, config=RETRY_CONFIG) for r in account.regions},
+                    connectors={r: SsmConnector(region=r, session=session) for r in account.regions},
+                )
+            except Exception as exc:
+                logger.exception("could not build AWS clients for account %r", account.name)
+                self._state.record_account_check(account.name, _describe(exc))
 
     def _run_region(self, account_name: str, region: str) -> None:
         clients = self._accounts[account_name]
@@ -153,6 +244,7 @@ class Scheduler:
             for volume in volumes:
                 pool.submit(self._process_volume, account_name, ec2, ssm, connector, volume, region)
 
+    def _prune(self) -> None:
         now = datetime.now(UTC)
         self._state.prune_scan_log(now - timedelta(days=self._config.scheduler.scan_log_retention_days))
         # The dashboard writes login_attempts and audit_log but has no loop
@@ -299,3 +391,10 @@ class Scheduler:
                 f"after the controller restarted mid-resize.",
             )
         # else: still "modifying" per AWS - leave the row as-is for the next check.
+
+
+def _describe(exc: BaseException) -> str:
+    """One line for the accounts row: the exception type and message,
+    which for botocore errors already carries the AWS error code."""
+    text = str(exc).strip() or exc.__class__.__name__
+    return text if text.startswith(exc.__class__.__name__) else f"{exc.__class__.__name__}: {text}"

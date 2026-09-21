@@ -4,23 +4,8 @@ from dataclasses import asdict
 
 import pytest
 
-from controller.config import Config, apply_db_overrides, load_config, refresh_config_from_db
+from controller.config import DB_CONFIG_KEYS, Config, apply_db_overrides, refresh_config_from_db
 from tests.helpers import InMemoryStateBackend
-
-
-def test_defaults_match_config_yaml_example():
-    config = load_config("config.yaml.example")
-    assert config.default_threshold_percent == 80
-    assert config.dry_run is True
-    assert config.resize.growth_increment_percent == 20
-
-
-def test_missing_config_file_falls_back_to_defaults():
-    config = load_config("/nonexistent/path/config.yaml")
-    assert len(config.accounts) == 1
-    assert config.accounts[0].name == "default"
-    assert config.accounts[0].regions == ["us-east-1"]
-    assert config.dry_run is True
 
 
 def test_invalid_threshold_percent_rejected():
@@ -40,85 +25,12 @@ def test_partial_override_keeps_other_defaults():
     assert config.resize.growth_increment_percent == 20  # untouched default
 
 
-def test_credentials_mode_defaults_to_role():
-    config = Config.from_dict({})
-    assert config.credentials.mode == "role"
-    assert config.credentials.aws_access_key_id is None
-
-
-def test_credentials_static_mode_requires_keys():
-    with pytest.raises(ValueError, match="credentials.mode is 'static'"):
-        Config.from_dict({"credentials": {"mode": "static"}})
-
-
-def test_credentials_static_mode_accepts_keys():
-    config = Config.from_dict(
-        {
-            "credentials": {
-                "mode": "static",
-                "aws_access_key_id": "AKIAEXAMPLE",
-                "aws_secret_access_key": "secret",
-            }
-        }
-    )
-    assert config.credentials.mode == "static"
-    assert config.credentials.aws_access_key_id == "AKIAEXAMPLE"
-
-
-def test_invalid_credentials_mode_rejected():
-    with pytest.raises(ValueError, match="credentials.mode"):
-        Config.from_dict({"credentials": {"mode": "bogus"}})
-
-
-def test_accounts_list_parsed():
-    config = Config.from_dict(
-        {
-            "accounts": [
-                {"name": "prod", "assume_role_arn": "arn:aws:iam::111111111111:role/x", "regions": ["us-east-1"]},
-                {"name": "staging", "regions": ["eu-west-1", "eu-west-2"]},
-            ]
-        }
-    )
-    assert [a.name for a in config.accounts] == ["prod", "staging"]
-    assert config.accounts[0].assume_role_arn == "arn:aws:iam::111111111111:role/x"
-    assert config.accounts[1].assume_role_arn is None
-    assert config.accounts[1].regions == ["eu-west-1", "eu-west-2"]
-
-
-def test_account_without_regions_defaults_to_us_east_1():
-    config = Config.from_dict({"accounts": [{"name": "prod"}]})
-    assert config.accounts[0].regions == ["us-east-1"]
-
-
-def test_account_missing_name_rejected():
-    with pytest.raises(ValueError, match="name"):
-        Config.from_dict({"accounts": [{"regions": ["us-east-1"]}]})
-
-
-def test_duplicate_account_names_rejected():
-    with pytest.raises(ValueError, match="unique"):
-        Config.from_dict({"accounts": [{"name": "prod"}, {"name": "prod"}]})
-
-
-def test_account_with_empty_regions_rejected():
-    with pytest.raises(ValueError, match="region"):
-        Config.from_dict({"accounts": [{"name": "prod", "regions": []}]})
-
-
-def test_empty_accounts_list_rejected():
-    with pytest.raises(ValueError, match="accounts"):
-        Config.from_dict({"accounts": []})
-
-
-# --- apply_db_overrides / refresh_config_from_db (config-in-DB) --------------
-
-
 def test_asdict_roundtrip_with_no_overrides_reconstructs_equivalent_config():
     # The base dict refresh_config_from_db overlays onto is
     # dataclasses.asdict(config), not the raw config.yaml dict - this locks
     # down that Config.from_dict(asdict(config)) is a faithful roundtrip,
     # which the whole hot-reload design leans on.
-    config = load_config("config.yaml.example")
+    config = Config.from_dict({})
     roundtripped = Config.from_dict(apply_db_overrides(asdict(config), {}))
     assert roundtripped == config
 
@@ -143,9 +55,10 @@ def test_apply_db_overrides_sets_doubly_nested_key():
 
 def test_apply_db_overrides_ignores_unrecognized_key():
     base = asdict(Config.from_dict({}))
-    merged = apply_db_overrides(base, {"credentials.mode": "static"})
-    # Not in DB_CONFIG_KEYS - identity/secrets stay file-only, never DB-overridable.
-    assert Config.from_dict(merged).credentials.mode == "role"
+    merged = apply_db_overrides(base, {"notifications.slack_bot_token": "xoxb-should-be-ignored"})
+    # Not in DB_CONFIG_KEYS - secrets live in the environment and can't be
+    # smuggled in through app_config.
+    assert merged == base
 
 
 def test_apply_db_overrides_ignores_unparseable_value(caplog):
@@ -228,3 +141,28 @@ def test_dry_run_must_be_a_real_boolean(value):
 def test_dry_run_accepts_booleans():
     assert Config.from_dict({"dry_run": True}).dry_run is True
     assert Config.from_dict({"dry_run": False}).dry_run is False
+
+
+def test_defaults_come_from_nowhere_but_the_dataclasses():
+    config = Config.from_dict({})
+    assert config.dry_run is True
+    assert config.default_threshold_percent == 80
+    assert config.scheduler.interval_seconds == 300
+    assert config.notifications.method == "none" and config.notifications.slack_channel_id is None
+
+
+def test_notification_settings_are_live_editable_and_validated():
+    assert "notifications.method" in DB_CONFIG_KEYS and "notifications.slack_channel_id" in DB_CONFIG_KEYS
+    config = Config.from_dict(
+        apply_db_overrides(
+            {"notifications": {}}, {"notifications.method": "slack", "notifications.slack_channel_id": "C012ABC"}
+        )
+    )
+    assert config.notifications.method == "slack" and config.notifications.slack_channel_id == "C012ABC"
+    with pytest.raises(ValueError, match="notifications.method must be one of"):
+        Config.from_dict({"notifications": {"method": "email"}})
+    with pytest.raises(ValueError, match="slack_channel_id is not set"):
+        Config.from_dict({"notifications": {"method": "slack"}})
+    # an emptied Settings field means unset, and a numeric-looking id stays a string
+    assert Config.from_dict({"notifications": {"slack_channel_id": ""}}).notifications.slack_channel_id is None
+    assert Config.from_dict({"notifications": {"slack_channel_id": 123}}).notifications.slack_channel_id == "123"

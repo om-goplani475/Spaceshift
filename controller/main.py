@@ -7,9 +7,10 @@ from __future__ import annotations
 
 import logging
 import os
+from pathlib import Path
 from urllib.parse import quote
 
-from controller.config import load_config
+from controller.config import Config
 from controller.notifications import Notifier
 from controller.scheduler import Scheduler
 from controller.state.base import StateBackend
@@ -46,16 +47,20 @@ def build_state_backend() -> StateBackend:
 def main() -> None:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 
-    config = load_config()
+    if Path("config.yaml").exists():
+        logger.warning(
+            "config.yaml is no longer read; accounts are managed on the dashboard's Accounts page and "
+            "secrets in .env - delete the file"
+        )
     state = build_state_backend()
-    notifier = Notifier(config)
-    scheduler = Scheduler(config, state, notifier)
+    notifier = Notifier(Config.from_dict({}))
+    scheduler = Scheduler(state, notifier)
 
-    logger.info(
-        "ebs-auto-resize starting - accounts=%s dry_run=%s",
-        [(a.name, a.regions) for a in config.accounts],
-        config.dry_run,
-    )
+    accounts = state.list_accounts(enabled_only=True)
+    if accounts:
+        logger.info("spaceshift starting - accounts=%s", [(a.name, a.regions) for a in accounts])
+    else:
+        logger.warning("spaceshift starting with no AWS accounts - add one on the dashboard's Accounts page")
 
     try:
         scheduler.run_forever()

@@ -58,6 +58,8 @@ _CONFIG_LABELS: dict[str, str] = {
     "resize.extend_retry.backoff_seconds": "Extend retry backoff (sec)",
     "resize.stale_lock_timeout_minutes": "Stale lock timeout (min)",
     "dry_run": "Dry run",
+    "notifications.method": "Notification method",
+    "notifications.slack_channel_id": "Slack channel ID",
 }
 
 _CONFIG_DESCRIPTIONS: dict[str, str] = {
@@ -93,6 +95,13 @@ _CONFIG_DESCRIPTIONS: dict[str, str] = {
         "When on, the controller only logs what it would do - no real AWS resize call or filesystem change. "
         "The most important setting for a first run."
     ),
+    "notifications.method": (
+        "Where alerts go: none (log only) or slack. Slack needs the channel ID below and "
+        "SPACESHIFT_SLACK_BOT_TOKEN in .env."
+    ),
+    "notifications.slack_channel_id": (
+        "The channel the bot posts to (its ID, e.g. C0123456789 - not its name). The bot must be invited to it."
+    ),
 }
 
 # Settings page layout: (group title, keys in display order). Safety is
@@ -123,6 +132,7 @@ _CONFIG_GROUPS: list[tuple[str, list[str]]] = [
             "resize.stale_lock_timeout_minutes",
         ],
     ),
+    ("Notifications", ["notifications.method", "notifications.slack_channel_id"]),
 ]
 
 
