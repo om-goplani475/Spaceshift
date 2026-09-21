@@ -22,16 +22,15 @@ v1 supports **Amazon Linux + Ubuntu, ext4 + XFS**. LVM-based volumes are out of 
 ```bash
 git clone https://github.com/om-goplani475/Spaceshift.git
 cd Spaceshift
-cp config.yaml.example config.yaml
 cp .env.example .env   # fill in POSTGRES_PASSWORD, SPACESHIFT_SECRET_KEY, SPACESHIFT_SETUP_TOKEN - no defaults are shipped
 docker compose up
 ```
 
-Then open `http://localhost:8089` - with no users yet it takes you to `/setup` - and create the first admin with the setup token from your `.env` (or run `docker compose exec dashboard python -m controller.dashboard.users create-admin <name>` instead). That page works exactly once.
+Then open `http://localhost:8089` - with no users yet it takes you to `/setup` - and create the first admin with the setup token from your `.env` (or run `docker compose exec dashboard python -m controller.dashboard.users create-admin <name>` instead). That page works exactly once. Then add your AWS account on the **Accounts** page (name, regions, optionally a role to assume) and click **Verify now**. There is no configuration file: secrets live in `.env`, everything else on the dashboard.
 
 This starts three containers: the controller, its dashboard (below), and a Postgres container both use to track resize state (no separate database setup needed — they connect to it automatically using the password from `.env`). `docker compose up` refuses to start if `.env` is missing the password or the secret key, rather than silently running with a guessable one.
 
-`dry_run` defaults to `true` — the controller will log what it *would* resize without ever calling `modify-volume` or running a mutating remote command. Confirm the logs show what you expect against your own AWS account before flipping it off (it's a live-editable setting in Postgres, not a `config.yaml` field — see [docs/SETUP.md](docs/SETUP.md) section 5).
+`dry_run` defaults to `true` — the controller will log what it *would* resize without ever calling `modify-volume` or running a mutating remote command. Confirm the logs show what you expect against your own AWS account before flipping it off on the Settings page (see [docs/SETUP.md](docs/SETUP.md) section 5).
 
 Mark a volume (or the instance it's attached to) as eligible - the first cycle syncs everything it can see into Postgres, but nothing is watched until this is set. The dashboard (below) is the easiest way to do this - flip the `Autoresize` toggle next to the volume/instance on the **Instances** or **Volumes** page. Without the dashboard, it's a direct `UPDATE`:
 
@@ -47,8 +46,9 @@ Already running as part of `docker compose up` above — no separate command nee
 - **Overview** — the numbers that matter (volumes scanned, watched, resizes completed, in progress, needs attention), every resize the controller has started and where it got to, and the most recent disk checks.
 - **Instances** and **Volumes** — everything discovered, with an `Autoresize` toggle per row (this is how you mark things eligible). The Volumes page shows what's *actually* in effect after a volume's own flag, its instance's flag, and the default threshold are resolved.
 - **Audit log** — who changed what, when, and from where: every toggle, setting change, sign-in, failed sign-in and CLI user command, filterable and exportable as CSV. Kept for a year by default ([docs/SETUP.md](docs/SETUP.md) section 8).
+- **Accounts** (admins) — which AWS accounts to watch, through which role, in which regions; live status per account and a **Verify now** that reports the exact AWS error.
 - **Users** (admins) — create users, hand over a one-time temporary password, set roles per account, deactivate, reset, unlock.
-- **Settings** (admins) — `dry_run` and every other live-editable setting (see [docs/SETUP.md](docs/SETUP.md) section 5), grouped and described inline, no SQL and no restart.
+- **Settings** (admins) — `dry_run`, notifications and every other live-editable setting (see [docs/SETUP.md](docs/SETUP.md) section 5), grouped and described inline, no SQL and no restart.
 
 Managing more than one AWS account (see [docs/SETUP.md](docs/SETUP.md) section 1.4)? Every table is filterable by account alongside region. Pages keep themselves up to date (a 10s poll while the tab is visible, paused when it isn't) — the indicator in the top-right says when the last refresh happened. JSON is also available at `/api/status`, `/api/scans`, `/api/instances`, `/api/volumes`, `/api/config`, `/api/audit` — with the same session cookie a browser gets from `/login` (a `curl` recipe is in [docs/SETUP.md](docs/SETUP.md) 7.6). The container serves plain HTTP with gunicorn — if it's reachable beyond localhost, put it behind a TLS-terminating reverse proxy (nginx, Caddy, an ALB) and set `SPACESHIFT_BEHIND_TLS_PROXY=true` so the session cookie is only ever sent over HTTPS.
 
@@ -59,13 +59,13 @@ Managing more than one AWS account (see [docs/SETUP.md](docs/SETUP.md) section 1
 
 ## Setup and configuration
 
-Before running this against a real AWS account, see **[docs/SETUP.md](docs/SETUP.md)** for the full prerequisites (IAM role, SSM-managed instances, marking resources eligible, IMDSv2 gotcha) and a field-by-field reference for every option in [config.yaml.example](config.yaml.example), plus the settings that live in Postgres instead and can be changed without a restart.
+Before running this against a real AWS account, see **[docs/SETUP.md](docs/SETUP.md)** for the full prerequisites (IAM role, SSM-managed instances, marking resources eligible, IMDSv2 gotcha), the `.env` reference, and every setting on the Accounts and Settings pages.
 
 ## Required AWS permissions
 
-Attach an IAM role to whatever host runs the container — **never put access keys in `config.yaml` or commit them to version control.** A ready-to-copy least-privilege policy is in [docs/iam-policy.json](docs/iam-policy.json); see [docs/SETUP.md](docs/SETUP.md) for what each statement is for, and for a tag-scoped variant that limits which instances and volumes the role can touch. Be clear-eyed about what the default role can do: root on every SSM-managed instance, and any volume resized.
+Attach an IAM role to whatever host runs the container — **never put access keys anywhere but `.env`, and never commit them.** A ready-to-copy least-privilege policy is in [docs/iam-policy.json](docs/iam-policy.json); see [docs/SETUP.md](docs/SETUP.md) for what each statement is for, and for a tag-scoped variant that limits which instances and volumes the role can touch. Be clear-eyed about what the default role can do: root on every SSM-managed instance, and any volume resized.
 
-Not running on EC2 (no instance role available)? Set `credentials.mode: static` and an access key in `config.yaml` instead — see [docs/SETUP.md](docs/SETUP.md). The role-based path above remains the recommended default.
+Not running on EC2 (no instance role available)? Put `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` in `.env` instead — see [docs/SETUP.md](docs/SETUP.md). The role-based path above remains the recommended default.
 
 ## Connection method
 

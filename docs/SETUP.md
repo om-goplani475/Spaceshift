@@ -1,6 +1,6 @@
 # Setup Guide
 
-This covers everything that needs to exist **before** the controller can run, and explains every option in [`config.yaml.example`](../config.yaml.example) plus the live-editable settings in Postgres (section 5). See the main [README](../README.md) for the quickstart commands themselves.
+This covers everything that needs to exist **before** the controller can run, then every setting: the secrets in [`.env`](../.env.example) (section 4), the AWS accounts you manage on the dashboard's Accounts page (1.4), and the live-editable settings on its Settings page (5). There is no configuration file. See the main [README](../README.md) for the quickstart commands themselves.
 
 ## 1. AWS prerequisites
 
@@ -8,9 +8,9 @@ This covers everything that needs to exist **before** the controller can run, an
 
 Attach an IAM role to whatever host runs the container (an instance profile if the controller runs on EC2). Use the ready-to-copy least-privilege policy at [`docs/iam-policy.json`](iam-policy.json).
 
-**Never put AWS access keys in `config.yaml` or commit them to version control.** The whole design assumes the controller authenticates via an attached role, not static credentials.
+**Never put AWS access keys anywhere but `.env`, and never commit them.** The whole design assumes the controller authenticates via an attached role, not static credentials.
 
-**Running the controller somewhere with no EC2 instance role available** (your own server, a different cloud, locally)? Set `credentials.mode: static` in `config.yaml` and fill in an IAM **user's** access key under `credentials.aws_access_key_id` / `credentials.aws_secret_access_key` (see section 4 below) - `config.yaml` is already gitignored, so this lives in the same place as every other secret in this tool (e.g. the Slack bot token), not a second file. Leave `credentials.mode` at its default (`role`) for the EC2 path - it's completely unaffected either way. Static keys are a weaker security posture than a role - use them only when a role genuinely isn't an option, and rotate them periodically.
+**Running the controller somewhere with no EC2 instance role available** (your own server, a different cloud, locally)? Put an IAM **user's** access key in `.env` as `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` (and `AWS_SESSION_TOKEN` if it's temporary) - see section 4. boto3 picks them up through its standard credential chain; with a role attached and these unset, the role is used. Static keys are a weaker security posture than a role - use them only when a role genuinely isn't an option, and rotate them periodically.
 
 What each statement in that policy is for:
 
@@ -41,7 +41,7 @@ The controller checks this automatically before attempting a disk check - an ins
 
 ### 1.3 Mark the volumes (or instances) you want managed
 
-Eligibility isn't an AWS tag or a `config.yaml` setting - it's a column in Postgres. Every instance and volume the controller can see gets synced into the `instances`/`volumes` tables **every cycle, regardless of eligibility** (that's the point: tag-based discovery was replaced because it made the fleet view incomplete - you could only see what was already opted in, never what *could* be). Nothing is actually resized until its `autoresize` column is `true`.
+Eligibility isn't an AWS tag or a setting - it's a column in Postgres. Every instance and volume the controller can see gets synced into the `instances`/`volumes` tables **every cycle, regardless of eligibility** (that's the point: tag-based discovery was replaced because it made the fleet view incomplete - you could only see what was already opted in, never what *could* be). Nothing is actually resized until its `autoresize` column is `true`.
 
 The easiest way to flip this is the dashboard (already running as part of `docker compose up` - no separate flag needed; visit `localhost:8089` and open **Instances** or **Volumes** - each row has an `Autoresize` toggle). If you'd rather script it, it's a plain `UPDATE`:
 
@@ -54,21 +54,27 @@ Setting `autoresize` on an **instance** row instead makes every volume attached 
 
 **Security note:** because eligibility lives in application data instead of an AWS tag, `ec2:ModifyVolume` in the default `docs/iam-policy.json` is not scoped by an IAM `Condition` - AWS itself will allow the call on any volume; only the controller's own check of the `autoresize` column stands between "eligible" and "not." For an IAM-enforced second gate, use the tag-scoped policy described in section 1.1.
 
-### 1.4 Multi-account setup (optional, `accounts:`)
+### 1.4 Accounts: telling the controller what to watch
 
-One controller process can centrally manage several AWS accounts at once. `config.yaml`'s `accounts:` is a list - one entry per account, each with its own `name`, optional `assume_role_arn`, and `regions`. Every account authenticates through the same base identity (`credentials.*`, section 4) - what makes each entry a genuinely different account is its own `assume_role_arn`.
+AWS accounts are managed on the dashboard's **Accounts** page (admins only; `http://localhost:8089/accounts`), not in a file. Each account is a **name** you choose (it appears in every table, in role grants and in the audit log, and can't be renamed), an optional **assume-role ARN**, and one or more **regions**. The controller re-reads the list at the top of every cycle, so adding or editing an account is live within one interval, with no restart.
 
-The single-account case is just a one-entry list (see `config.yaml.example`) - nothing else about setup changes. To add a second account:
+Until at least one enabled account has a region, the controller starts, stays healthy and does nothing - admins see a banner on every page saying so.
+
+**Single account:** add one entry with no ARN. The controller scans the base identity's own account (the instance role's, or the access key's).
+
+**Several accounts** from one controller: every account authenticates through the same base identity; what makes each entry a different AWS account is its own assume-role ARN.
 
 - Create a role in the **target** account (e.g. named `spaceshift`) with the permissions above.
 - That role's **trust policy** must explicitly allow the controller's own identity (its instance role, typically) to assume it - this is configured on the target account's side, not something the controller's own IAM policy can grant by itself.
-- Add an entry to `accounts:` with that role's ARN as `assume_role_arn` and the regions to scan in that account.
+- Add an account with that role's ARN and the regions to scan there.
 
-An account entry with no `assume_role_arn` scans the base identity's own account directly - useful if the controller's home account is itself one of the accounts being managed, alongside others reached via `assume_role_arn`.
+**Verify now** on an account's page asks the controller to check it immediately (STS `GetCallerIdentity` plus a `DescribeRegions` for the listed regions) and shows the result - or the exact AWS error - within a few seconds. The same status is refreshed every cycle: **Last OK** and **Last error** on the Accounts list tell you which accounts the controller is actually reaching. One account failing (a bad ARN, a revoked trust policy) never stops the others; it's recorded on that account and retried every cycle.
 
-## 2. Slack prerequisites (optional, `notifications.method: slack`)
+**Disabling** an account stops the controller watching it; nothing is deleted - instances, volumes, resize history, role grants and audit rows all keep the name. Disabling is refused while a resize in that account is still in flight. Accounts are never deleted, for the same reason users aren't.
 
-Only needed if you want resize alerts in Slack. Skip this entirely for `method: none`.
+## 2. Slack prerequisites (optional)
+
+Only needed if you want resize alerts in Slack. Skip this entirely to keep the default (alerts go to the controller's log only).
 
 1. Create a Slack app at [api.slack.com/apps](https://api.slack.com/apps) → **Create New App** → **From scratch**, in the workspace you want alerts posted to.
 2. Under **OAuth & Permissions** → **Scopes** → **Bot Token Scopes**, add `chat:write` (lets the bot post to channels it's a member of). Add `chat:write.public` too if you want it to post to public channels without being explicitly invited.
@@ -76,7 +82,7 @@ Only needed if you want resize alerts in Slack. Skip this entirely for `method: 
 4. Get the target channel's ID: in Slack, right-click the channel → **View channel details** → the ID is at the bottom of that panel (looks like `C0123456789`, not the channel name). This is `notifications.slack_channel_id`.
 5. If you didn't add `chat:write.public` in step 2, invite the bot to that channel: `/invite @your-bot-name` in Slack.
 
-Both values are secrets (the bot token especially) - they belong in `config.yaml` (already gitignored), never in `config.yaml.example` or committed anywhere.
+The bot token is a secret: it goes in `.env` as `SPACESHIFT_SLACK_BOT_TOKEN` (section 4) and nowhere else. The channel ID isn't - set it, and switch the method to `slack`, in the **Notifications** group on the Settings page (5). **Send test notification** there posts a message with the saved settings and shows Slack's own error if it fails.
 
 ## 3. Host prerequisites
 
@@ -87,47 +93,24 @@ Both values are secrets (the bot token especially) - they belong in `config.yaml
   ```
   Docker's networking adds an extra hop to the instance metadata service; the default hop limit of 1 makes `boto3`'s automatic credential lookup fail silently *only* inside the container, which is a confusing thing to debug blind if you don't know to look for it.
 
-## 4. `config.yaml` reference
+## 4. `.env` reference (every secret, and nothing else)
 
-Copy the example first: `cp config.yaml.example config.yaml`. Every field below shows its default. This file is deliberately narrow - identity (`accounts`, `credentials`) and secrets (`notifications`) only. Everything else that used to live here (`default_threshold_percent`, `dry_run`, `scheduler.*`, `resize.*`) is now a Postgres `app_config` setting instead - see section 5.
+Copy [`.env.example`](../.env.example) to `.env`. docker compose reads it for variable substitution and passes each value to the container that needs it. It's the one file that holds secrets - there is no `config.yaml` any more - so protect it accordingly (it's gitignored; keep it `chmod 600`).
 
-### Top level
+| Variable | Required | Used by | Meaning |
+|---|---|---|---|
+| `POSTGRES_PASSWORD` | yes | all three | The bundled Postgres container's password. `docker compose up` refuses to start without it. Any characters except `$` (write `$$`). |
+| `SPACESHIFT_SECRET_KEY` | yes, ≥32 chars | dashboard | Signs session cookies. Rotating it signs everyone out. |
+| `SPACESHIFT_SETUP_TOKEN` | no | dashboard | Guards `/setup` (7.2). Ignored once a user exists. |
+| `SPACESHIFT_BEHIND_TLS_PROXY` | no, default `false` | dashboard | See 7.5. |
+| `SPACESHIFT_SLACK_BOT_TOKEN` | no | controller + dashboard | Bot User OAuth Token (`xoxb-...`) for Slack alerts (2). The dashboard needs it only for the test button. |
+| `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` / `AWS_SESSION_TOKEN` | no | controller | Only when no instance role is available (1.1). Unset = use the attached role. |
 
-| Field | Default | Meaning |
-|---|---|---|
-| `accounts` | one entry, `name: default`, `regions: [us-east-1]` | List of AWS accounts to manage - one entry per account, each with its own `name`, optional `assume_role_arn`, and `regions`. See section 1.4. |
-
-### `accounts` (each entry)
-
-| Field | Default | Meaning |
-|---|---|---|
-| `name` | required | A label for this account - shown on the dashboard's account filter and in scan history. Must be unique across entries. |
-| `assume_role_arn` | unset | ARN of a role to assume in this account before making any AWS call for it. Leave unset to scan the base identity's own account directly. See section 1.4. |
-| `regions` | `[us-east-1]` | List of AWS regions scanned every cycle, for this account. |
-
-### `credentials`
-
-| Field | Default | Meaning |
-|---|---|---|
-| `mode` | `role` | `role` uses the controller's default credential chain (an EC2 instance role, typically) - leave this alone if the controller runs on EC2 with a role attached. `static` authenticates with the access key below instead, for deployments with no instance role available. |
-| `aws_access_key_id` / `aws_secret_access_key` | unset | An IAM **user's** access key. Required (and only used) when `mode: static` - startup fails with a clear error if either is missing while `static` is set. Ignored (with a startup warning if present) when `mode: role`. |
-| `aws_session_token` | unset | Only needed if `aws_access_key_id`/`aws_secret_access_key` are temporary credentials (e.g. from an SSO session or an AssumeRole call you made yourself, outside this tool). |
-
-### State backend (Postgres)
-
-Not a `config.yaml` field - the state backend is always the bundled Postgres container (`docker-compose.yml`'s `postgres` service) and its named volume (`postgres-data`), not something you point elsewhere. The only thing you can change is its password, via the `POSTGRES_PASSWORD` environment variable - `postgres`, `controller`, and `dashboard` all read the same variable, so they always agree on it with nothing to configure twice. **There is no default** - copy [`.env.example`](../.env.example) to `.env` and set a real value, or `docker compose up` refuses to start (`docker-compose.yml` uses Compose's `${VAR:?error}` syntax specifically so a missing password fails loudly instead of silently falling back to something guessable that anyone could find in this public repo).
-
-### `notifications`
-
-| Field | Default | Meaning |
-|---|---|---|
-| `method` | `none` | `none`, `slack`, or `email`. **`email` is a documented placeholder, not implemented yet** - selecting it raises `NotImplementedError` (see `controller/notifications.py`). |
-| `slack_bot_token` | unset | Bot User OAuth Token (`xoxb-...`). Required (and only used) when `method: slack`. See section 2 for how to get one. |
-| `slack_channel_id` | unset | Target channel's ID (e.g. `C0123456789`), not its name. Required (and only used) when `method: slack`. |
+The state backend is always the bundled Postgres container (`docker-compose.yml`'s `postgres` service) and its named volume (`postgres-data`), not something you point elsewhere.
 
 ## 5. Live-editable settings (Postgres `app_config`)
 
-Everything in this section used to be a `config.yaml` field. It's now a row in Postgres's `app_config` table instead - a plain `key`/`value` pair, checked fresh **every scheduler cycle**, so a change here takes effect on the controller's next cycle with no restart, no redeploy. A key that's never been set just falls through to the default below - an empty `app_config` table behaves exactly like the old `config.yaml` defaults did.
+Every operational setting is a row in Postgres's `app_config` table - a plain `key`/`value` pair, checked fresh **every scheduler cycle**, so a change here takes effect on the controller's next cycle with no restart, no redeploy. A key that's never been set just falls through to the default below.
 
 The easiest way to change one is the dashboard's **Settings** page (already running as part of `docker compose up`; visit `localhost:8089/settings` - `dry_run` is a toggle switch like `autoresize`; everything else is a text field pre-filled with its current override if any, showing its default as a placeholder otherwise, with a description of what it does alongside. Edit as many as you like, then **Update settings** once). An invalid value is rejected right there with an error message, before it's ever written.
 
@@ -139,7 +122,7 @@ docker compose exec postgres psql -U ebs_auto_resize -d ebs_auto_resize \
       ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = EXCLUDED.updated_at;"
 ```
 
-Values are parsed as YAML scalars (so `false`, `true`, `300` parse as bool/int - no quotes needed). **An invalid value (wrong type, out of range) written this way is logged as a warning and ignored that cycle** - the controller keeps running on its last-known-good config rather than crashing, unlike `config.yaml` itself, which still fails loudly at startup if it's broken (the two follow different failure philosophies on purpose: a broken file is caught once, at deploy time, by the person deploying; a broken live value would otherwise take down a running controller with nobody watching). The dashboard catches the same invalid values immediately instead - direct SQL is the only path where that warn-and-ignore fallback actually gets exercised.
+Values are parsed as YAML scalars (so `false`, `true`, `300` parse as bool/int - no quotes needed). **An invalid value (wrong type, out of range) written directly in SQL is logged as a warning and ignored that cycle** - the controller keeps running on its last-known-good settings rather than crashing. The Settings page rejects such a value before it's written.
 
 | Key | Default | Meaning |
 |---|---|---|
@@ -148,6 +131,8 @@ Values are parsed as YAML scalars (so `false`, `true`, `300` parse as bool/int -
 | `scheduler.max_concurrent_resizes` | `5` | Size of the thread pool processing volumes in parallel each cycle. Raise for a larger fleet. Maximum 32 - each worker holds its own Postgres connection. |
 | `scheduler.scan_log_retention_days` | `7` | How long the dashboard's scan-history table (Postgres `scan_log`) keeps rows before a row older than this gets pruned, once per cycle. Pure observability data, unrelated to `resize_state`. |
 | `scheduler.audit_log_retention_days` | `365` | How long the audit log (section 8) keeps rows. Minimum 30 - a value below that is rejected. Changing it is itself an audit event. |
+| `notifications.method` | `none` | `none` (alerts go to the controller log only) or `slack`. |
+| `notifications.slack_channel_id` | unset | The channel the bot posts to - its ID (`C0123456789`), not its name. Required when the method is `slack`; the bot must be a member of the channel. The token itself is `SPACESHIFT_SLACK_BOT_TOKEN` in `.env` (4). |
 | `resize.max_volume_size_gb` | `500` | Hard per-volume ceiling. Crossing it stops auto-resize for that volume and sends a "needs manual review" alert instead of continuing - the guardrail against a runaway log file quietly costing you money forever. |
 | `resize.growth_increment_percent` | `20` | How much bigger each resize makes the volume (e.g. 100GB → 120GB), not the target size itself. |
 | `resize.extend_retry.max_attempts` | `3` | How many times to retry the OS-side extend step (`growpart`/`resize2fs`/`xfs_growfs`) before giving up and alerting. Never re-triggers the AWS-side `modify-volume` call. |
@@ -209,7 +194,7 @@ Wrong tokens count against the same rate limit as failed logins (7.5), so a 16+ 
 
 ### 7.3 Users and roles
 
-Every user holds a **role per AWS account** (the `accounts:` names in `config.yaml`), or a global `admin`:
+Every user holds a **role per AWS account** (the names on the Accounts page, 1.4), or a global `admin`:
 
 | | viewer | operator | admin |
 |---|---|---|---|
@@ -221,7 +206,7 @@ Every user holds a **role per AWS account** (the `accounts:` names in `config.ya
 
 A user sees **nothing** outside their accounts - not in tables, stats, filter dropdowns, the JSON API or the audit export. Touching a resource in an account they can't see is a 404, exactly as if it didn't exist; touching one they can see without the role is a 403, and every 403 is recorded in the audit log as `access.denied`.
 
-**The `*` row** on a user's page is "every account, including ones added to `config.yaml` later". A role on a specific account overrides it in either direction - `operator` on `*` plus `viewer` on `prod` means operator everywhere except prod. `admin` can only be granted on `*`: it's global by definition (settings and users aren't per-account). A single team that doesn't need scoping just gives people `operator` on `*`.
+**The `*` row** on a user's page is "every account, including ones added later". A role on a specific account overrides it in either direction - `operator` on `*` plus `viewer` on `prod` means operator everywhere except prod. `admin` can only be granted on `*`: it's global by definition (settings and users aren't per-account). A single team that doesn't need scoping just gives people `operator` on `*`.
 
 **Managing users** is the **Users** page (admins only): create a user (a temporary password is generated and shown to you exactly once - hand it over out of band; they're forced to choose their own on first sign-in), set roles, reset a password (same one-time display, same forced change), unlock, deactivate and reactivate. Users are never deleted - the audit log refers to them - so deactivate is the end state. You can't deactivate yourself, and the last active admin can't be demoted or deactivated by anyone.
 
@@ -229,7 +214,7 @@ A user sees **nothing** outside their accounts - not in tables, stats, filter dr
 
 **Upgrading from a version without roles:** on first start every existing active user is granted `admin` on `*` (the privilege they already had), logged at startup and recorded in the audit log by the `system` actor. Adjust from the Users page.
 
-**Accounts** are seeded by the controller from `config.yaml` at every start. An account removed from the file stays in the role picker marked "no longer in config" so grants on it can still be cleaned up; the account's rows keep their name.
+**Accounts** come from the Accounts page (1.4). A disabled account stays in the role picker, marked, so grants on it can still be cleaned up.
 
 ### 7.4 Usernames, passwords, and recovery
 
@@ -313,10 +298,10 @@ curl -s -b jar "http://localhost:8089/api/audit?actor=alice&action=config.set&li
 1. IAM role attached to the host running the controller (1.1).
 2. SSM Agent + `AmazonSSMManagedInstanceCore` on every target instance (1.2).
 3. Docker + Docker Compose installed; IMDSv2 hop limit raised if the controller itself is on EC2 (3).
-4. `config.yaml` copied from the example and adjusted (4) - `accounts`, `credentials`, and `notifications` only.
-5. `.env` copied from `.env.example` with `POSTGRES_PASSWORD`, `SPACESHIFT_SECRET_KEY`, and (optionally) `SPACESHIFT_SETUP_TOKEN` set - `docker compose up` refuses to start without the first two.
-6. `docker compose up`, watch the logs - the first cycle syncs every instance/volume it can see into Postgres, but nothing is eligible yet. `dry_run` defaults to `true` until you set it otherwise (5) - nothing gets resized for real yet either way.
-7. First admin created, via `http://localhost:8089/setup` or the CLI (7.2).
+4. `.env` copied from `.env.example` with `POSTGRES_PASSWORD`, `SPACESHIFT_SECRET_KEY`, and (optionally) `SPACESHIFT_SETUP_TOKEN` set (4); `AWS_ACCESS_KEY_ID`/`AWS_SECRET_ACCESS_KEY` only if there's no instance role - `docker compose up` refuses to start without the first two.
+5. `docker compose up` - everything is healthy, and the controller is idle until step 7.
+6. First admin created, via `http://localhost:8089/setup` or the CLI (7.2).
+7. At least one AWS account added on the Accounts page with its regions (1.4); **Verify now** shows OK. The next cycle syncs every instance/volume it can see into Postgres, but nothing is eligible yet. `dry_run` defaults to `true` (5) - nothing gets resized for real yet either way.
 8. At least one volume or instance's `autoresize` column set to `true` (1.3) - confirm the next cycle's dry-run output matches what you expect.
-9. Slack bot token + channel ID, if using `notifications.method: slack` (2).
-10. Only then, set `dry_run` to `false` in `app_config` (5).
+9. Slack: `SPACESHIFT_SLACK_BOT_TOKEN` in `.env`, then method + channel ID on the Settings page and a test message (2).
+10. Only then, turn `dry_run` off on the Settings page (5).

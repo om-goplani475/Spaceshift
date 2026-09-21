@@ -34,6 +34,14 @@ services:
       # Must match the postgres service's password above - same variable,
       # so the two never disagree without extra config.
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env - see .env.example}
+      # Slack alerts (optional) - the channel and method are set on the
+      # dashboard; only the secret lives here.
+      SPACESHIFT_SLACK_BOT_TOKEN: ${SPACESHIFT_SLACK_BOT_TOKEN:-}
+      # Only when the host has no instance role (see docs/SETUP.md 1.1).
+      # Empty values are ignored by boto3's credential chain.
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-}
+      AWS_SESSION_TOKEN: ${AWS_SESSION_TOKEN:-}
     # No AWS keys here by default - attach an IAM role to the host running
     # this container (see docs/SETUP.md) and boto3 picks it up with zero
     # config. Without an instance role, set AWS_ACCESS_KEY_ID and
@@ -77,6 +85,10 @@ services:
       # "true" only when an HTTPS reverse proxy sits in front - turns on
       # Secure cookies and trusts X-Forwarded-* from one hop.
       SPACESHIFT_BEHIND_TLS_PROXY: ${SPACESHIFT_BEHIND_TLS_PROXY:-false}
+      # For the Settings page's "Send test notification" button only. The
+      # dashboard holds no AWS credentials - account checks run in the
+      # controller.
+      SPACESHIFT_SLACK_BOT_TOKEN: ${SPACESHIFT_SLACK_BOT_TOKEN:-}
     ports:
       - "8089:8080"
     # Overrides the Dockerfile's baked-in HEALTHCHECK, which checks for a
