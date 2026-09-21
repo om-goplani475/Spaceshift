@@ -48,9 +48,6 @@ def main() -> None:
 
     config = load_config()
     state = build_state_backend()
-    # The dashboard never reads config.yaml, so this is where it learns
-    # which accounts exist (for the role picker) - refreshed every start.
-    state.sync_accounts([a.name for a in config.accounts])
     notifier = Notifier(config)
     scheduler = Scheduler(config, state, notifier)
 

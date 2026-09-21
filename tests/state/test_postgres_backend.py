@@ -445,6 +445,33 @@ def test_audit_filters_paging_streaming_and_like_escaping(postgres_state):
     assert postgres_state.count_users() == 0
 
 
+def test_accounts_round_trip_and_in_flight_guard(postgres_state):
+    from controller.state.base import AccountExistsError, ResizeInFlightError, ResizeStatus
+
+    postgres_state.create_account("prod", "arn:aws:iam::1:role/x", ["us-east-1", "eu-west-1"])
+    with pytest.raises(AccountExistsError):
+        postgres_state.create_account("prod", None, ["us-east-1"])
+    assert postgres_state.count_users() == 0  # the failed insert didn't poison the connection
+    assert postgres_state.get_account("prod").regions == ["us-east-1", "eu-west-1"]
+    previous = postgres_state.update_account("prod", None, ["us-east-1"])
+    assert previous.assume_role_arn == "arn:aws:iam::1:role/x"
+
+    postgres_state.create_if_absent("vol-1", "i-1", 100, 120, account_name="prod")
+    with pytest.raises(ResizeInFlightError):
+        postgres_state.set_account_enabled("prod", False)
+    postgres_state.update_status("vol-1", ResizeStatus.MODIFY_FAILED)
+    postgres_state.set_account_enabled("prod", False)
+    assert postgres_state.list_accounts(enabled_only=True) == []
+
+    assert postgres_state.request_account_verify("prod")
+    assert postgres_state.list_verify_requests() == ["prod"]
+    postgres_state.record_account_check("prod", "x" * 3000)
+    prod = postgres_state.get_account("prod")
+    assert len(prod.last_error) == 2000 and prod.verify_requested_at is None
+    postgres_state.record_account_check("prod", None)
+    assert postgres_state.get_account("prod").last_ok_at is not None
+
+
 def test_prune_audit_log_records_itself(postgres_state):
     from controller.audit import AuditAction, AuditActor, AuditEvent, AuditFilters
 

@@ -61,6 +61,12 @@ class AuditAction(enum.StrEnum):
     USER_ROLE_SET = "user.role_set"
     USER_ROLE_REVOKED = "user.role_revoked"
     ACCESS_DENIED = "access.denied"
+    ACCOUNT_CREATE = "account.create"
+    ACCOUNT_UPDATE = "account.update"
+    ACCOUNT_DISABLE = "account.disable"
+    ACCOUNT_ENABLE = "account.enable"
+    ACCOUNT_VERIFY_REQUESTED = "account.verify_requested"
+    NOTIFICATION_TEST = "notification.test"
     AUTH_LOGIN = "auth.login"
     AUTH_LOGIN_FAILED = "auth.login_failed"
     AUTH_LOCKOUT = "auth.lockout"
@@ -148,6 +154,7 @@ EVENT_ONLY_ACTIONS = frozenset(
         AuditAction.AUTH_SETUP_TOKEN_REJECTED,
         AuditAction.AUTH_LOGOUT,
         AuditAction.ACCESS_DENIED,
+        AuditAction.NOTIFICATION_TEST,
     }
 )
 

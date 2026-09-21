@@ -9,7 +9,13 @@ from datetime import UTC, datetime, timedelta
 import pytest
 
 from controller.audit import AuditAction, AuditActor, AuditEvent, AuditFilters
-from controller.state.base import LastAdminError, ResizeStatus, UsernameTakenError
+from controller.state.base import (
+    AccountExistsError,
+    LastAdminError,
+    ResizeInFlightError,
+    ResizeStatus,
+    UsernameTakenError,
+)
 from tests.helpers import InMemoryStateBackend
 
 _ACCOUNT = "default"
@@ -281,11 +287,34 @@ def test_grant_admin_to_all_users_if_no_roles_is_one_time(state):
     assert state.grant_admin_to_all_users_if_no_roles() == []
 
 
-def test_sync_accounts_marks_removed_ones_but_keeps_them(state):
-    state.sync_accounts(["prod", "staging"])
-    state.sync_accounts(["prod"])
-    accounts = {a.name: a.in_config for a in state.list_accounts()}
-    assert accounts == {"prod": True, "staging": False}
+def test_accounts_create_update_disable_and_verify(state):
+    created = state.create_account("prod", "arn:aws:iam::1:role/x", ["us-east-1"])
+    assert created.enabled and created.regions == ["us-east-1"]
+    with pytest.raises(AccountExistsError):
+        state.create_account("prod", None, ["us-east-1"])
+    previous = state.update_account("prod", None, ["us-east-1", "eu-west-1"])
+    assert previous.assume_role_arn == "arn:aws:iam::1:role/x"
+    assert state.get_account("prod").regions == ["us-east-1", "eu-west-1"]
+    assert state.update_account("nope", None, []) is None
+
+    # disabling is refused while a resize is in flight, allowed once terminal
+    state.create_if_absent("vol-1", "i-1", 100, 120, account_name="prod")
+    with pytest.raises(ResizeInFlightError):
+        state.set_account_enabled("prod", False)
+    state.update_status("vol-1", ResizeStatus.EXTEND_COMPLETED)
+    assert state.set_account_enabled("prod", False).enabled is True
+    assert state.list_accounts(enabled_only=True) == []
+    assert [a.name for a in state.list_accounts()] == ["prod"]
+    state.set_account_enabled("prod", True)
+
+    # verify request → check clears it and records the verdict
+    assert state.request_account_verify("prod") and not state.request_account_verify("nope")
+    assert state.list_verify_requests() == ["prod"]
+    state.record_account_check("prod", "AccessDenied: not authorized")
+    prod = state.get_account("prod")
+    assert prod.last_error.startswith("AccessDenied") and prod.verify_requested_at is None and prod.last_ok_at is None
+    state.record_account_check("prod", None)
+    assert state.get_account("prod").last_ok_at is not None
 
 
 def test_scoped_lists(state):

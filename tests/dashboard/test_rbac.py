@@ -20,7 +20,8 @@ PASSWORD = "a perfectly fine passphrase"
 @pytest.fixture
 def fleet(state):
     """Two accounts with an instance, a volume, a scan and a resize each."""
-    state.sync_accounts(["prod", "dev"])
+    state.create_account("prod", None, ["us-east-1"])
+    state.create_account("dev", None, ["us-east-1"])
     for account in ("prod", "dev"):
         state.upsert_instance(account, f"i-{account}", "us-east-1", "t3.micro", "running")
         state.upsert_volume(account, f"vol-{account}", f"i-{account}", "us-east-1", 100, "/dev/xvdf")
@@ -52,7 +53,9 @@ def _client_for(app, username):
 
 
 def test_role_resolution_specific_beats_wildcard_both_ways(state):
-    state.sync_accounts(["prod", "dev", "qa"])
+    state.create_account("prod", None, ["us-east-1"])
+    state.create_account("dev", None, ["us-east-1"])
+    state.create_account("qa", None, ["us-east-1"])
     user = _user(state, "bob", {"*": "operator", "prod": "viewer"})
     scope = load_scope(state, user)
     assert scope.role_for("prod") == Role.VIEWER

@@ -13,11 +13,17 @@ free tests of state-machine logic that don't care about the storage engine.
 
 from __future__ import annotations
 
+from controller.state.contracts.accounts import (
+    AccountExistsError,
+    AccountRecord,
+    AccountsStateContract,
+    ResizeInFlightError,
+)
 from controller.state.contracts.audit import AuditRecord, AuditStateContract
 from controller.state.contracts.config import ConfigStateContract
 from controller.state.contracts.discovery import DiscoveryStateContract, InstanceRecord, ScanRecord, VolumeRecord
 from controller.state.contracts.resize import TERMINAL_STATUSES, ResizeRecord, ResizeStateContract, ResizeStatus
-from controller.state.contracts.roles import WILDCARD_ACCOUNT, AccountRecord, RoleGrant, RolesStateContract
+from controller.state.contracts.roles import WILDCARD_ACCOUNT, RoleGrant, RolesStateContract
 from controller.state.contracts.users import LastAdminError, UsernameTakenError, UserRecord, UsersStateContract
 
 
@@ -26,6 +32,7 @@ class StateBackend(
     DiscoveryStateContract,
     UsersStateContract,
     RolesStateContract,
+    AccountsStateContract,
     AuditStateContract,
     ConfigStateContract,
 ):
@@ -41,10 +48,12 @@ class StateBackend(
 __all__ = [
     "TERMINAL_STATUSES",
     "WILDCARD_ACCOUNT",
+    "AccountExistsError",
     "AccountRecord",
     "AuditRecord",
     "InstanceRecord",
     "LastAdminError",
+    "ResizeInFlightError",
     "ResizeRecord",
     "ResizeStatus",
     "RoleGrant",

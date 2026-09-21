@@ -185,15 +185,26 @@ ALTER TABLE users ADD COLUMN IF NOT EXISTS must_change_password BOOLEAN NOT NULL
 -- the volume row for rows that predate the column.
 ALTER TABLE resize_state ADD COLUMN IF NOT EXISTS account_name TEXT NOT NULL DEFAULT '';
 
--- Every AWS account the controller manages or once managed. Seeded from
--- config.yaml by the controller at startup (sync_accounts); never deleted
--- because instances/volumes/audit rows keep referring to the name.
+-- Every AWS account the controller manages or once managed - the source
+-- of truth the scheduler builds its clients from, edited on the Accounts
+-- page. Never deleted because instances/volumes/audit rows keep referring
+-- to the name. first_seen_at/last_seen_at/in_config predate the page (the
+-- list used to be seeded from config.yaml) and are no longer written.
 CREATE TABLE IF NOT EXISTS accounts (
     name           TEXT PRIMARY KEY,
     first_seen_at  TIMESTAMPTZ NOT NULL,
     last_seen_at   TIMESTAMPTZ NOT NULL,
     in_config      BOOLEAN NOT NULL
 );
+
+ALTER TABLE accounts ADD COLUMN IF NOT EXISTS assume_role_arn TEXT;
+ALTER TABLE accounts ADD COLUMN IF NOT EXISTS regions TEXT[] NOT NULL DEFAULT '{}';
+ALTER TABLE accounts ADD COLUMN IF NOT EXISTS enabled BOOLEAN NOT NULL DEFAULT TRUE;
+ALTER TABLE accounts ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ;
+ALTER TABLE accounts ADD COLUMN IF NOT EXISTS last_ok_at TIMESTAMPTZ;
+ALTER TABLE accounts ADD COLUMN IF NOT EXISTS last_error TEXT;
+ALTER TABLE accounts ADD COLUMN IF NOT EXISTS last_error_at TIMESTAMPTZ;
+ALTER TABLE accounts ADD COLUMN IF NOT EXISTS verify_requested_at TIMESTAMPTZ;
 
 -- One row per (user, account) grant; '*' is the wildcard account. admin
 -- is global by definition, so it may only be granted on '*'. No FK to

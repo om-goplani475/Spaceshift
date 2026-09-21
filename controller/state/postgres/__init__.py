@@ -6,6 +6,7 @@ older controller.state.postgres_backend path - both are the same class.
 from __future__ import annotations
 
 from controller.state.base import StateBackend
+from controller.state.postgres._accounts import PostgresAccountsMixin
 from controller.state.postgres._audit import PostgresAuditMixin
 from controller.state.postgres._config import PostgresConfigMixin
 from controller.state.postgres._core import PostgresCore
@@ -20,6 +21,7 @@ class PostgresStateBackend(
     PostgresDiscoveryMixin,
     PostgresUsersMixin,
     PostgresRolesMixin,
+    PostgresAccountsMixin,
     PostgresAuditMixin,
     PostgresConfigMixin,
     PostgresCore,

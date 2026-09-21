@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 
 from controller.audit import AuditAction, AuditActor, AuditEvent
-from controller.state.contracts.roles import WILDCARD_ACCOUNT, AccountRecord, RoleGrant, RolesStateContract
+from controller.state.contracts.roles import WILDCARD_ACCOUNT, RoleGrant, RolesStateContract
 from controller.state.postgres._core import _USERS_LOCK_KEY
 
 _ROLE_COLUMNS = "user_id, account_name, role, granted_at, granted_by"
@@ -25,25 +25,6 @@ def _migration_grant_event(user_id: int, username: str) -> AuditEvent:
 
 
 class PostgresRolesMixin(RolesStateContract):
-    def sync_accounts(self, names: list[str]) -> None:
-        now = datetime.now(UTC)
-        with self._cursor(commit=True) as cur:
-            for name in names:
-                cur.execute(
-                    """
-                    INSERT INTO accounts (name, first_seen_at, last_seen_at, in_config)
-                    VALUES (%s, %s, %s, TRUE)
-                    ON CONFLICT (name) DO UPDATE SET last_seen_at = EXCLUDED.last_seen_at, in_config = TRUE
-                    """,
-                    (name, now, now),
-                )
-            cur.execute("UPDATE accounts SET in_config = FALSE WHERE name != ALL(%s)", (list(names),))
-
-    def list_accounts(self) -> list[AccountRecord]:
-        with self._cursor() as cur:
-            cur.execute("SELECT name, first_seen_at, last_seen_at, in_config FROM accounts ORDER BY name")
-            return [AccountRecord(*row) for row in cur.fetchall()]
-
     def list_roles(self, user_id: int) -> list[RoleGrant]:
         with self._cursor() as cur:
             cur.execute(

@@ -112,12 +112,12 @@ def _render_user(username: str, temp_password: str | None = None):
     # Every known account, plus any the user was granted before the
     # controller saw it, plus the wildcard row first.
     names = [WILDCARD_ACCOUNT, *sorted({a.name for a in accounts} | {n for n in grants if n != WILDCARD_ACCOUNT})]
-    in_config = {a.name: a.in_config for a in accounts}
+    enabled = {a.name: a.enabled for a in accounts}
     role_rows = [
         {
             "account": name,
             "role": grants[name].role if name in grants else "",
-            "in_config": in_config.get(name, name == WILDCARD_ACCOUNT),
+            "enabled": enabled.get(name, name == WILDCARD_ACCOUNT),
             "choices": ROLE_CHOICES if name == WILDCARD_ACCOUNT else ROLE_CHOICES[:-1],
         }
         for name in names

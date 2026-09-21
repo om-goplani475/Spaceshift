@@ -38,7 +38,7 @@ def test_users_pages_are_admin_only(app, state):
 
 
 def test_create_user_shows_temporary_password_once_and_forces_change(app, client, state):
-    state.sync_accounts(["prod"])
+    state.create_account("prod", None, ["us-east-1"])
     response = client.post("/users", data={"username": "Carol"})
     assert response.status_code == 200
     html = response.data.decode()
@@ -78,7 +78,8 @@ def test_create_user_validation(client, state):
 
 
 def test_role_grid_saves_only_changes_with_before_after(client, state, admin):
-    state.sync_accounts(["prod", "dev"])
+    state.create_account("prod", None, ["us-east-1"])
+    state.create_account("dev", None, ["us-east-1"])
     bob = state.create_user("bob", hash_password(PASSWORD))
     state.set_role(bob.id, "dev", "viewer", None)
 

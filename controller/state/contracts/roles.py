@@ -1,4 +1,4 @@
-"""AWS accounts and per-account role grants."""
+"""Per-account role grants (the accounts themselves are in accounts.py)."""
 
 from __future__ import annotations
 
@@ -11,7 +11,7 @@ if TYPE_CHECKING:
     from controller.audit import AuditEvent
 
 # The wildcard account: a grant on it applies to every account, including
-# ones that appear in config.yaml later. It is the only account an
+# ones added later. It is the only account an
 # `admin` grant may name - admin is global by definition.
 WILDCARD_ACCOUNT = "*"
 
@@ -29,29 +29,7 @@ class RoleGrant:
     granted_by: int | None
 
 
-@dataclass
-class AccountRecord:
-    """An AWS account the controller manages (or once managed). Seeded by
-    the controller from config.yaml at startup; never deleted, because
-    instances/volumes/audit rows keep referring to the name."""
-
-    name: str
-    first_seen_at: datetime
-    last_seen_at: datetime
-    in_config: bool
-
-
 class RolesStateContract(abc.ABC):
-    @abc.abstractmethod
-    def sync_accounts(self, names: list[str]) -> None:
-        """Called by the controller at startup with config.yaml's account
-        names: upsert each (in_config=True, last_seen_at=now) and flag
-        every other row in_config=False. Never deletes."""
-
-    @abc.abstractmethod
-    def list_accounts(self) -> list[AccountRecord]:
-        """Every account ever seen, by name."""
-
     @abc.abstractmethod
     def list_roles(self, user_id: int) -> list[RoleGrant]:
         """This user's grants, including the '*' row if any."""

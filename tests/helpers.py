@@ -12,10 +12,12 @@ from controller.connections.base import CommandResult, ConnectionTarget, Connect
 from controller.state.base import (
     TERMINAL_STATUSES,
     WILDCARD_ACCOUNT,
+    AccountExistsError,
     AccountRecord,
     AuditRecord,
     InstanceRecord,
     LastAdminError,
+    ResizeInFlightError,
     ResizeRecord,
     ResizeStatus,
     RoleGrant,
@@ -449,20 +451,77 @@ class InMemoryStateBackend(StateBackend):
 
     # ---- Accounts and roles ---------------------------------------------------
 
-    def sync_accounts(self, names: list[str]) -> None:
-        now = datetime.now(UTC)
+    def create_account(
+        self, name: str, assume_role_arn: str | None, regions: list[str], audit: AuditEvent | None = None
+    ) -> AccountRecord:
         with self._lock:
-            for name in names:
-                existing = self._accounts.get(name)
-                self._accounts[name] = AccountRecord(
-                    name, existing.first_seen_at if existing else now, now, in_config=True
-                )
-            for name, record in self._accounts.items():
-                if name not in names:
-                    self._accounts[name] = replace(record, in_config=False)
+            if name in self._accounts:
+                raise AccountExistsError(name)
+            if audit is not None:
+                self._append_audit(audit)
+            now = datetime.now(UTC)
+            record = AccountRecord(name, assume_role_arn, list(regions), True, now, now, None, None, None, None)
+            self._accounts[name] = record
+            return record
 
-    def list_accounts(self) -> list[AccountRecord]:
-        return sorted(self._accounts.values(), key=lambda a: a.name)
+    def update_account(
+        self, name: str, assume_role_arn: str | None, regions: list[str], audit: AuditEvent | None = None
+    ) -> AccountRecord | None:
+        with self._lock:
+            previous = self._accounts.get(name)
+            if previous is None:
+                return None
+            if audit is not None:
+                self._append_audit(audit)
+            self._accounts[name] = replace(
+                previous, assume_role_arn=assume_role_arn, regions=list(regions), updated_at=datetime.now(UTC)
+            )
+            return previous
+
+    def set_account_enabled(self, name: str, enabled: bool, audit: AuditEvent | None = None) -> AccountRecord | None:
+        with self._lock:
+            previous = self._accounts.get(name)
+            if previous is None:
+                return None
+            if not enabled and any(
+                r.account_name == name and r.status not in TERMINAL_STATUSES for r in self._records.values()
+            ):
+                raise ResizeInFlightError(name)
+            if audit is not None:
+                self._append_audit(audit)
+            self._accounts[name] = replace(previous, enabled=enabled, updated_at=datetime.now(UTC))
+            return previous
+
+    def get_account(self, name: str) -> AccountRecord | None:
+        return self._accounts.get(name)
+
+    def list_accounts(self, enabled_only: bool = False) -> list[AccountRecord]:
+        return sorted((a for a in self._accounts.values() if a.enabled or not enabled_only), key=lambda a: a.name)
+
+    def request_account_verify(self, name: str, audit: AuditEvent | None = None) -> bool:
+        with self._lock:
+            record = self._accounts.get(name)
+            if record is None:
+                return False
+            if audit is not None:
+                self._append_audit(audit)
+            self._accounts[name] = replace(record, verify_requested_at=datetime.now(UTC))
+            return True
+
+    def list_verify_requests(self) -> list[str]:
+        pending = [a for a in self._accounts.values() if a.verify_requested_at is not None]
+        return [a.name for a in sorted(pending, key=lambda a: a.verify_requested_at)]
+
+    def record_account_check(self, name: str, error: str | None) -> None:
+        with self._lock:
+            record = self._accounts[name]
+            now = datetime.now(UTC)
+            if error is None:
+                self._accounts[name] = replace(record, last_ok_at=now, verify_requested_at=None)
+            else:
+                self._accounts[name] = replace(
+                    record, last_error=error[:2000], last_error_at=now, verify_requested_at=None
+                )
 
     def list_roles(self, user_id: int) -> list[RoleGrant]:
         return sorted((g for (uid, _), g in self._roles.items() if uid == user_id), key=lambda g: g.account_name)
