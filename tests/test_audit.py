@@ -31,7 +31,7 @@ def test_the_only_delete_from_audit_log_is_the_bounded_prune():
     assert len(hits) == 1, hits
     name, offset = hits[0]
     source = _sources()[name]
-    assert name == "state/postgres_backend.py"
+    assert name == "state/postgres/_audit.py"
     assert (
         "def prune_audit_log" in source[:offset].rsplit("def ", 1)[-1]
         or "prune_audit_log" in source[offset - 400 : offset]
