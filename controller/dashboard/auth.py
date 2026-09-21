@@ -227,9 +227,11 @@ def init_auth(app: Flask, state: StateBackend, settings: AuthSettings) -> None:
     app.before_request(_require_login)
     app.after_request(_add_security_headers)
     app.register_blueprint(bp)
-    from controller.dashboard.users_pages import bp as users_bp  # circular at module level
+    from controller.dashboard.accounts_pages import bp as accounts_bp  # circular at module level
+    from controller.dashboard.users_pages import bp as users_bp
 
     app.register_blueprint(users_bp)
+    app.register_blueprint(accounts_bp)
     for code in _ERROR_PAGES:
         app.register_error_handler(code, _render_error)
 

@@ -1,0 +1,87 @@
+{% extends "base.html" %}
+
+{% block title %}{{ account.name }}{% endblock %}
+{% block heading %}{{ account.name }}{% endblock %}
+{% block lede %}
+<p class="lede">
+  {% if not account.enabled %}<span class="badge badge-muted">disabled</span>
+  {% elif account.last_error_at and (not account.last_ok_at or account.last_error_at > account.last_ok_at) %}<span class="badge badge-red">error</span>
+  {% elif account.last_ok_at %}<span class="badge badge-green">ok</span>
+  {% else %}<span class="badge badge-muted">not checked yet</span>{% endif %}
+  · added <span class="ts" data-ts="{{ account.created_at.isoformat() }}"></span>
+  · <a href="{{ url_for('accounts.list_accounts') }}">all accounts</a>
+</p>
+{% endblock %}
+
+{% block content %}
+<section class="settings-group" id="account-status">
+  <h2>Status</h2>
+  <div class="setting">
+    <div class="setting-text">
+      <span class="setting-label">Last successful check</span>
+      <p class="setting-description">{% if account.last_ok_at %}<span class="ts" data-ts="{{ account.last_ok_at.isoformat() }}"></span>{% else %}The controller hasn't reached this account yet.{% endif %}</p>
+    </div>
+    <div class="setting-control">
+      <form method="post" action="{{ url_for('accounts.verify_account', name=account.name) }}">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <button type="submit" class="btn" {{ "disabled" if account.verify_requested_at }}>{{ "Verifying…" if account.verify_requested_at else "Verify now" }}</button>
+      </form>
+    </div>
+  </div>
+  {% if account.last_error %}
+  <div class="setting">
+    <div class="setting-text">
+      <span class="setting-label">Last error</span>
+      <p class="setting-description mono">{{ account.last_error }}</p>
+      <p class="muted-note"><span class="ts" data-ts="{{ account.last_error_at.isoformat() }}"></span></p>
+    </div>
+  </div>
+  {% endif %}
+</section>
+
+<form class="settings-group" method="post" action="{{ url_for('accounts.update_account', name=account.name) }}">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+  <h2>Settings</h2>
+  <div class="setting">
+    <div class="setting-text">
+      <label class="setting-label" for="arn">Assume-role ARN</label>
+      <p class="setting-description">Empty means the base identity's own account.</p>
+    </div>
+    <div class="setting-control"><input type="text" id="arn" name="assume_role_arn" class="config-value-input wide" spellcheck="false" value="{{ account.assume_role_arn or '' }}"></div>
+  </div>
+  <div class="setting">
+    <div class="setting-text">
+      <label class="setting-label" for="regions">Regions</label>
+      <p class="setting-description">Space- or comma-separated.</p>
+    </div>
+    <div class="setting-control"><input type="text" id="regions" name="regions" class="config-value-input wide" spellcheck="false" value="{{ regions_text }}"></div>
+  </div>
+  <div class="settings-actions"><button type="submit" class="btn btn-primary">Save</button><span class="config-status">Applies on the controller's next cycle.</span></div>
+</form>
+
+<section class="settings-group">
+  <h2>{{ "Enable" if not account.enabled else "Disable" }}</h2>
+  <div class="setting">
+    <div class="setting-text">
+      <span class="setting-label">{{ "Enable this account" if not account.enabled else "Disable this account" }}</span>
+      <p class="setting-description">
+        {% if account.enabled %}The controller stops watching it; instances, volumes, role grants and history all stay. Accounts are never deleted.{% if in_flight %} <strong>A resize is in flight - disabling is refused until it finishes.</strong>{% endif %}
+        {% else %}Resumes watching on the next cycle.{% endif %}
+      </p>
+    </div>
+    <div class="setting-control">
+      {% if account.enabled %}
+      <form method="post" action="{{ url_for('accounts.disable_account', name=account.name) }}">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <button type="submit" class="btn btn-danger" {{ "disabled" if in_flight }}>Disable</button>
+      </form>
+      {% else %}
+      <form method="post" action="{{ url_for('accounts.enable_account', name=account.name) }}">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <button type="submit" class="btn">Enable</button>
+      </form>
+      {% endif %}
+    </div>
+  </div>
+</section>
+{% endblock %}

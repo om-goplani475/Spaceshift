@@ -184,7 +184,9 @@ function wireAutoresizeToggles(root) {
 // setting also blocks the live-refresh poll from overwriting it - see
 // refreshLiveData()'s settings guard below.
 function wireConfigDirtyTracking(root) {
-  root.querySelectorAll(".config-value-input, .config-bool-input").forEach(function (input) {
+  // Only the Settings page's rows have the dirty/status machinery; the
+  // account forms reuse the input styling and submit normally.
+  root.querySelectorAll("#settings-list .config-value-input, #settings-list .config-bool-input").forEach(function (input) {
     const row = input.closest(".setting");
     const statusEl = row.querySelector(".config-status");
     const eventName = input.type === "checkbox" || input.tagName === "SELECT" ? "change" : "input";
@@ -257,10 +259,32 @@ function wireSettingsUpdateButton() {
   });
 }
 
+function wireNotificationTestButton() {
+  const btn = document.getElementById("notification-test-btn");
+  if (!btn) return;
+  const statusEl = document.getElementById("notification-test-status");
+  btn.addEventListener("click", function () {
+    btn.disabled = true;
+    statusEl.textContent = "Sending…";
+    statusEl.className = "config-status";
+    postJSON("/api/notifications/test", {})
+      .then(function (resp) { return resp.json().then(function (data) { return { ok: resp.ok, data: data }; }); })
+      .catch(function () { return { ok: false, data: { error: "Request failed" } }; })
+      .then(function (result) {
+        statusEl.textContent = result.ok
+          ? "Sent via " + result.data.method + " - check the channel"
+          : (result.data.error || "Failed");
+        statusEl.className = "config-status " + (result.ok ? "ok" : "error");
+        btn.disabled = false;
+      });
+  });
+}
+
 formatTimestamps(document);
 wireAutoresizeToggles(document);
 wireConfigDirtyTracking(document);
 wireSettingsUpdateButton();
+wireNotificationTestButton();
 
 // ---- Live refresh ------------------------------------------------------------
 
@@ -270,7 +294,10 @@ wireSettingsUpdateButton();
 // source of truth for what a row looks like. Filter/search inputs live
 // outside the swapped elements, so they're untouched.
 const POLL_INTERVAL_MS = 10000;
-const SWAP_IDS = ["dashboard-stats", "instances-tbody", "volumes-tbody", "resize-tbody", "scan-tbody", "audit-tbody"];
+const SWAP_IDS = [
+  "dashboard-stats", "instances-tbody", "volumes-tbody", "resize-tbody", "scan-tbody", "audit-tbody",
+  "accounts-tbody", "account-status",
+];
 let refreshInFlight = false;
 let lastRefreshedAt = Date.now();
 

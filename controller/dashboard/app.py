@@ -10,10 +10,11 @@ from datetime import UTC, datetime, timedelta
 
 from flask import Flask, Response, g, jsonify, render_template, request, stream_with_context, url_for
 
-from controller.audit import AuditAction, AuditFilters, iter_csv, record_to_json
+from controller.audit import AuditAction, AuditEvent, AuditFilters, iter_csv, record_audit_event, record_to_json
 from controller.config import DB_CONFIG_KEYS, Config, apply_db_overrides
 from controller.dashboard.auth import AuthSettings, current_actor, init_auth
 from controller.dashboard.rbac import require_admin, require_operator
+from controller.notifications import NotificationError, Notifier
 from controller.state.base import TERMINAL_STATUSES, ResizeStatus, StateBackend
 
 _SCAN_LIST_LIMIT = 200
@@ -295,10 +296,11 @@ _NAV_ITEMS = [
     ("instances", "Instances"),
     ("volumes", "Volumes"),
     ("audit", "Audit log"),
+    ("accounts.list_accounts", "Accounts"),
     ("settings", "Settings"),
     ("users.list_users", "Users"),
 ]
-_ADMIN_NAV_ENDPOINTS = frozenset({"settings", "users.list_users"})
+_ADMIN_NAV_ENDPOINTS = frozenset({"accounts.list_accounts", "settings", "users.list_users"})
 
 
 class _BadFilter(ValueError):
@@ -376,9 +378,13 @@ def create_app(state: StateBackend, auth: AuthSettings) -> Flask:
     def _template_globals():
         scope = g.get("scope")
         nav = [item for item in _NAV_ITEMS if item[0] not in _ADMIN_NAV_ENDPOINTS or (scope and scope.is_admin)]
+        # Admins get a banner until at least one AWS account is enabled -
+        # the one thing a fresh install has to do before anything happens.
+        no_accounts = bool(scope and scope.is_admin) and not any(a.enabled and a.regions for a in state.list_accounts())
         return {
             "nav_items": nav,
             "scope": scope,
+            "no_accounts": no_accounts,
             "status_badge": _status_badge,
             "decision_badge": _decision_badge,
             "audit_badge": _audit_badge,
@@ -570,6 +576,37 @@ def create_app(state: StateBackend, auth: AuthSettings) -> Flask:
     def api_config():
         require_admin()
         return jsonify(_list_settings(state))
+
+    @app.post("/api/notifications/test")
+    def test_notification():
+        """Send a test message with the *saved* notification settings -
+        the one outbound call the dashboard makes, to Slack, with the
+        same env token the controller uses. Recorded either way."""
+        require_admin()
+        try:
+            config = Config.from_dict(apply_db_overrides(_DEFAULT_CONFIG_DICT, state.list_config()))
+        except (ValueError, TypeError) as exc:
+            return jsonify({"ok": False, "error": f"saved settings are invalid: {exc}"}), 400
+        actor = current_actor()
+        try:
+            Notifier(config).deliver(
+                "Spaceshift test notification", f"Sent by {actor.username} from the dashboard's Settings page."
+            )
+        except NotificationError as exc:
+            record_audit_event(
+                state,
+                AuditEvent(actor, AuditAction.NOTIFICATION_TEST, detail={"ok": False, "error": str(exc)}),
+            )
+            return jsonify({"ok": False, "error": str(exc)}), 502
+        record_audit_event(
+            state,
+            AuditEvent(
+                actor,
+                AuditAction.NOTIFICATION_TEST,
+                detail={"ok": True, "method": config.notifications.method},
+            ),
+        )
+        return jsonify({"ok": True, "method": config.notifications.method})
 
     @app.post("/api/instances/<instance_id>/autoresize")
     def set_instance_autoresize(instance_id: str):

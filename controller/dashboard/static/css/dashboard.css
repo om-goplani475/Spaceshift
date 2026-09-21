@@ -542,6 +542,13 @@ td.empty {
 }
 a.user-name:hover { text-decoration: underline; }
 
+/* ---- Accounts --------------------------------------------------------- */
+
+.account-form { margin-bottom: var(--sp-4); }
+.config-value-input.wide { width: 26rem; max-width: 100%; text-align: left; font-family: var(--font-mono); font-size: 12.5px; }
+.error-cell { color: var(--red); font-size: var(--text-sm); max-width: 28rem; }
+#account-status .setting-description.mono { color: var(--red); white-space: pre-wrap; }
+
 /* ---- Error pages ------------------------------------------------------ */
 
 .error-actions { display: flex; align-items: center; gap: var(--sp-4); }

@@ -36,6 +36,11 @@
 </header>
 
 <main class="page{% if standalone %} page-narrow{% endif %}">
+  {% if no_accounts and request.endpoint != "accounts.list_accounts" %}
+  <div class="flashes" role="status">
+    <p class="flash flash-info">No AWS account with a region is enabled - the controller is idle. <a href="{{ url_for('accounts.list_accounts') }}">Set one up on the Accounts page</a>.</p>
+  </div>
+  {% endif %}
   {% if scope and not scope.has_any_access %}
   <div class="flashes" role="status">
     <p class="flash flash-info">You don't have access to any account yet - ask an administrator to give you a role.</p>

@@ -1,0 +1,63 @@
+{% extends "base.html" %}
+{% from "_macros.html" import empty_row with context %}
+
+{% block title %}Accounts{% endblock %}
+{% block heading %}AWS accounts{% endblock %}
+{% block lede %}
+<p class="lede">Which AWS accounts the controller watches, through which role, in which regions. The controller re-reads this list every cycle. Secrets never live here: the base identity is the host's instance role or <code>AWS_ACCESS_KEY_ID</code>/<code>AWS_SECRET_ACCESS_KEY</code> in <code>.env</code>.</p>
+{% endblock %}
+
+{% block content %}
+<form class="settings-group account-form" method="post" action="{{ url_for('accounts.create_account') }}">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+  <h2>Add an account</h2>
+  <div class="setting">
+    <div class="setting-text">
+      <label class="setting-label" for="new-name">Name</label>
+      <p class="setting-description">A label you choose - it appears in every table, in role grants and in the audit log, and can't be renamed.</p>
+    </div>
+    <div class="setting-control"><input type="text" id="new-name" name="name" class="config-value-input wide" autocapitalize="none" spellcheck="false" required placeholder="prod"></div>
+  </div>
+  <div class="setting">
+    <div class="setting-text">
+      <label class="setting-label" for="new-arn">Assume-role ARN</label>
+      <p class="setting-description">Optional. Leave empty to scan the base identity's own account; set it to have every call for this account made as that role.</p>
+    </div>
+    <div class="setting-control"><input type="text" id="new-arn" name="assume_role_arn" class="config-value-input wide" spellcheck="false" placeholder="arn:aws:iam::123456789012:role/spaceshift"></div>
+  </div>
+  <div class="setting">
+    <div class="setting-text">
+      <label class="setting-label" for="new-regions">Regions</label>
+      <p class="setting-description">Space- or comma-separated. At least one.</p>
+    </div>
+    <div class="setting-control"><input type="text" id="new-regions" name="regions" class="config-value-input wide" spellcheck="false" required placeholder="us-east-1 eu-west-1"></div>
+  </div>
+  <div class="settings-actions"><button type="submit" class="btn btn-primary">Add account</button></div>
+</form>
+
+<div class="panel">
+  <table id="accounts-table">
+    <thead><tr><th>Name</th><th>Status</th><th>Regions</th><th>Role</th><th>Last OK</th><th>Last error</th></tr></thead>
+    <tbody id="accounts-tbody">
+    {% for a in accounts %}
+    <tr>
+      <td class="mono"><a href="{{ url_for('accounts.show_account', name=a.name) }}">{{ a.name }}</a></td>
+      <td>
+        {% if not a.enabled %}<span class="badge badge-muted">disabled</span>
+        {% elif not a.regions %}<span class="badge badge-amber">no regions</span>
+        {% elif a.last_error_at and (not a.last_ok_at or a.last_error_at > a.last_ok_at) %}<span class="badge badge-red">error</span>
+        {% elif a.last_ok_at %}<span class="badge badge-green">ok</span>
+        {% else %}<span class="badge badge-muted">not checked yet</span>{% endif %}
+      </td>
+      <td class="mono">{{ a.regions | join(" ") }}</td>
+      <td class="mono">{{ a.assume_role_arn or "base identity" }}</td>
+      <td>{% if a.last_ok_at %}<span class="ts" data-ts="{{ a.last_ok_at.isoformat() }}"></span>{% else %}<span class="muted-note">never</span>{% endif %}</td>
+      <td class="error-cell">{% if a.last_error %}<span title="{{ a.last_error }}">{{ a.last_error | truncate(80) }}</span>{% endif %}</td>
+    </tr>
+    {% else %}
+    {{ empty_row(6, "No AWS accounts yet.", "Add one above - the controller is idle until you do.") }}
+    {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endblock %}
