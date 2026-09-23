@@ -14,6 +14,7 @@ from controller.state.base import (
     WILDCARD_ACCOUNT,
     AccountExistsError,
     AccountRecord,
+    AccountRegionStatus,
     AuditRecord,
     InstanceRecord,
     LastAdminError,
@@ -69,6 +70,7 @@ class InMemoryStateBackend(StateBackend):
         self._login_attempts: list[tuple[str, str, bool, datetime]] = []
         self._audit: list[AuditRecord] = []
         self._accounts: dict[str, AccountRecord] = {}
+        self._region_status: dict[tuple[str, str], AccountRegionStatus] = {}
         self._roles: dict[tuple[int, str], RoleGrant] = {}
         self._next_audit_id = 1
         # Set by a test to make the next audit insert raise - proves the
@@ -77,7 +79,13 @@ class InMemoryStateBackend(StateBackend):
         self.fail_next_audit_write = False
 
     def create_if_absent(
-        self, volume_id: str, instance_id: str, from_size_gb: int, to_size_gb: int, account_name: str = ""
+        self,
+        volume_id: str,
+        instance_id: str,
+        from_size_gb: int,
+        to_size_gb: int,
+        account_name: str = "",
+        region: str = "",
     ) -> ResizeRecord | None:
         with self._lock:
             existing = self._records.get(volume_id)
@@ -94,6 +102,7 @@ class InMemoryStateBackend(StateBackend):
                 created_at=now,
                 updated_at=now,
                 account_name=account_name,
+                region=region,
             )
             self._records[volume_id] = record
             return record
@@ -113,11 +122,16 @@ class InMemoryStateBackend(StateBackend):
             self._records[volume_id] = updated
             return updated.extend_attempts
 
-    def list_stale(self, older_than: datetime) -> list[ResizeRecord]:
+    def list_stale(
+        self, older_than: datetime, account_name: str | None = None, region: str | None = None
+    ) -> list[ResizeRecord]:
         return [
             record
             for record in self._records.values()
-            if record.status not in TERMINAL_STATUSES and record.updated_at < older_than
+            if record.status not in TERMINAL_STATUSES
+            and record.updated_at < older_than
+            and (account_name is None or record.account_name == account_name)
+            and (region is None or record.region == region)
         ]
 
     def list_all(self, limit: int = 100, account_names: frozenset[str] | None = None) -> list[ResizeRecord]:
@@ -329,18 +343,16 @@ class InMemoryStateBackend(StateBackend):
         username: str,
         password_hash: str,
         only_if_no_users: bool = False,
-        audit: AuditEvent | None = None,
         must_change: bool = False,
+        actor: AuditActor | None = None,
+        action: AuditAction | None = None,
+        detail: dict | None = None,
     ) -> UserRecord | None:
         with self._lock:
             if only_if_no_users and self._users:
                 return None
             if any(u.username.lower() == username.lower() for u in self._users.values()):
                 raise UsernameTakenError(username)
-            if audit is not None:
-                if audit.actor.user_id is None and audit.actor.actor_type == ActorType.USER:
-                    audit = replace(audit, actor=replace(audit.actor, user_id=self._next_user_id))
-                self._append_audit(audit)
             user = UserRecord(
                 id=self._next_user_id,
                 username=username,
@@ -353,6 +365,19 @@ class InMemoryStateBackend(StateBackend):
             )
             self._users[user.id] = user
             self._next_user_id += 1
+            if actor is not None:
+                if actor.user_id is None and actor.actor_type == ActorType.USER:
+                    actor = replace(actor, user_id=user.id)
+                self._append_audit(
+                    AuditEvent(
+                        actor,
+                        action if action is not None else AuditAction.USER_CREATE,
+                        target_type="user",
+                        target_id=user.username,
+                        after={"must_change_password": must_change},
+                        detail=detail,
+                    )
+                )
             return user
 
     def get_user(self, user_id: int) -> UserRecord | None:
@@ -375,19 +400,30 @@ class InMemoryStateBackend(StateBackend):
         self,
         user_id: int,
         password_hash: str,
-        audit: AuditEvent | None = None,
         must_change: bool = False,
+        actor: AuditActor | None = None,
+        action: AuditAction | None = None,
+        detail: dict | None = None,
     ) -> None:
         with self._lock:
             user = self._users[user_id]
-            if audit is not None:
-                self._append_audit(audit)
             self._users[user_id] = replace(
                 user,
                 password_hash=password_hash,
                 session_generation=user.session_generation + 1,
                 must_change_password=must_change,
             )
+            if actor is not None:
+                self._append_audit(
+                    AuditEvent(
+                        actor,
+                        action if action is not None else AuditAction.USER_PASSWORD_RESET,
+                        target_type="user",
+                        target_id=user.username,
+                        after={"must_change_password": must_change},
+                        detail=detail,
+                    )
+                )
 
     def _guard_last_admin(self, user_id: int) -> None:
         is_admin = (user_id, WILDCARD_ACCOUNT) in self._roles and self._roles[
@@ -403,24 +439,46 @@ class InMemoryStateBackend(StateBackend):
             if account == WILDCARD_ACCOUNT and grant.role == "admin" and uid != user_id and self._users[uid].is_active
         )
 
-    def set_active(self, user_id: int, is_active: bool, audit: AuditEvent | None = None) -> None:
+    def set_active(
+        self, user_id: int, is_active: bool, actor: AuditActor | None = None, detail: dict | None = None
+    ) -> None:
         with self._lock:
             user = self._users[user_id]
+            if user.is_active == is_active:
+                return  # no-op: nothing changed, nothing to audit
             if not is_active:
                 self._guard_last_admin(user_id)
-            if audit is not None:
-                self._append_audit(audit)
             if is_active:
                 self._users[user_id] = replace(user, is_active=True)
             else:
                 self._users[user_id] = replace(user, is_active=False, session_generation=user.session_generation + 1)
+            if actor is not None:
+                self._append_audit(
+                    AuditEvent(
+                        actor,
+                        AuditAction.USER_REACTIVATE if is_active else AuditAction.USER_DEACTIVATE,
+                        target_type="user",
+                        target_id=user.username,
+                        before={"is_active": user.is_active},
+                        after={"is_active": is_active},
+                        detail=detail,
+                    )
+                )
 
-    def bump_session_generation(self, user_id: int, audit: AuditEvent | None = None) -> None:
+    def unlock_user(
+        self, user_id: int, username: str, actor: AuditActor | None = None, detail: dict | None = None
+    ) -> None:
         with self._lock:
+            # Inlined rather than calling clear_login_failures(): that
+            # method takes the same lock, which threading.Lock doesn't
+            # allow re-entering.
+            self._login_attempts = [a for a in self._login_attempts if a[0] != username or a[2]]
             user = self._users[user_id]
-            if audit is not None:
-                self._append_audit(audit)
             self._users[user_id] = replace(user, session_generation=user.session_generation + 1)
+            if actor is not None:
+                self._append_audit(
+                    AuditEvent(actor, AuditAction.USER_UNLOCK, target_type="user", target_id=username, detail=detail)
+                )
 
     def record_login_attempt(self, username: str, remote_addr: str, succeeded: bool) -> None:
         with self._lock:
@@ -451,45 +509,86 @@ class InMemoryStateBackend(StateBackend):
 
     # ---- Accounts and roles ---------------------------------------------------
 
+    def _account_event(self, actor: AuditActor, action: AuditAction, name: str, detail: dict | None = None, **fields):
+        self._append_audit(
+            AuditEvent(actor, action, target_type="account", target_id=name, account_name=name, detail=detail, **fields)
+        )
+
     def create_account(
-        self, name: str, assume_role_arn: str | None, regions: list[str], audit: AuditEvent | None = None
+        self,
+        name: str,
+        assume_role_arn: str | None,
+        regions: list[str],
+        actor: AuditActor | None = None,
+        detail: dict | None = None,
     ) -> AccountRecord:
         with self._lock:
             if name in self._accounts:
                 raise AccountExistsError(name)
-            if audit is not None:
-                self._append_audit(audit)
             now = datetime.now(UTC)
             record = AccountRecord(name, assume_role_arn, list(regions), True, now, now, None, None, None, None)
             self._accounts[name] = record
+            if actor is not None:
+                self._account_event(
+                    actor,
+                    AuditAction.ACCOUNT_CREATE,
+                    name,
+                    detail,
+                    after={"assume_role_arn": assume_role_arn, "regions": regions},
+                )
             return record
 
     def update_account(
-        self, name: str, assume_role_arn: str | None, regions: list[str], audit: AuditEvent | None = None
+        self,
+        name: str,
+        assume_role_arn: str | None,
+        regions: list[str],
+        actor: AuditActor | None = None,
+        detail: dict | None = None,
     ) -> AccountRecord | None:
         with self._lock:
             previous = self._accounts.get(name)
             if previous is None:
                 return None
-            if audit is not None:
-                self._append_audit(audit)
+            if previous.assume_role_arn == assume_role_arn and previous.regions == list(regions):
+                return previous  # no-op: nothing changed, nothing to audit
             self._accounts[name] = replace(
                 previous, assume_role_arn=assume_role_arn, regions=list(regions), updated_at=datetime.now(UTC)
             )
+            if actor is not None:
+                self._account_event(
+                    actor,
+                    AuditAction.ACCOUNT_UPDATE,
+                    name,
+                    detail,
+                    before={"assume_role_arn": previous.assume_role_arn, "regions": previous.regions},
+                    after={"assume_role_arn": assume_role_arn, "regions": regions},
+                )
             return previous
 
-    def set_account_enabled(self, name: str, enabled: bool, audit: AuditEvent | None = None) -> AccountRecord | None:
+    def set_account_enabled(
+        self, name: str, enabled: bool, actor: AuditActor | None = None, detail: dict | None = None
+    ) -> AccountRecord | None:
         with self._lock:
             previous = self._accounts.get(name)
             if previous is None:
                 return None
+            if previous.enabled == enabled:
+                return previous  # no-op: nothing changed, nothing to audit
             if not enabled and any(
                 r.account_name == name and r.status not in TERMINAL_STATUSES for r in self._records.values()
             ):
                 raise ResizeInFlightError(name)
-            if audit is not None:
-                self._append_audit(audit)
             self._accounts[name] = replace(previous, enabled=enabled, updated_at=datetime.now(UTC))
+            if actor is not None:
+                self._account_event(
+                    actor,
+                    AuditAction.ACCOUNT_ENABLE if enabled else AuditAction.ACCOUNT_DISABLE,
+                    name,
+                    detail,
+                    before={"enabled": previous.enabled},
+                    after={"enabled": enabled},
+                )
             return previous
 
     def get_account(self, name: str) -> AccountRecord | None:
@@ -498,14 +597,14 @@ class InMemoryStateBackend(StateBackend):
     def list_accounts(self, enabled_only: bool = False) -> list[AccountRecord]:
         return sorted((a for a in self._accounts.values() if a.enabled or not enabled_only), key=lambda a: a.name)
 
-    def request_account_verify(self, name: str, audit: AuditEvent | None = None) -> bool:
+    def request_account_verify(self, name: str, actor: AuditActor | None = None, detail: dict | None = None) -> bool:
         with self._lock:
             record = self._accounts.get(name)
             if record is None:
                 return False
-            if audit is not None:
-                self._append_audit(audit)
             self._accounts[name] = replace(record, verify_requested_at=datetime.now(UTC))
+            if actor is not None:
+                self._account_event(actor, AuditAction.ACCOUNT_VERIFY_REQUESTED, name, detail)
             return True
 
     def list_verify_requests(self) -> list[str]:
@@ -523,35 +622,86 @@ class InMemoryStateBackend(StateBackend):
                     record, last_error=error[:2000], last_error_at=now, verify_requested_at=None
                 )
 
+    def record_region_check(self, account_name: str, region: str, error: str | None) -> None:
+        with self._lock:
+            key = (account_name, region)
+            existing = self._region_status.get(key, AccountRegionStatus(account_name, region, None, None, None))
+            now = datetime.now(UTC)
+            if error is None:
+                self._region_status[key] = replace(existing, last_ok_at=now)
+            else:
+                self._region_status[key] = replace(existing, last_error=error[:2000], last_error_at=now)
+
+    def list_region_status(self, account_name: str) -> list[AccountRegionStatus]:
+        return sorted(
+            (status for (name, _), status in self._region_status.items() if name == account_name),
+            key=lambda s: s.region,
+        )
+
     def list_roles(self, user_id: int) -> list[RoleGrant]:
         return sorted((g for (uid, _), g in self._roles.items() if uid == user_id), key=lambda g: g.account_name)
 
     def set_role(
         self,
         user_id: int,
+        username: str,
         account_name: str,
         role: str,
         granted_by: int | None,
-        audit: AuditEvent | None = None,
+        actor: AuditActor | None = None,
+        detail: dict | None = None,
     ) -> RoleGrant | None:
         if role == "admin" and account_name != WILDCARD_ACCOUNT:
             raise ValueError("admin is global - grant it on '*'")
         with self._lock:
+            previous = self._roles.get((user_id, account_name))
+            if previous is not None and previous.role == role:
+                return previous  # no-op: nothing changed, nothing to audit
             if account_name == WILDCARD_ACCOUNT and role != "admin":
                 self._guard_last_admin(user_id)
-            previous = self._roles.get((user_id, account_name))
-            if audit is not None:
-                self._append_audit(audit)
             self._roles[(user_id, account_name)] = RoleGrant(user_id, account_name, role, datetime.now(UTC), granted_by)
+            if actor is not None:
+                self._append_audit(
+                    AuditEvent(
+                        actor,
+                        AuditAction.USER_ROLE_SET,
+                        target_type="user",
+                        target_id=username,
+                        account_name=account_name,
+                        before={"role": previous.role if previous is not None else None},
+                        after={"role": role},
+                        detail=detail,
+                    )
+                )
             return previous
 
-    def revoke_role(self, user_id: int, account_name: str, audit: AuditEvent | None = None) -> RoleGrant | None:
+    def revoke_role(
+        self,
+        user_id: int,
+        username: str,
+        account_name: str,
+        actor: AuditActor | None = None,
+        detail: dict | None = None,
+    ) -> RoleGrant | None:
         with self._lock:
             if account_name == WILDCARD_ACCOUNT:
                 self._guard_last_admin(user_id)
             previous = self._roles.pop((user_id, account_name), None)
-            if previous is not None and audit is not None:
-                self._append_audit(audit)
+            if previous is None:
+                return None  # no-op: no grant existed, nothing to audit
+            if actor is not None:
+                self._append_audit(
+                    AuditEvent(
+                        actor,
+                        AuditAction.USER_ROLE_REVOKED,
+                        target_type="user",
+                        target_id=username,
+                        account_name=account_name,
+                        before={"role": previous.role},
+                        after={"role": None},
+                        detail=detail,
+                    )
+                )
             return previous
 
     def count_active_admins(self) -> int:

@@ -42,12 +42,23 @@ class ResizeRecord:
     # '' only on rows that predate the column and had no volume row to
     # backfill from.
     account_name: str = ""
+    # Same story for region: '' on rows that predate the column and had
+    # no volume row to backfill from. Lets stale-row recovery (list_stale)
+    # probe a volume with the AWS client for the region it actually lives
+    # in, instead of every non-terminal row in the fleet.
+    region: str = ""
 
 
 class ResizeStateContract(abc.ABC):
     @abc.abstractmethod
     def create_if_absent(
-        self, volume_id: str, instance_id: str, from_size_gb: int, to_size_gb: int, account_name: str = ""
+        self,
+        volume_id: str,
+        instance_id: str,
+        from_size_gb: int,
+        to_size_gb: int,
+        account_name: str = "",
+        region: str = "",
     ) -> ResizeRecord | None:
         """Atomically insert a new MODIFY_REQUESTED row if no non-terminal row exists.
 
@@ -71,10 +82,17 @@ class ResizeStateContract(abc.ABC):
         """Increment volume_id's extend-retry counter and return the new value."""
 
     @abc.abstractmethod
-    def list_stale(self, older_than: datetime) -> list[ResizeRecord]:
-        """Return non-terminal records last updated before `older_than`.
+    def list_stale(
+        self, older_than: datetime, account_name: str | None = None, region: str | None = None
+    ) -> list[ResizeRecord]:
+        """Return non-terminal records last updated before `older_than`,
+        optionally narrowed to one account and/or region.
 
         Used to recover rows left behind by a controller crash mid-resize.
+        The scheduler always passes both: it only holds AWS clients for
+        one (account, region) at a time, and probing a row from a
+        different account or region with the wrong client is exactly the
+        bug this scoping exists to prevent.
         """
 
     @abc.abstractmethod

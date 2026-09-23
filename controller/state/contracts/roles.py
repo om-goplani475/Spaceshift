@@ -8,7 +8,7 @@ from datetime import datetime
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from controller.audit import AuditEvent
+    from controller.audit import AuditActor
 
 # The wildcard account: a grant on it applies to every account, including
 # ones added later. It is the only account an
@@ -38,21 +38,31 @@ class RolesStateContract(abc.ABC):
     def set_role(
         self,
         user_id: int,
+        username: str,
         account_name: str,
         role: str,
         granted_by: int | None,
-        audit: AuditEvent | None = None,
+        actor: AuditActor | None = None,
+        detail: dict | None = None,
     ) -> RoleGrant | None:
         """Grant or replace this user's role on one account; returns the
         previous grant (None if new). Refuses `admin` on a named account
         (ValueError) and, atomically, raises LastAdminError if replacing
         the last active admin's '*' admin grant with something lower.
-        `audit` is written in the same transaction."""
+
+        `username` is display-only, for the audit row's target_id (this
+        table only knows user_id - the caller already has the username in
+        hand). The audit before/after come from the grant actually read
+        under FOR UPDATE, and granting the same role again is a no-op:
+        nothing changes, nothing is audited. Written in the same
+        transaction as the change."""
 
     @abc.abstractmethod
-    def revoke_role(self, user_id: int, account_name: str, audit: AuditEvent | None = None) -> RoleGrant | None:
-        """Remove one grant; returns it (None if there was none). Same
-        last-admin guard as set_role."""
+    def revoke_role(
+        self, user_id: int, username: str, account_name: str, actor: AuditActor | None = None
+    ) -> RoleGrant | None:
+        """Remove one grant; returns it (None if there was none - also a
+        no-op, no audit row). Same last-admin guard as set_role."""
 
     @abc.abstractmethod
     def count_active_admins(self) -> int:

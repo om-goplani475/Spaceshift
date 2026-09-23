@@ -20,7 +20,7 @@ def _rows(state, action):
 
 def test_accounts_pages_are_admin_only(app, state):
     bob = state.create_user("bob", hash_password("a perfectly fine passphrase"))
-    state.set_role(bob.id, "*", "operator", None)
+    state.set_role(bob.id, bob.username, "*", "operator", None)
     client = app.test_client()
     sign_in(client, "bob", "a perfectly fine passphrase")
     assert client.get("/accounts").status_code == 403
@@ -41,7 +41,7 @@ def test_zero_accounts_banner_for_admins_only(app, client, state):
     assert banner in client.get("/").data.decode()
 
     bob = state.create_user("bob", hash_password("a perfectly fine passphrase"))
-    state.set_role(bob.id, "*", "viewer", None)
+    state.set_role(bob.id, bob.username, "*", "viewer", None)
     bob_client = app.test_client()
     sign_in(bob_client, "bob", "a perfectly fine passphrase")
     assert banner not in bob_client.get("/").data.decode()

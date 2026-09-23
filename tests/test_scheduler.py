@@ -1,6 +1,7 @@
 """Tests for controller.scheduler."""
 
 import datetime as dt
+from dataclasses import replace
 from unittest.mock import MagicMock, patch
 
 import boto3
@@ -208,6 +209,32 @@ def test_one_failing_account_never_stops_the_others(config, state, notifier):
     assert state.get_account("good").last_ok_at is not None and state.get_account("good").last_error is None
 
 
+def test_one_regions_failure_does_not_erase_anothers_success_in_the_breakdown(config, state, notifier):
+    # accounts.last_error is a single "last touch" column - one region's
+    # failure used to be indistinguishable from another's once both had
+    # run. account_region_status is the per-region detail that survives it.
+    scheduler = _scheduler_with(state, notifier, config, ("multi", ["us-east-1", "us-west-2"]))
+
+    def run_region(account, region):
+        if region == "us-west-2":
+            raise RuntimeError("Throttling: rate exceeded")
+
+    # The only account had one region fail, so this is still a tick
+    # failure under the existing "any region failed -> account failed"
+    # semantics (unchanged by this fix) - the point here is what got
+    # recorded per region before that exception propagated.
+    with (
+        patch("controller.scheduler.SsmConnector"),
+        patch.object(scheduler, "_run_region", side_effect=run_region),
+        pytest.raises(TickFailed),
+    ):
+        scheduler.run_once()
+
+    by_region = {s.region: s for s in state.list_region_status("multi")}
+    assert by_region["us-east-1"].last_ok_at is not None and by_region["us-east-1"].last_error is None
+    assert "Throttling" in by_region["us-west-2"].last_error and by_region["us-west-2"].last_ok_at is None
+
+
 def test_tick_fails_only_when_every_account_fails(config, state, notifier):
     scheduler = _scheduler_with(state, notifier, config, ("a", ["us-east-1"]), ("b", ["us-east-1"]))
     with (
@@ -356,6 +383,30 @@ def test_recover_stale_row_with_no_aws_modification_releases_the_row(aws, schedu
 
     assert state.get(volume_id).status == ResizeStatus.MODIFY_FAILED
     assert state.create_if_absent(volume_id, "i-1", 100, 120) is not None  # a new attempt is allowed
+
+
+def test_recover_stale_rows_only_probes_its_own_account_and_region(scheduler, state):
+    # A stale row belonging to a different account/region must never be
+    # probed with this region's ec2 client - that client is authenticated
+    # as a different AWS account, and even a merely-wasted DescribeVolumes-
+    # Modifications call there is the wrong behaviour (see the scheduler's
+    # per-(account, region) fault isolation).
+    state.create_if_absent("vol-other-account", "i-1", 100, 120, account_name="other", region="us-east-1")
+    state.create_if_absent("vol-other-region", "i-1", 100, 120, account_name=_ACCOUNT, region="us-west-2")
+    state.create_if_absent("vol-mine", "i-1", 100, 120, account_name=_ACCOUNT, region="us-east-1")
+    long_ago = dt.datetime.now(dt.UTC) - dt.timedelta(days=1)
+    for volume_id in ("vol-other-account", "vol-other-region", "vol-mine"):
+        state._records[volume_id] = replace(state._records[volume_id], updated_at=long_ago)
+
+    ec2 = MagicMock()
+    ec2.describe_volumes_modifications.return_value = {"VolumesModifications": []}
+
+    scheduler._recover_stale_rows(ec2, _ACCOUNT, "us-east-1")
+
+    ec2.describe_volumes_modifications.assert_called_once_with(VolumeIds=["vol-mine"])
+    assert state.get("vol-other-account").status == ResizeStatus.MODIFY_REQUESTED
+    assert state.get("vol-other-region").status == ResizeStatus.MODIFY_REQUESTED
+    assert state.get("vol-mine").status == ResizeStatus.MODIFY_FAILED
 
 
 def test_recover_stale_row_treats_optimizing_as_modify_completed(scheduler, state):

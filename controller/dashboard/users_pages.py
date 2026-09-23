@@ -1,9 +1,11 @@
 """User administration pages (/users, admin only) and the self-service
 /account page (change own password; forced while must_change_password).
 
-Every change goes through a state-backend method with an `audit=` event,
-so the row lands in the same transaction as the change. Passwords an
-admin chooses are shown to them exactly once and flagged
+Every change goes through a state-backend method with an `actor=`
+attribution, and the backend itself builds the audit row - from the row
+it just read or wrote, in the same transaction as the change - rather
+than trusting this module to have captured the right before/after.
+Passwords an admin chooses are shown to them exactly once and flagged
 must_change_password, so an admin-set password never quietly becomes
 permanent.
 """
@@ -14,7 +16,7 @@ import secrets
 
 from flask import Blueprint, abort, flash, g, redirect, render_template, request, url_for
 
-from controller.audit import AuditAction, AuditEvent
+from controller.audit import AuditAction
 from controller.dashboard._common import _state
 from controller.dashboard.auth import (
     current_actor,
@@ -42,11 +44,6 @@ def _user_or_404(username: str) -> UserRecord:
     if user is None:
         abort(404)
     return user
-
-
-def _event(action: AuditAction, target: UserRecord | str, **fields) -> AuditEvent:
-    username = target if isinstance(target, str) else target.username
-    return AuditEvent(current_actor(), action, target_type="user", target_id=username, **fields)
 
 
 def _generated_password() -> str:
@@ -80,12 +77,7 @@ def create_user():
         return redirect(url_for("users.list_users"))
     password = _generated_password()
     try:
-        state.create_user(
-            username,
-            hash_password(password),
-            audit=_event(AuditAction.USER_CREATE, username, detail={"must_change_password": True}),
-            must_change=True,
-        )
+        state.create_user(username, hash_password(password), must_change=True, actor=current_actor())
     except UsernameTakenError:
         flash(f"There is already a user named {username}.", "error")
         return redirect(url_for("users.list_users"))
@@ -151,31 +143,9 @@ def set_roles(username: str):
             continue
         try:
             if wanted == "":
-                state.revoke_role(
-                    user.id,
-                    account,
-                    audit=_event(
-                        AuditAction.USER_ROLE_REVOKED,
-                        user,
-                        account_name=account,
-                        before={"role": before},
-                        after={"role": None},
-                    ),
-                )
+                state.revoke_role(user.id, user.username, account, actor=current_actor())
             else:
-                state.set_role(
-                    user.id,
-                    account,
-                    wanted,
-                    granted_by=g.user.id,
-                    audit=_event(
-                        AuditAction.USER_ROLE_SET,
-                        user,
-                        account_name=account,
-                        before={"role": before},
-                        after={"role": wanted},
-                    ),
-                )
+                state.set_role(user.id, user.username, account, wanted, granted_by=g.user.id, actor=current_actor())
         except ValueError:
             abort(400)
         except LastAdminError:
@@ -200,11 +170,7 @@ def deactivate(username: str):
         flash("You can't deactivate your own account - ask another admin.", "error")
         return redirect(url_for("users.show_user", username=username))
     try:
-        _state().set_active(
-            user.id,
-            False,
-            audit=_event(AuditAction.USER_DEACTIVATE, user, before={"is_active": True}, after={"is_active": False}),
-        )
+        _state().set_active(user.id, False, actor=current_actor())
     except LastAdminError:
         flash(f"{user.username} is the last active admin - make someone else an admin first.", "error")
         return redirect(url_for("users.show_user", username=username))
@@ -216,11 +182,7 @@ def deactivate(username: str):
 def reactivate(username: str):
     require_admin()
     user = _user_or_404(username)
-    _state().set_active(
-        user.id,
-        True,
-        audit=_event(AuditAction.USER_REACTIVATE, user, before={"is_active": False}, after={"is_active": True}),
-    )
+    _state().set_active(user.id, True, actor=current_actor())
     flash(f"Reactivated {user.username}.", "info")
     return redirect(url_for("users.show_user", username=username))
 
@@ -230,12 +192,7 @@ def reset_password(username: str):
     require_admin()
     user = _user_or_404(username)
     password = _generated_password()
-    _state().set_password(
-        user.id,
-        hash_password(password),
-        must_change=True,
-        audit=_event(AuditAction.USER_PASSWORD_RESET, user, detail={"must_change_password": True}),
-    )
+    _state().set_password(user.id, hash_password(password), must_change=True, actor=current_actor())
     return _render_user(username, temp_password=password)
 
 
@@ -243,9 +200,7 @@ def reset_password(username: str):
 def unlock(username: str):
     require_admin()
     user = _user_or_404(username)
-    state = _state()
-    state.clear_login_failures(user.username)
-    state.bump_session_generation(user.id, audit=_event(AuditAction.USER_UNLOCK, user))
+    _state().unlock_user(user.id, user.username, actor=current_actor())
     flash(f"Cleared the lockout for {user.username}; their sessions are signed out.", "info")
     return redirect(url_for("users.show_user", username=username))
 
@@ -271,10 +226,7 @@ def account():
     if error is not None:
         return render_template("account.html", user=user, error=error), 400
     _state().set_password(
-        user.id,
-        hash_password(new),
-        must_change=False,
-        audit=_event(AuditAction.USER_PASSWORD_CHANGE, user),
+        user.id, hash_password(new), must_change=False, actor=current_actor(), action=AuditAction.USER_PASSWORD_CHANGE
     )
     # set_password bumped session_generation; re-issue this browser's
     # session so only the *other* browsers are signed out.

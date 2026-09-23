@@ -26,7 +26,7 @@ def auth_settings() -> AuthSettings:
 @pytest.fixture
 def admin(state: InMemoryStateBackend):
     user = state.create_user(ADMIN_USERNAME, hash_password(ADMIN_PASSWORD))
-    state.set_role(user.id, "*", "admin", None)
+    state.set_role(user.id, user.username, "*", "admin", None)
     return user
 
 

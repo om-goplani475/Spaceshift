@@ -11,6 +11,7 @@ from __future__ import annotations
 
 from collections.abc import Iterator
 from contextlib import contextmanager
+from datetime import UTC, datetime
 
 import psycopg2
 import psycopg2.extras
@@ -18,6 +19,7 @@ import psycopg2.pool
 
 from controller.config import MAX_CONCURRENT_RESIZES
 from controller.state.contracts.resize import TERMINAL_STATUSES
+from controller.state.postgres.migrations import MIGRATIONS
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS resize_state (
@@ -227,6 +229,13 @@ UPDATE volumes SET account_name = 'default' WHERE account_name = '';
 UPDATE scan_log SET account_name = 'default' WHERE account_name = '';
 UPDATE resize_state r SET account_name = v.account_name
     FROM volumes v WHERE v.volume_id = r.volume_id AND r.account_name = '';
+
+-- Tracks which entries in controller/state/postgres/migrations.py have
+-- run - see PostgresCore.__init__ and _apply_migrations() below.
+CREATE TABLE IF NOT EXISTS schema_migrations (
+    id          TEXT PRIMARY KEY,
+    applied_at  TIMESTAMPTZ NOT NULL
+);
 """
 
 
@@ -255,6 +264,20 @@ def _jsonb(value: dict | None):
     return psycopg2.extras.Json(value) if value is not None else None
 
 
+def _apply_migrations(cur: psycopg2.extensions.cursor) -> None:
+    """Run every entry in MIGRATIONS not yet recorded in schema_migrations,
+    in order, on the same cursor/transaction as the caller (already under
+    the schema-init advisory lock, so this is safe under concurrent
+    startup the same way _SCHEMA is)."""
+    cur.execute("SELECT id FROM schema_migrations")
+    applied = {row[0] for row in cur.fetchall()}
+    for migration_id, sql in MIGRATIONS:
+        if migration_id in applied:
+            continue
+        cur.execute(sql)
+        cur.execute("INSERT INTO schema_migrations (id, applied_at) VALUES (%s, %s)", (migration_id, datetime.now(UTC)))
+
+
 class PostgresCore:
     """The connection pool, schema init and cursor helper every mixin uses."""
 
@@ -281,6 +304,7 @@ class PostgresCore:
             # the lock), then runs the same DDL as a safe no-op.
             cur.execute("SELECT pg_advisory_xact_lock(%s)", (_SCHEMA_INIT_LOCK_KEY,))
             cur.execute(_SCHEMA)
+            _apply_migrations(cur)
 
     @contextmanager
     def _cursor(self, commit: bool = False) -> Iterator[psycopg2.extensions.cursor]:

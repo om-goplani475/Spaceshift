@@ -32,7 +32,7 @@ def postgres_state():
     with backend._cursor(commit=True) as cur:
         cur.execute(
             "TRUNCATE resize_state, modification_history, scan_log, instances, volumes, app_config, "
-            "users, login_attempts, audit_log, accounts, user_account_roles"
+            "users, login_attempts, audit_log, accounts, user_account_roles, account_region_status"
         )
     backend.close()
 
@@ -280,7 +280,7 @@ def test_concurrent_admin_removal_keeps_one_active_admin(postgres_state):
 
     users = [postgres_state.create_user(f"u{i}", "hash") for i in range(6)]
     for user in users:
-        postgres_state.set_role(user.id, "*", "admin", None)
+        postgres_state.set_role(user.id, user.username, "*", "admin", None)
 
     def remove(user):
         try:
@@ -288,9 +288,9 @@ def test_concurrent_admin_removal_keeps_one_active_admin(postgres_state):
             if user.id % 3 == 0:
                 postgres_state.set_active(user.id, False)
             elif user.id % 3 == 1:
-                postgres_state.revoke_role(user.id, "*")
+                postgres_state.revoke_role(user.id, user.username, "*")
             else:
-                postgres_state.set_role(user.id, "*", "viewer", None)
+                postgres_state.set_role(user.id, user.username, "*", "viewer", None)
             return True
         except LastAdminError:
             return False
@@ -307,10 +307,45 @@ def test_admin_on_named_account_is_refused_by_the_database_too(postgres_state):
 
     user = postgres_state.create_user("alice", "hash")
     with pytest.raises(ValueError):
-        postgres_state.set_role(user.id, "prod", "admin", None)
+        postgres_state.set_role(user.id, user.username, "prod", "admin", None)
     with pytest.raises(psycopg2.errors.CheckViolation):
         with postgres_state._cursor(commit=True) as cur:
             cur.execute("INSERT INTO user_account_roles VALUES (%s, 'prod', 'admin', now(), NULL)", (user.id,))
+
+
+def test_state_change_calls_with_no_actual_change_write_no_audit_row(postgres_state):
+    from controller.audit import AuditActor, AuditFilters
+
+    actor = AuditActor.cli()
+    postgres_state.create_account("prod", None, ["us-east-1"], actor=actor)
+    bob = postgres_state.create_user("bob", "hash")
+
+    def count():
+        return len(postgres_state.list_audit(AuditFilters(), limit=100))
+
+    before = count()
+    postgres_state.set_account_enabled("prod", True, actor=actor)  # already enabled
+    postgres_state.set_role(bob.id, bob.username, "prod", "viewer", None, actor=actor)
+    postgres_state.set_role(bob.id, bob.username, "prod", "viewer", None, actor=actor)  # same role again
+    postgres_state.set_active(bob.id, True, actor=actor)  # already active
+    assert count() == before + 1  # only the first set_role wrote a row
+
+
+def test_unlock_is_one_transaction_with_one_audit_row(postgres_state):
+    from controller.audit import AuditAction, AuditActor, AuditFilters
+
+    keeper = postgres_state.create_user("keeper", "hash")
+    postgres_state.set_role(keeper.id, keeper.username, "*", "admin", None)
+    bob = postgres_state.create_user("bob", "hash")
+    postgres_state.record_login_attempt("bob", "10.0.0.1", succeeded=False)
+    generation_before = postgres_state.get_user(bob.id).session_generation
+
+    postgres_state.unlock_user(bob.id, bob.username, actor=AuditActor.cli())
+
+    assert postgres_state.recent_failure_times(postgres_state.get_user(bob.id).created_at, username="bob") == []
+    assert postgres_state.get_user(bob.id).session_generation == generation_before + 1
+    rows = postgres_state.list_audit(AuditFilters(action=AuditAction.USER_UNLOCK), limit=100)
+    assert len(rows) == 1
 
 
 def test_legacy_blank_account_rows_are_renamed_and_resize_state_backfilled():
@@ -346,7 +381,7 @@ def test_scoped_lists_and_audit_scope(postgres_state):
     postgres_state.set_volume_autoresize("vol-p", True, audit=AuditActor.user(alice.id, "alice", "10.0.0.1"))
     postgres_state.set_volume_autoresize("vol-d", True, audit=AuditActor.user(alice.id, "alice", "10.0.0.1"))
     postgres_state.set_config("dry_run", "false", audit=AuditActor.user(alice.id, "alice", "10.0.0.1"))
-    postgres_state.set_role(bob.id, "dev", "viewer", alice.id)
+    postgres_state.set_role(bob.id, bob.username, "dev", "viewer", alice.id)
 
     dev = frozenset({"dev"})
     assert [v.volume_id for v in postgres_state.list_volumes(account_names=dev)] == ["vol-d"]
@@ -470,6 +505,50 @@ def test_accounts_round_trip_and_in_flight_guard(postgres_state):
     assert len(prod.last_error) == 2000 and prod.verify_requested_at is None
     postgres_state.record_account_check("prod", None)
     assert postgres_state.get_account("prod").last_ok_at is not None
+
+
+def test_region_status_survives_the_error_being_truncated_and_stays_per_region(postgres_state):
+    postgres_state.create_account("multi", None, ["us-east-1", "us-west-2"])
+    postgres_state.record_region_check("multi", "us-east-1", None)
+    postgres_state.record_region_check("multi", "us-west-2", "x" * 3000)
+
+    by_region = {s.region: s for s in postgres_state.list_region_status("multi")}
+    assert by_region["us-east-1"].last_ok_at is not None and by_region["us-east-1"].last_error is None
+    assert len(by_region["us-west-2"].last_error) == 2000 and by_region["us-west-2"].last_ok_at is None
+
+    # A later success in one region leaves the other's failure alone -
+    # the account-level accounts.last_error/last_ok_at columns don't
+    # preserve this once both have been touched, this table does.
+    postgres_state.record_region_check("multi", "us-east-1", "AccessDenied")
+    still_bad = {s.region: s for s in postgres_state.list_region_status("multi")}
+    assert still_bad["us-west-2"].last_error.startswith("x")
+
+
+def test_list_stale_scoped_by_account_and_region(postgres_state):
+    postgres_state.create_if_absent("vol-a", "i-1", 100, 150, account_name="prod", region="us-east-1")
+    postgres_state.create_if_absent("vol-b", "i-1", 100, 150, account_name="prod", region="us-west-2")
+    postgres_state.create_if_absent("vol-c", "i-1", 100, 150, account_name="dev", region="us-east-1")
+    cutoff = datetime.now(UTC) + timedelta(minutes=1)
+
+    scoped = {r.volume_id for r in postgres_state.list_stale(cutoff, account_name="prod", region="us-east-1")}
+    assert scoped == {"vol-a"}
+    by_account = {r.volume_id for r in postgres_state.list_stale(cutoff, account_name="prod")}
+    assert by_account == {"vol-a", "vol-b"}
+
+
+def test_schema_migrations_are_applied_exactly_once(postgres_state):
+    # A second PostgresStateBackend against the same database (this is
+    # exactly what happens when the controller and dashboard containers
+    # both start against a database the other already initialized) must
+    # not re-run a migration - schema_migrations is what makes that safe.
+    from controller.state.postgres.migrations import MIGRATIONS
+    from controller.state.postgres_backend import PostgresStateBackend
+
+    PostgresStateBackend(os.environ["EBS_AUTO_RESIZE_TEST_POSTGRES_DSN"])  # second backend, same database
+    with postgres_state._cursor() as cur:
+        cur.execute("SELECT id FROM schema_migrations")
+        applied = {row[0] for row in cur.fetchall()}
+    assert applied == {migration_id for migration_id, _ in MIGRATIONS}
 
 
 def test_prune_audit_log_records_itself(postgres_state):

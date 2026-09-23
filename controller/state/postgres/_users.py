@@ -8,7 +8,7 @@ from datetime import UTC, datetime
 import psycopg2
 import psycopg2.errors
 
-from controller.audit import ActorType, AuditEvent
+from controller.audit import ActorType, AuditAction, AuditActor, AuditEvent
 from controller.state.contracts.roles import WILDCARD_ACCOUNT
 from controller.state.contracts.users import LastAdminError, UsernameTakenError, UserRecord, UsersStateContract
 from controller.state.postgres._core import _USERS_LOCK_KEY
@@ -18,12 +18,12 @@ _USER_COLUMNS = (
 )
 
 
-def _with_new_user_id(event: AuditEvent, user_id: int) -> AuditEvent:
+def _attributed_to(actor: AuditActor, user_id: int) -> AuditActor:
     """/setup's actor is the user being created, whose id only exists
     after the insert - fill it in so the row is fully attributed."""
-    if event.actor.user_id is None and event.actor.actor_type == ActorType.USER:
-        return replace(event, actor=replace(event.actor, user_id=user_id))
-    return event
+    if actor.user_id is None and actor.actor_type == ActorType.USER:
+        return replace(actor, user_id=user_id)
+    return actor
 
 
 class PostgresUsersMixin(UsersStateContract):
@@ -32,8 +32,10 @@ class PostgresUsersMixin(UsersStateContract):
         username: str,
         password_hash: str,
         only_if_no_users: bool = False,
-        audit: AuditEvent | None = None,
         must_change: bool = False,
+        actor: AuditActor | None = None,
+        action: AuditAction | None = None,
+        detail: dict | None = None,
     ) -> UserRecord | None:
         with self._cursor(commit=True) as cur:
             if only_if_no_users:
@@ -56,8 +58,18 @@ class PostgresUsersMixin(UsersStateContract):
             except psycopg2.errors.UniqueViolation as exc:
                 raise UsernameTakenError(username) from exc
             user = self._row_to_user(cur.fetchone())
-            if audit is not None:
-                self._insert_audit(cur, _with_new_user_id(audit, user.id))
+            if actor is not None:
+                self._insert_audit(
+                    cur,
+                    AuditEvent(
+                        _attributed_to(actor, user.id),
+                        action if action is not None else AuditAction.USER_CREATE,
+                        target_type="user",
+                        target_id=user.username,
+                        after={"must_change_password": must_change},
+                        detail=detail,
+                    ),
+                )
             return user
 
     def get_user(self, user_id: int) -> UserRecord | None:
@@ -90,8 +102,10 @@ class PostgresUsersMixin(UsersStateContract):
         self,
         user_id: int,
         password_hash: str,
-        audit: AuditEvent | None = None,
         must_change: bool = False,
+        actor: AuditActor | None = None,
+        action: AuditAction | None = None,
+        detail: dict | None = None,
     ) -> None:
         with self._cursor(commit=True) as cur:
             cur.execute(
@@ -99,14 +113,32 @@ class PostgresUsersMixin(UsersStateContract):
                 UPDATE users
                 SET password_hash = %s, session_generation = session_generation + 1, must_change_password = %s
                 WHERE id = %s
+                RETURNING username
                 """,
                 (password_hash, must_change, user_id),
             )
-            if audit is not None:
-                self._insert_audit(cur, audit)
+            username = cur.fetchone()[0]
+            if actor is not None:
+                self._insert_audit(
+                    cur,
+                    AuditEvent(
+                        actor,
+                        action if action is not None else AuditAction.USER_PASSWORD_RESET,
+                        target_type="user",
+                        target_id=username,
+                        after={"must_change_password": must_change},
+                        detail=detail,
+                    ),
+                )
 
-    def set_active(self, user_id: int, is_active: bool, audit: AuditEvent | None = None) -> None:
+    def set_active(
+        self, user_id: int, is_active: bool, actor: AuditActor | None = None, detail: dict | None = None
+    ) -> None:
         with self._cursor(commit=True) as cur:
+            cur.execute("SELECT username, is_active FROM users WHERE id = %s FOR UPDATE", (user_id,))
+            username, was_active = cur.fetchone()
+            if was_active == is_active:
+                return  # no-op: nothing changed, nothing to audit
             if is_active:
                 cur.execute("UPDATE users SET is_active = TRUE WHERE id = %s", (user_id,))
             else:
@@ -115,8 +147,19 @@ class PostgresUsersMixin(UsersStateContract):
                     "UPDATE users SET is_active = FALSE, session_generation = session_generation + 1 WHERE id = %s",
                     (user_id,),
                 )
-            if audit is not None:
-                self._insert_audit(cur, audit)
+            if actor is not None:
+                self._insert_audit(
+                    cur,
+                    AuditEvent(
+                        actor,
+                        AuditAction.USER_REACTIVATE if is_active else AuditAction.USER_DEACTIVATE,
+                        target_type="user",
+                        target_id=username,
+                        before={"is_active": was_active},
+                        after={"is_active": is_active},
+                        detail=detail,
+                    ),
+                )
 
     @staticmethod
     def _guard_last_admin(cur, user_id: int) -> None:
@@ -140,11 +183,17 @@ class PostgresUsersMixin(UsersStateContract):
         if is_admin and others == 0:
             raise LastAdminError(user_id)
 
-    def bump_session_generation(self, user_id: int, audit: AuditEvent | None = None) -> None:
+    def unlock_user(
+        self, user_id: int, username: str, actor: AuditActor | None = None, detail: dict | None = None
+    ) -> None:
         with self._cursor(commit=True) as cur:
+            cur.execute("DELETE FROM login_attempts WHERE username = %s AND NOT succeeded", (username,))
             cur.execute("UPDATE users SET session_generation = session_generation + 1 WHERE id = %s", (user_id,))
-            if audit is not None:
-                self._insert_audit(cur, audit)
+            if actor is not None:
+                self._insert_audit(
+                    cur,
+                    AuditEvent(actor, AuditAction.USER_UNLOCK, target_type="user", target_id=username, detail=detail),
+                )
 
     def record_login_attempt(self, username: str, remote_addr: str, succeeded: bool) -> None:
         with self._cursor(commit=True) as cur:

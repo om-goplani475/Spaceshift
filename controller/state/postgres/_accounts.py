@@ -6,10 +6,11 @@ from datetime import UTC, datetime
 
 import psycopg2.errors
 
-from controller.audit import AuditEvent
+from controller.audit import AuditAction, AuditActor, AuditEvent
 from controller.state.contracts.accounts import (
     AccountExistsError,
     AccountRecord,
+    AccountRegionStatus,
     AccountsStateContract,
     ResizeInFlightError,
 )
@@ -25,9 +26,18 @@ def _row_to_account(row: tuple) -> AccountRecord:
     return AccountRecord(*row)
 
 
+def _event(actor: AuditActor, action: AuditAction, name: str, detail: dict | None = None, **fields) -> AuditEvent:
+    return AuditEvent(actor, action, target_type="account", target_id=name, account_name=name, detail=detail, **fields)
+
+
 class PostgresAccountsMixin(AccountsStateContract):
     def create_account(
-        self, name: str, assume_role_arn: str | None, regions: list[str], audit: AuditEvent | None = None
+        self,
+        name: str,
+        assume_role_arn: str | None,
+        regions: list[str],
+        actor: AuditActor | None = None,
+        detail: dict | None = None,
     ) -> AccountRecord:
         now = datetime.now(UTC)
         with self._cursor(commit=True) as cur:
@@ -44,32 +54,64 @@ class PostgresAccountsMixin(AccountsStateContract):
             except psycopg2.errors.UniqueViolation as exc:
                 raise AccountExistsError(name) from exc
             record = _row_to_account(cur.fetchone())
-            if audit is not None:
-                self._insert_audit(cur, audit)
+            if actor is not None:
+                self._insert_audit(
+                    cur,
+                    _event(
+                        actor,
+                        AuditAction.ACCOUNT_CREATE,
+                        name,
+                        detail,
+                        after={"assume_role_arn": assume_role_arn, "regions": regions},
+                    ),
+                )
             return record
 
     def update_account(
-        self, name: str, assume_role_arn: str | None, regions: list[str], audit: AuditEvent | None = None
+        self,
+        name: str,
+        assume_role_arn: str | None,
+        regions: list[str],
+        actor: AuditActor | None = None,
+        detail: dict | None = None,
     ) -> AccountRecord | None:
         with self._cursor(commit=True) as cur:
             cur.execute(f"SELECT {_ACCOUNT_COLUMNS} FROM accounts WHERE name = %s FOR UPDATE", (name,))
             row = cur.fetchone()
             if row is None:
                 return None
+            previous = _row_to_account(row)
+            if previous.assume_role_arn == assume_role_arn and previous.regions == regions:
+                return previous  # no-op: nothing changed, nothing to audit
             cur.execute(
                 "UPDATE accounts SET assume_role_arn = %s, regions = %s, updated_at = %s WHERE name = %s",
                 (assume_role_arn, regions, datetime.now(UTC), name),
             )
-            if audit is not None:
-                self._insert_audit(cur, audit)
-            return _row_to_account(row)
+            if actor is not None:
+                self._insert_audit(
+                    cur,
+                    _event(
+                        actor,
+                        AuditAction.ACCOUNT_UPDATE,
+                        name,
+                        detail,
+                        before={"assume_role_arn": previous.assume_role_arn, "regions": previous.regions},
+                        after={"assume_role_arn": assume_role_arn, "regions": regions},
+                    ),
+                )
+            return previous
 
-    def set_account_enabled(self, name: str, enabled: bool, audit: AuditEvent | None = None) -> AccountRecord | None:
+    def set_account_enabled(
+        self, name: str, enabled: bool, actor: AuditActor | None = None, detail: dict | None = None
+    ) -> AccountRecord | None:
         with self._cursor(commit=True) as cur:
             cur.execute(f"SELECT {_ACCOUNT_COLUMNS} FROM accounts WHERE name = %s FOR UPDATE", (name,))
             row = cur.fetchone()
             if row is None:
                 return None
+            previous = _row_to_account(row)
+            if previous.enabled == enabled:
+                return previous  # no-op: nothing changed, nothing to audit
             if not enabled:
                 # Same transaction as the flip: a resize can't start between
                 # this check and the UPDATE (create_if_absent would block on
@@ -85,9 +127,19 @@ class PostgresAccountsMixin(AccountsStateContract):
                 "UPDATE accounts SET enabled = %s, updated_at = %s WHERE name = %s",
                 (enabled, datetime.now(UTC), name),
             )
-            if audit is not None:
-                self._insert_audit(cur, audit)
-            return _row_to_account(row)
+            if actor is not None:
+                self._insert_audit(
+                    cur,
+                    _event(
+                        actor,
+                        AuditAction.ACCOUNT_ENABLE if enabled else AuditAction.ACCOUNT_DISABLE,
+                        name,
+                        detail,
+                        before={"enabled": previous.enabled},
+                        after={"enabled": enabled},
+                    ),
+                )
+            return previous
 
     def get_account(self, name: str) -> AccountRecord | None:
         with self._cursor() as cur:
@@ -101,13 +153,13 @@ class PostgresAccountsMixin(AccountsStateContract):
             cur.execute(f"SELECT {_ACCOUNT_COLUMNS} FROM accounts {where} ORDER BY name")
             return [_row_to_account(row) for row in cur.fetchall()]
 
-    def request_account_verify(self, name: str, audit: AuditEvent | None = None) -> bool:
+    def request_account_verify(self, name: str, actor: AuditActor | None = None, detail: dict | None = None) -> bool:
         with self._cursor(commit=True) as cur:
             cur.execute("UPDATE accounts SET verify_requested_at = %s WHERE name = %s", (datetime.now(UTC), name))
             if cur.rowcount == 0:
                 return False
-            if audit is not None:
-                self._insert_audit(cur, audit)
+            if actor is not None:
+                self._insert_audit(cur, _event(actor, AuditAction.ACCOUNT_VERIFY_REQUESTED, name, detail))
             return True
 
     def list_verify_requests(self) -> list[str]:
@@ -130,3 +182,37 @@ class PostgresAccountsMixin(AccountsStateContract):
                     """,
                     (error[:2000], now, name),
                 )
+
+    def record_region_check(self, account_name: str, region: str, error: str | None) -> None:
+        now = datetime.now(UTC)
+        with self._cursor(commit=True) as cur:
+            if error is None:
+                cur.execute(
+                    """
+                    INSERT INTO account_region_status (account_name, region, last_ok_at)
+                    VALUES (%s, %s, %s)
+                    ON CONFLICT (account_name, region) DO UPDATE SET last_ok_at = EXCLUDED.last_ok_at
+                    """,
+                    (account_name, region, now),
+                )
+            else:
+                cur.execute(
+                    """
+                    INSERT INTO account_region_status (account_name, region, last_error, last_error_at)
+                    VALUES (%s, %s, %s, %s)
+                    ON CONFLICT (account_name, region) DO UPDATE SET
+                        last_error = EXCLUDED.last_error, last_error_at = EXCLUDED.last_error_at
+                    """,
+                    (account_name, region, error[:2000], now),
+                )
+
+    def list_region_status(self, account_name: str) -> list[AccountRegionStatus]:
+        with self._cursor() as cur:
+            cur.execute(
+                """
+                SELECT account_name, region, last_ok_at, last_error, last_error_at
+                FROM account_region_status WHERE account_name = %s ORDER BY region
+                """,
+                (account_name,),
+            )
+            return [AccountRegionStatus(*row) for row in cur.fetchall()]

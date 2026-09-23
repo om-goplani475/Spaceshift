@@ -58,6 +58,18 @@ def test_list_stale_excludes_terminal_rows():
     assert backend.list_stale(datetime.now(UTC) + timedelta(minutes=1)) == []
 
 
+def test_list_stale_scoped_by_account_and_region():
+    backend = InMemoryStateBackend()
+    backend.create_if_absent("vol-a", "i-1", 100, 150, account_name="prod", region="us-east-1")
+    backend.create_if_absent("vol-b", "i-1", 100, 150, account_name="prod", region="us-west-2")
+    backend.create_if_absent("vol-c", "i-1", 100, 150, account_name="dev", region="us-east-1")
+    cutoff = datetime.now(UTC) + timedelta(minutes=1)
+
+    assert {r.volume_id for r in backend.list_stale(cutoff, account_name="prod", region="us-east-1")} == {"vol-a"}
+    assert {r.volume_id for r in backend.list_stale(cutoff, account_name="prod")} == {"vol-a", "vol-b"}
+    assert {r.volume_id for r in backend.list_stale(cutoff)} == {"vol-a", "vol-b", "vol-c"}
+
+
 def test_modification_history():
     backend = InMemoryStateBackend()
     now = datetime.now(UTC)
@@ -229,13 +241,13 @@ def test_set_password_bumps_session_generation(state):
 
 def test_deactivate_refuses_last_active_admin(state):
     alice = state.create_user("alice", "hash")
-    state.set_role(alice.id, "*", "admin", None)
+    state.set_role(alice.id, alice.username, "*", "admin", None)
     with pytest.raises(LastAdminError):
         state.set_active(alice.id, False)
     assert state.get_user(alice.id).is_active
 
     bob = state.create_user("bob", "hash")
-    state.set_role(bob.id, "*", "admin", None)
+    state.set_role(bob.id, bob.username, "*", "admin", None)
     state.set_active(bob.id, False)
     assert not state.get_user(bob.id).is_active
     assert state.get_user(bob.id).session_generation == bob.session_generation + 1
@@ -245,34 +257,34 @@ def test_deactivate_refuses_last_active_admin(state):
 
     # a non-admin can always be deactivated
     carol = state.create_user("carol", "hash")
-    state.set_role(carol.id, "prod", "operator", alice.id)
+    state.set_role(carol.id, carol.username, "prod", "operator", alice.id)
     state.set_active(carol.id, False)
 
 
 def test_roles_grant_replace_revoke_and_admin_only_on_wildcard(state):
     alice = state.create_user("alice", "hash")
-    assert state.set_role(alice.id, "prod", "viewer", None) is None
-    previous = state.set_role(alice.id, "prod", "operator", None)
+    assert state.set_role(alice.id, alice.username, "prod", "viewer", None) is None
+    previous = state.set_role(alice.id, alice.username, "prod", "operator", None)
     assert previous.role == "viewer"
     with pytest.raises(ValueError):
-        state.set_role(alice.id, "prod", "admin", None)
+        state.set_role(alice.id, alice.username, "prod", "admin", None)
     assert [(g.account_name, g.role) for g in state.list_roles(alice.id)] == [("prod", "operator")]
-    assert state.revoke_role(alice.id, "prod").role == "operator"
-    assert state.revoke_role(alice.id, "prod") is None
+    assert state.revoke_role(alice.id, alice.username, "prod").role == "operator"
+    assert state.revoke_role(alice.id, alice.username, "prod") is None
     assert state.list_roles(alice.id) == []
 
 
 def test_last_admin_guard_on_demote_and_revoke(state):
     alice = state.create_user("alice", "hash")
-    state.set_role(alice.id, "*", "admin", None)
+    state.set_role(alice.id, alice.username, "*", "admin", None)
     with pytest.raises(LastAdminError):
-        state.set_role(alice.id, "*", "operator", None)
+        state.set_role(alice.id, alice.username, "*", "operator", None)
     with pytest.raises(LastAdminError):
-        state.revoke_role(alice.id, "*")
+        state.revoke_role(alice.id, alice.username, "*")
     bob = state.create_user("bob", "hash")
-    state.set_role(bob.id, "*", "admin", None)
+    state.set_role(bob.id, bob.username, "*", "admin", None)
     assert state.count_active_admins() == 2
-    state.revoke_role(alice.id, "*")
+    state.revoke_role(alice.id, alice.username, "*")
     assert state.count_active_admins() == 1
 
 
@@ -315,6 +327,22 @@ def test_accounts_create_update_disable_and_verify(state):
     assert prod.last_error.startswith("AccessDenied") and prod.verify_requested_at is None and prod.last_ok_at is None
     state.record_account_check("prod", None)
     assert state.get_account("prod").last_ok_at is not None
+
+
+def test_region_status_is_independent_per_region(state):
+    state.create_account("multi", None, ["us-east-1", "us-west-2"])
+    state.record_region_check("multi", "us-east-1", None)
+    state.record_region_check("multi", "us-west-2", "Throttling: rate exceeded")
+
+    by_region = {s.region: s for s in state.list_region_status("multi")}
+    assert by_region["us-east-1"].last_ok_at is not None and by_region["us-east-1"].last_error is None
+    assert by_region["us-west-2"].last_error.startswith("Throttling") and by_region["us-west-2"].last_ok_at is None
+
+    # A later check in one region must not touch the other's history.
+    state.record_region_check("multi", "us-east-1", "AccessDenied")
+    by_region = {s.region: s for s in state.list_region_status("multi")}
+    assert by_region["us-east-1"].last_error.startswith("AccessDenied")
+    assert by_region["us-west-2"].last_error.startswith("Throttling")  # unchanged
 
 
 def test_scoped_lists(state):
@@ -384,9 +412,9 @@ def test_toggle_writes_audit_row_with_previous_value_and_account(state):
 def test_refused_change_writes_no_audit_row(state):
     assert not state.set_volume_autoresize("vol-missing", True, audit=_actor())
     alice = state.create_user("alice", "hash")
-    state.set_role(alice.id, "*", "admin", None)
+    state.set_role(alice.id, alice.username, "*", "admin", None)
     with pytest.raises(LastAdminError):
-        state.set_active(alice.id, False, audit=AuditEvent(_actor(), AuditAction.USER_DEACTIVATE))
+        state.set_active(alice.id, False, actor=_actor())
     assert state.list_audit(AuditFilters(), limit=10) == []
 
 

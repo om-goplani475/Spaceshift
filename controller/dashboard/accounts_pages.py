@@ -15,7 +15,6 @@ import re
 import boto3
 from flask import Blueprint, abort, flash, jsonify, redirect, render_template, request, url_for
 
-from controller.audit import AuditAction, AuditEvent
 from controller.dashboard._common import _state
 from controller.dashboard.auth import current_actor
 from controller.dashboard.rbac import require_admin
@@ -41,10 +40,6 @@ def _account_or_404(name: str) -> AccountRecord:
     return account
 
 
-def _event(action: AuditAction, name: str, **fields) -> AuditEvent:
-    return AuditEvent(current_actor(), action, target_type="account", target_id=name, account_name=name, **fields)
-
-
 def _parse_form(form) -> tuple[str | None, list[str], str | None]:
     """(assume_role_arn, regions, error) from the create/edit form."""
     arn = (form.get("assume_role_arn") or "").strip() or None
@@ -58,10 +53,6 @@ def _parse_form(form) -> tuple[str | None, list[str], str | None]:
     if not regions:
         return None, [], "At least one region is required."
     return arn, list(dict.fromkeys(regions)), None
-
-
-def _describe(account: AccountRecord) -> dict:
-    return {"assume_role_arn": account.assume_role_arn, "regions": list(account.regions)}
 
 
 @bp.get("/accounts")
@@ -82,12 +73,7 @@ def create_account():
         flash(error, "error")
         return redirect(url_for("accounts.list_accounts"))
     try:
-        _state().create_account(
-            name,
-            arn,
-            regions,
-            audit=_event(AuditAction.ACCOUNT_CREATE, name, after={"assume_role_arn": arn, "regions": regions}),
-        )
+        _state().create_account(name, arn, regions, actor=current_actor())
     except AccountExistsError:
         flash(f"There is already an account named {name} (names are never reused - re-enable it instead).", "error")
         return redirect(url_for("accounts.list_accounts"))
@@ -105,6 +91,7 @@ def show_account(name: str):
         "account_detail.html",
         account=account,
         regions_text=" ".join(account.regions),
+        region_status=_state().list_region_status(name),
         in_flight=any(
             r.status not in TERMINAL_STATUSES for r in _state().list_all(limit=1000, account_names=frozenset({name}))
         ),
@@ -122,17 +109,7 @@ def update_account(name: str):
     if arn == account.assume_role_arn and regions == list(account.regions):
         flash("Nothing changed.", "info")
         return redirect(url_for("accounts.show_account", name=name))
-    _state().update_account(
-        name,
-        arn,
-        regions,
-        audit=_event(
-            AuditAction.ACCOUNT_UPDATE,
-            name,
-            before=_describe(account),
-            after={"assume_role_arn": arn, "regions": regions},
-        ),
-    )
+    _state().update_account(name, arn, regions, actor=current_actor())
     flash(f"Saved {name}. Applies on the controller's next cycle.", "info")
     return redirect(url_for("accounts.show_account", name=name))
 
@@ -142,11 +119,7 @@ def disable_account(name: str):
     require_admin()
     _account_or_404(name)
     try:
-        _state().set_account_enabled(
-            name,
-            False,
-            audit=_event(AuditAction.ACCOUNT_DISABLE, name, before={"enabled": True}, after={"enabled": False}),
-        )
+        _state().set_account_enabled(name, False, actor=current_actor())
     except ResizeInFlightError:
         flash(f"A resize is still in flight in {name} - wait for it to finish, then disable.", "error")
         return redirect(url_for("accounts.show_account", name=name))
@@ -158,9 +131,7 @@ def disable_account(name: str):
 def enable_account(name: str):
     require_admin()
     _account_or_404(name)
-    _state().set_account_enabled(
-        name, True, audit=_event(AuditAction.ACCOUNT_ENABLE, name, before={"enabled": False}, after={"enabled": True})
-    )
+    _state().set_account_enabled(name, True, actor=current_actor())
     flash(f"Enabled {name}.", "info")
     return redirect(url_for("accounts.show_account", name=name))
 
@@ -169,7 +140,7 @@ def enable_account(name: str):
 def verify_account(name: str):
     require_admin()
     _account_or_404(name)
-    _state().request_account_verify(name, audit=_event(AuditAction.ACCOUNT_VERIFY_REQUESTED, name))
+    _state().request_account_verify(name, actor=current_actor())
     flash(f"Asked the controller to verify {name} - the result appears here within a few seconds.", "info")
     return redirect(url_for("accounts.show_account", name=name))
 

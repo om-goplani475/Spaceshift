@@ -32,7 +32,7 @@ def fleet(state):
 def _user(state, username: str, grants: dict[str, str]):
     user = state.create_user(username, hash_password(PASSWORD))
     for account, role in grants.items():
-        state.set_role(user.id, account, role, None)
+        state.set_role(user.id, user.username, account, role, None)
     return user
 
 
@@ -177,7 +177,7 @@ def test_revoke_takes_effect_on_the_next_request(app, state, fleet):
     bob = _user(state, "bob", {"dev": "operator"})
     client = _client_for(app, "bob")
     assert client.post("/api/volumes/vol-dev/autoresize", json={"autoresize": True}).status_code == 200
-    state.revoke_role(bob.id, "dev")
+    state.revoke_role(bob.id, bob.username, "dev")
     assert client.post("/api/volumes/vol-dev/autoresize", json={"autoresize": False}).status_code == 404
     assert state.get_volume("vol-dev").autoresize
 

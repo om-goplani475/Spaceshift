@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import logging
 
-from controller.audit import AuditAction, AuditFilters
+from controller.audit import AuditAction, AuditActor, AuditFilters
 from controller.dashboard import create_app
 from controller.dashboard.auth import MAX_FAILURES_PER_USERNAME, hash_password
 from controller.dashboard.users import create_admin, deactivate, reset_password, unlock
@@ -119,7 +119,7 @@ def _prompts(*answers):
 
 def test_cli_commands_are_recorded_as_cli_without_secrets(state):
     keeper = state.create_user("keeper", hash_password("keeper's long password"))
-    state.set_role(keeper.id, "*", "admin", None)
+    state.set_role(keeper.id, keeper.username, "*", "admin", None)
     create_admin(state, "bob", prompt=_prompts("a very secret passphrase", "a very secret passphrase"))
     reset_password(state, "bob", prompt=_prompts("another secret passphrase", "another secret passphrase"))
     unlock(state, "bob")
@@ -138,3 +138,33 @@ def test_cli_commands_are_recorded_as_cli_without_secrets(state):
     assert granted.account_name == "*" and granted.after == {"role": "admin"} and granted.target_id == "bob"
     dump = repr(_rows(state))
     assert "secret passphrase" not in dump and "$argon2" not in dump
+
+
+def test_state_change_calls_with_no_actual_change_write_no_audit_row(state):
+    """The backend now builds before/after from the row it reads, not from
+    whatever the caller assumed - so a call that changes nothing writes
+    nothing, instead of a row claiming a transition that didn't happen."""
+    actor = AuditActor.cli()
+    state.create_account("prod", None, ["us-east-1"], actor=actor)
+    bob = state.create_user("bob", hash_password("a very long password indeed"))
+
+    before = len(_rows(state))
+    state.set_account_enabled("prod", True, actor=actor)  # already enabled
+    state.set_role(bob.id, bob.username, "prod", "viewer", None, actor=actor)
+    state.set_role(bob.id, bob.username, "prod", "viewer", None, actor=actor)  # same role again
+    state.set_active(bob.id, True, actor=actor)  # already active
+    assert len(_rows(state)) == before + 1  # only the first set_role wrote a row
+
+
+def test_unlock_is_one_transaction_with_one_audit_row(state):
+    keeper = state.create_user("keeper", hash_password("keeper's long password"))
+    state.set_role(keeper.id, keeper.username, "*", "admin", None)
+    bob = state.create_user("bob", hash_password("a very long password indeed"))
+    state.record_login_attempt("bob", "10.0.0.1", succeeded=False)
+    generation_before = state.get_user(bob.id).session_generation
+
+    state.unlock_user(bob.id, bob.username, actor=AuditActor.cli())
+
+    assert state.recent_failure_times(state.get_user(bob.id).created_at, username="bob") == []
+    assert state.get_user(bob.id).session_generation == generation_before + 1
+    assert len(_rows(state, AuditAction.USER_UNLOCK)) == 1

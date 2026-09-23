@@ -200,6 +200,13 @@ class Scheduler:
                 except Exception as exc:
                     logger.exception("account %r region %s failed this cycle", account.name, region)
                     error = f"{region}: {_describe(exc)}"
+                    self._state.record_region_check(account.name, region, _describe(exc))
+                else:
+                    self._state.record_region_check(account.name, region, None)
+            # The account-level column stays "last touch this cycle" (a
+            # summary for the accounts list); record_region_check above is
+            # what keeps one region's result from being lost when another
+            # region in the same account fails or succeeds after it.
             self._state.record_account_check(account.name, error)
             if error is not None:
                 failed += 1
@@ -238,7 +245,7 @@ class Scheduler:
         connector = clients.connectors[region]
 
         volumes = discover_eligible_volumes(ec2, self._state, account_name, region, self._config)
-        self._recover_stale_rows(ec2)
+        self._recover_stale_rows(ec2, account_name, region)
 
         with ThreadPoolExecutor(max_workers=self._config.scheduler.max_concurrent_resizes) as pool:
             for volume in volumes:
@@ -301,6 +308,7 @@ class Scheduler:
                         volume.instance_id,
                         volume.size_gb,
                         account_name,
+                        region,
                     )
                 except ModifyVolumeError as exc:
                     # Already alerted and recorded as MODIFY_FAILED inside
@@ -352,9 +360,14 @@ class Scheduler:
         self._ssm_not_ready_alerted.discard(alert_key)
         return ConnectionTarget(instance_id=instance_id)
 
-    def _recover_stale_rows(self, ec2) -> None:
+    def _recover_stale_rows(self, ec2, account_name: str, region: str) -> None:
+        # Scoped to this (account, region): ec2 is authenticated as this
+        # account, so probing a row from another account's fleet (even a
+        # nonexistent volume there) is a wasted, wrongly-scoped API call at
+        # best and, if AWS ever returned an empty result instead of
+        # NotFound for it, a false "no matching modification" at worst.
         cutoff = datetime.now(UTC) - timedelta(minutes=self._config.resize.stale_lock_timeout_minutes)
-        for record in self._state.list_stale(cutoff):
+        for record in self._state.list_stale(cutoff, account_name=account_name, region=region):
             try:
                 self._recover_stale_row(ec2, record)
             except Exception:

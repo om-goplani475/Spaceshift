@@ -8,7 +8,7 @@ from datetime import datetime
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from controller.audit import AuditEvent
+    from controller.audit import AuditAction, AuditActor
 
 
 @dataclass
@@ -50,8 +50,10 @@ class UsersStateContract(abc.ABC):
         username: str,
         password_hash: str,
         only_if_no_users: bool = False,
-        audit: AuditEvent | None = None,
         must_change: bool = False,
+        actor: AuditActor | None = None,
+        detail: dict | None = None,
+        action: AuditAction | None = None,
     ) -> UserRecord | None:
         """Insert a new active user. Raises UsernameTakenError on a
         case-insensitive clash.
@@ -61,8 +63,11 @@ class UsersStateContract(abc.ABC):
         against concurrent callers so two simultaneous setup submissions
         can never both succeed.
 
-        `audit` (a complete event - the caller knows whether this is
-        USER_SETUP or USER_CREATE) is written in the same transaction.
+        The audit row (attributed to `actor`, written in the same
+        transaction) is built here rather than by the caller, so `after`
+        always reflects the row that was actually inserted. `action`
+        defaults to USER_CREATE; /setup passes USER_SETUP explicitly since
+        that intent isn't derivable from the arguments above.
         """
 
     @abc.abstractmethod
@@ -90,27 +95,45 @@ class UsersStateContract(abc.ABC):
         self,
         user_id: int,
         password_hash: str,
-        audit: AuditEvent | None = None,
         must_change: bool = False,
+        actor: AuditActor | None = None,
+        detail: dict | None = None,
+        action: AuditAction | None = None,
     ) -> None:
         """Replace the password hash and bump session_generation, so every
         session issued under the old password is logged out. `must_change`
         is True when someone other than the user chose the password.
-        `audit` is written in the same transaction."""
+
+        The password itself is never part of the audit row - only
+        `must_change` (in `after`) and whichever `action` applies. Defaults
+        to USER_PASSWORD_RESET (an admin chose it); the self-service
+        /account flow passes USER_PASSWORD_CHANGE, since that distinction
+        is about who's calling, not anything set_password can see on its
+        own. Written in the same transaction as the change."""
 
     @abc.abstractmethod
-    def set_active(self, user_id: int, is_active: bool, audit: AuditEvent | None = None) -> None:
+    def set_active(
+        self, user_id: int, is_active: bool, actor: AuditActor | None = None, detail: dict | None = None
+    ) -> None:
         """Activate or deactivate. Deactivating bumps session_generation.
         Raises LastAdminError rather than deactivate the last active
         global admin - must be atomic against a concurrent deactivation
-        of the other remaining admin. `audit` is written in the same
-        transaction (and so is not written when the change is refused)."""
+        of the other remaining admin.
+
+        `before`/`after` are the row's real previous/new is_active, read
+        in the same transaction as the write - not whatever the caller
+        assumed going in. A no-op (already at the requested state) writes
+        no audit row at all."""
 
     @abc.abstractmethod
-    def bump_session_generation(self, user_id: int, audit: AuditEvent | None = None) -> None:
-        """Invalidate every existing session for this user without
-        changing anything else (the CLI's `unlock`). `audit` is written
-        in the same transaction."""
+    def unlock_user(
+        self, user_id: int, username: str, actor: AuditActor | None = None, detail: dict | None = None
+    ) -> None:
+        """Clear this username's recorded login failures and invalidate
+        every existing session for the user (the dashboard's and CLI's
+        `unlock`) - one transaction, one USER_UNLOCK audit row, so a
+        failure between the two can never clear the lockout without a
+        trace."""
 
     @abc.abstractmethod
     def record_login_attempt(self, username: str, remote_addr: str, succeeded: bool) -> None:

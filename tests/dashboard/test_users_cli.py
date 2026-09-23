@@ -68,17 +68,17 @@ def test_unlock_clears_failures_and_bumps_generation(state):
 
 def test_deactivate_refuses_the_last_active_admin(state):
     alice = state.create_user("alice", hash_password("a long enough password"))
-    state.set_role(alice.id, "*", "admin", None)
+    state.set_role(alice.id, alice.username, "*", "admin", None)
     with pytest.raises(CliError, match="last active admin"):
         deactivate(state, "alice")
     bob = state.create_user("bob", hash_password("a long enough password"))
-    state.set_role(bob.id, "*", "admin", None)
+    state.set_role(bob.id, bob.username, "*", "admin", None)
     assert "deactivated 'alice'" in deactivate(state, "alice")
 
 
 def test_grant_and_revoke(state):
     alice = state.create_user("alice", hash_password("a long enough password"))
-    state.set_role(alice.id, "*", "admin", None)
+    state.set_role(alice.id, alice.username, "*", "admin", None)
     state.create_user("bob", hash_password("a long enough password"))
     assert "granted viewer on 'prod' to 'bob'" in grant(state, "bob", "prod", "viewer")
     assert "(was viewer)" in grant(state, "bob", "prod", "operator")

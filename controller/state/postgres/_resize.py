@@ -10,7 +10,13 @@ from controller.state.postgres._core import _TERMINAL_STATUS_VALUES, _scope_clau
 
 class PostgresResizeMixin(ResizeStateContract):
     def create_if_absent(
-        self, volume_id: str, instance_id: str, from_size_gb: int, to_size_gb: int, account_name: str = ""
+        self,
+        volume_id: str,
+        instance_id: str,
+        from_size_gb: int,
+        to_size_gb: int,
+        account_name: str = "",
+        region: str = "",
     ) -> ResizeRecord | None:
         now = datetime.now(UTC)
         with self._cursor(commit=True) as cur:
@@ -23,8 +29,8 @@ class PostgresResizeMixin(ResizeStateContract):
                 """
                 INSERT INTO resize_state
                     (volume_id, instance_id, status, from_size_gb, to_size_gb, extend_attempts,
-                     created_at, updated_at, account_name)
-                VALUES (%s, %s, %s, %s, %s, 0, %s, %s, %s)
+                     created_at, updated_at, account_name, region)
+                VALUES (%s, %s, %s, %s, %s, 0, %s, %s, %s, %s)
                 ON CONFLICT (volume_id) DO UPDATE SET
                     instance_id     = EXCLUDED.instance_id,
                     status          = EXCLUDED.status,
@@ -33,7 +39,8 @@ class PostgresResizeMixin(ResizeStateContract):
                     extend_attempts = 0,
                     created_at      = EXCLUDED.created_at,
                     updated_at      = EXCLUDED.updated_at,
-                    account_name    = EXCLUDED.account_name
+                    account_name    = EXCLUDED.account_name,
+                    region          = EXCLUDED.region
                 WHERE resize_state.status = ANY(%s)
                 """,
                 (
@@ -45,6 +52,7 @@ class PostgresResizeMixin(ResizeStateContract):
                     now,
                     now,
                     account_name,
+                    region,
                     _TERMINAL_STATUS_VALUES,
                 ),
             )
@@ -81,12 +89,19 @@ class PostgresResizeMixin(ResizeStateContract):
             )
             return cur.fetchone()[0]
 
-    def list_stale(self, older_than: datetime) -> list[ResizeRecord]:
+    def list_stale(
+        self, older_than: datetime, account_name: str | None = None, region: str | None = None
+    ) -> list[ResizeRecord]:
+        where = ["updated_at < %s", "status != ALL(%s)"]
+        params: list = [older_than, _TERMINAL_STATUS_VALUES]
+        if account_name is not None:
+            where.append("account_name = %s")
+            params.append(account_name)
+        if region is not None:
+            where.append("region = %s")
+            params.append(region)
         with self._cursor() as cur:
-            cur.execute(
-                "SELECT * FROM resize_state WHERE updated_at < %s AND status != ALL(%s)",
-                (older_than, _TERMINAL_STATUS_VALUES),
-            )
+            cur.execute(f"SELECT * FROM resize_state WHERE {' AND '.join(where)}", params)
             rows = cur.fetchall()
             columns = [desc[0] for desc in cur.description]
         return [self._row_to_record(dict(zip(columns, row, strict=True))) for row in rows]
@@ -126,4 +141,5 @@ class PostgresResizeMixin(ResizeStateContract):
             created_at=row["created_at"],
             updated_at=row["updated_at"],
             account_name=row["account_name"],
+            region=row["region"],
         )

@@ -521,16 +521,13 @@ def setup():
     if error is not None:
         return render_template("setup.html", error=error, username=username), 400
 
-    # The actor *is* the user being created; the backend fills in the id
-    # once the row exists (see create_user).
-    setup_event = AuditEvent(
-        AuditActor(ActorType.USER, username=username, remote_addr=addr),
-        AuditAction.USER_SETUP,
-        target_type="user",
-        target_id=username,
-    )
+    # The actor *is* the user being created; create_user fills in the id
+    # once the row exists (its id doesn't exist yet at this point).
+    setup_actor = AuditActor(ActorType.USER, username=username, remote_addr=addr)
     try:
-        user = state.create_user(username, hash_password(password), only_if_no_users=True, audit=setup_event)
+        user = state.create_user(
+            username, hash_password(password), only_if_no_users=True, actor=setup_actor, action=AuditAction.USER_SETUP
+        )
     except UsernameTakenError:
         user = None
     if user is None:
@@ -540,19 +537,12 @@ def setup():
 
     state.set_role(
         user.id,
+        user.username,
         WILDCARD_ACCOUNT,
         "admin",
         granted_by=None,
-        audit=AuditEvent(
-            AuditActor.user(user.id, user.username, addr),
-            AuditAction.USER_ROLE_SET,
-            target_type="user",
-            target_id=user.username,
-            account_name=WILDCARD_ACCOUNT,
-            before={"role": None},
-            after={"role": "admin"},
-            detail={"reason": "first admin"},
-        ),
+        actor=AuditActor.user(user.id, user.username, addr),
+        detail={"reason": "first admin"},
     )
     state.record_login_attempt(SETUP_ATTEMPT_USERNAME, addr, succeeded=True)
     login_session(user)

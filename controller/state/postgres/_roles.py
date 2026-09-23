@@ -36,23 +36,27 @@ class PostgresRolesMixin(RolesStateContract):
     def set_role(
         self,
         user_id: int,
+        username: str,
         account_name: str,
         role: str,
         granted_by: int | None,
-        audit: AuditEvent | None = None,
+        actor: AuditActor | None = None,
+        detail: dict | None = None,
     ) -> RoleGrant | None:
         if role == "admin" and account_name != WILDCARD_ACCOUNT:
             raise ValueError("admin is global - grant it on '*'")
         with self._cursor(commit=True) as cur:
-            if account_name == WILDCARD_ACCOUNT and role != "admin":
-                # Replacing a '*' admin grant with something lower is a demotion.
-                self._guard_last_admin(cur, user_id)
             cur.execute(
                 f"SELECT {_ROLE_COLUMNS} FROM user_account_roles WHERE user_id = %s AND account_name = %s FOR UPDATE",
                 (user_id, account_name),
             )
             row = cur.fetchone()
             previous = RoleGrant(*row) if row is not None else None
+            if previous is not None and previous.role == role:
+                return previous  # no-op: nothing changed, nothing to audit
+            if account_name == WILDCARD_ACCOUNT and role != "admin":
+                # Replacing a '*' admin grant with something lower is a demotion.
+                self._guard_last_admin(cur, user_id)
             cur.execute(
                 """
                 INSERT INTO user_account_roles (user_id, account_name, role, granted_at, granted_by)
@@ -62,11 +66,30 @@ class PostgresRolesMixin(RolesStateContract):
                 """,
                 (user_id, account_name, role, datetime.now(UTC), granted_by),
             )
-            if audit is not None:
-                self._insert_audit(cur, audit)
+            if actor is not None:
+                self._insert_audit(
+                    cur,
+                    AuditEvent(
+                        actor,
+                        AuditAction.USER_ROLE_SET,
+                        target_type="user",
+                        target_id=username,
+                        account_name=account_name,
+                        before={"role": previous.role if previous is not None else None},
+                        after={"role": role},
+                        detail=detail,
+                    ),
+                )
             return previous
 
-    def revoke_role(self, user_id: int, account_name: str, audit: AuditEvent | None = None) -> RoleGrant | None:
+    def revoke_role(
+        self,
+        user_id: int,
+        username: str,
+        account_name: str,
+        actor: AuditActor | None = None,
+        detail: dict | None = None,
+    ) -> RoleGrant | None:
         with self._cursor(commit=True) as cur:
             if account_name == WILDCARD_ACCOUNT:
                 self._guard_last_admin(cur, user_id)
@@ -76,10 +99,23 @@ class PostgresRolesMixin(RolesStateContract):
             )
             row = cur.fetchone()
             if row is None:
-                return None
-            if audit is not None:
-                self._insert_audit(cur, audit)
-            return RoleGrant(*row)
+                return None  # no-op: no grant existed, nothing to audit
+            previous = RoleGrant(*row)
+            if actor is not None:
+                self._insert_audit(
+                    cur,
+                    AuditEvent(
+                        actor,
+                        AuditAction.USER_ROLE_REVOKED,
+                        target_type="user",
+                        target_id=username,
+                        account_name=account_name,
+                        before={"role": previous.role},
+                        after={"role": None},
+                        detail=detail,
+                    ),
+                )
+            return previous
 
     def count_active_admins(self) -> int:
         with self._cursor() as cur:

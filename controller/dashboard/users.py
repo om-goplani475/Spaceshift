@@ -20,9 +20,19 @@ import getpass
 import sys
 from collections.abc import Callable
 
-from controller.audit import AuditAction, AuditActor, AuditEvent
+from controller.audit import AuditActor
 from controller.dashboard.auth import hash_password, validate_password, validate_username
 from controller.state.base import WILDCARD_ACCOUNT, LastAdminError, StateBackend, UsernameTakenError
+
+# Every CLI command is attributed to `cli` (there's no login inside the
+# container); `_cli(command)` names which verb in the audit row's detail,
+# same as before, but the row itself - action, target, before/after - is
+# now built by the state backend from the change it actually made.
+_ACTOR = AuditActor.cli()
+
+
+def _cli(command: str) -> dict:
+    return {"command": command}
 
 
 class CliError(Exception):
@@ -37,20 +47,6 @@ def _prompt_password(username: str, prompt: Callable[[str], str]) -> str:
     if prompt("Confirm password: ") != password:
         raise CliError("The two passwords don't match.")
     return password
-
-
-def _cli_event(action: AuditAction, username: str, command: str, **changes) -> AuditEvent:
-    """Every CLI command is attributed to `cli` (there's no login inside
-    the container) with the command in `detail` - and never a password."""
-    return AuditEvent(
-        AuditActor.cli(),
-        action,
-        target_type="user",
-        target_id=username,
-        before=changes.get("before"),
-        after=changes.get("after"),
-        detail={"command": command},
-    )
 
 
 def _require_user(state: StateBackend, username: str):
@@ -69,33 +65,13 @@ def create_admin(state: StateBackend, username: str, prompt: Callable[[str], str
         raise CliError(f"user {username!r} already exists - use reset-password to change their password")
     password = _prompt_password(username, prompt)
     try:
-        user = state.create_user(
-            username, hash_password(password), audit=_cli_event(AuditAction.USER_CREATE, username, "create-admin")
-        )
+        user = state.create_user(username, hash_password(password), actor=_ACTOR, detail=_cli("create-admin"))
     except UsernameTakenError as exc:
         raise CliError(f"user {username!r} already exists") from exc
     state.set_role(
-        user.id,
-        WILDCARD_ACCOUNT,
-        "admin",
-        granted_by=None,
-        audit=_role_event(username, WILDCARD_ACCOUNT, None, "admin", "create-admin"),
+        user.id, username, WILDCARD_ACCOUNT, "admin", granted_by=None, actor=_ACTOR, detail=_cli("create-admin")
     )
     return f"created admin {username!r} - sign in at /login"
-
-
-def _role_event(username: str, account: str, before: str | None, after: str | None, command: str) -> AuditEvent:
-    action = AuditAction.USER_ROLE_REVOKED if after is None else AuditAction.USER_ROLE_SET
-    return AuditEvent(
-        AuditActor.cli(),
-        action,
-        target_type="user",
-        target_id=username,
-        account_name=account,
-        before={"role": before},
-        after={"role": after},
-        detail={"command": command},
-    )
 
 
 def grant(state: StateBackend, username: str, account: str, role: str) -> str:
@@ -104,14 +80,9 @@ def grant(state: StateBackend, username: str, account: str, role: str) -> str:
         raise CliError("role must be viewer, operator or admin")
     if role == "admin" and account != WILDCARD_ACCOUNT:
         raise CliError("admin is global - grant it on '*'")
-    existing = next((g for g in state.list_roles(user.id) if g.account_name == account), None)
     try:
         previous = state.set_role(
-            user.id,
-            account,
-            role,
-            granted_by=None,
-            audit=_role_event(user.username, account, existing.role if existing else None, role, "grant"),
+            user.id, user.username, account, role, granted_by=None, actor=_ACTOR, detail=_cli("grant")
         )
     except LastAdminError as exc:
         raise CliError(f"{user.username!r} is the last active admin - make someone else admin first") from exc
@@ -121,13 +92,8 @@ def grant(state: StateBackend, username: str, account: str, role: str) -> str:
 
 def revoke(state: StateBackend, username: str, account: str) -> str:
     user = _require_user(state, username.strip().lower())
-    existing = next((g for g in state.list_roles(user.id) if g.account_name == account), None)
     try:
-        previous = state.revoke_role(
-            user.id,
-            account,
-            audit=_role_event(user.username, account, existing.role if existing else None, None, "revoke"),
-        )
+        previous = state.revoke_role(user.id, user.username, account, actor=_ACTOR, detail=_cli("revoke"))
     except LastAdminError as exc:
         raise CliError(f"{user.username!r} is the last active admin - make someone else admin first") from exc
     if previous is None:
@@ -139,24 +105,11 @@ def reset_password(state: StateBackend, username: str, prompt: Callable[[str], s
     user = _require_user(state, username.strip().lower())
     password = _prompt_password(user.username, prompt)
     # Whoever runs this chose the password, so the user must replace it.
-    state.set_password(
-        user.id,
-        hash_password(password),
-        audit=_cli_event(AuditAction.USER_PASSWORD_RESET, user.username, "reset-password"),
-        must_change=True,
-    )
+    state.set_password(user.id, hash_password(password), must_change=True, actor=_ACTOR, detail=_cli("reset-password"))
     if not user.is_active:
-        state.set_active(
-            user.id,
-            True,
-            audit=_cli_event(
-                AuditAction.USER_PASSWORD_RESET,
-                user.username,
-                "reset-password",
-                before={"is_active": False},
-                after={"is_active": True},
-            ),
-        )
+        # set_active picks USER_REACTIVATE on its own now - no more
+        # mislabeling this as a USER_PASSWORD_RESET row.
+        state.set_active(user.id, True, actor=_ACTOR, detail=_cli("reset-password"))
     return (
         f"password reset for {user.username!r}; they must change it at next sign-in; existing sessions are signed out"
     )
@@ -164,27 +117,16 @@ def reset_password(state: StateBackend, username: str, prompt: Callable[[str], s
 
 def unlock(state: StateBackend, username: str) -> str:
     user = _require_user(state, username.strip().lower())
-    state.clear_login_failures(user.username)
-    # Also signs out any session that got in before the lockout - a
-    # lockout is a "someone is trying this account" signal.
-    state.bump_session_generation(user.id, audit=_cli_event(AuditAction.USER_UNLOCK, user.username, "unlock"))
+    # One transaction, one audit row - clearing the lockout can't succeed
+    # without a trace even if the process dies right after.
+    state.unlock_user(user.id, user.username, actor=_ACTOR, detail=_cli("unlock"))
     return f"cleared failed login attempts for {user.username!r}; every existing session for them is signed out"
 
 
 def deactivate(state: StateBackend, username: str) -> str:
     user = _require_user(state, username.strip().lower())
     try:
-        state.set_active(
-            user.id,
-            False,
-            audit=_cli_event(
-                AuditAction.USER_DEACTIVATE,
-                user.username,
-                "deactivate",
-                before={"is_active": True},
-                after={"is_active": False},
-            ),
-        )
+        state.set_active(user.id, False, actor=_ACTOR, detail=_cli("deactivate"))
     except LastAdminError as exc:
         raise CliError(f"{user.username!r} is the last active admin - create another admin first") from exc
     return f"deactivated {user.username!r}; every existing session for them is signed out"

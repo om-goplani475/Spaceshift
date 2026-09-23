@@ -24,7 +24,7 @@ def _temp_password(html: str) -> str:
 
 def test_users_pages_are_admin_only(app, state):
     bob = state.create_user("bob", hash_password(PASSWORD))
-    state.set_role(bob.id, "*", "operator", None)
+    state.set_role(bob.id, bob.username, "*", "operator", None)
     client = app.test_client()
     sign_in(client, "bob", PASSWORD)
     assert client.get("/users").status_code == 403
@@ -49,7 +49,7 @@ def test_create_user_shows_temporary_password_once_and_forces_change(app, client
     assert temp not in client.get("/users/carol").data.decode()  # not on reload
     assert temp not in repr(_rows(state, None))  # not in the audit log
     created = _rows(state, AuditAction.USER_CREATE)[0]
-    assert created.actor_username == ADMIN_USERNAME and created.detail == {"must_change_password": True}
+    assert created.actor_username == ADMIN_USERNAME and created.after == {"must_change_password": True}
 
     # carol signs in and is forced to /account until she changes it
     carol_client = app.test_client()
@@ -81,7 +81,7 @@ def test_role_grid_saves_only_changes_with_before_after(client, state, admin):
     state.create_account("prod", None, ["us-east-1"])
     state.create_account("dev", None, ["us-east-1"])
     bob = state.create_user("bob", hash_password(PASSWORD))
-    state.set_role(bob.id, "dev", "viewer", None)
+    state.set_role(bob.id, bob.username, "dev", "viewer", None)
 
     html = client.get("/users/bob").data.decode()
     assert 'name="role:*"' in html and 'name="role:prod"' in html and 'name="role:dev"' in html
@@ -111,7 +111,7 @@ def test_last_admin_cannot_be_demoted_or_deactivated_from_the_page(client, state
     assert "be demoted or deactivated" in client.get(f"/users/{ADMIN_USERNAME}").data.decode()
     # self-deactivation is refused regardless
     bob = state.create_user("bob", hash_password(PASSWORD))
-    state.set_role(bob.id, "*", "admin", None)
+    state.set_role(bob.id, bob.username, "*", "admin", None)
     response = client.post(f"/users/{ADMIN_USERNAME}/deactivate", follow_redirects=True)
     assert "own account" in response.data.decode()
     assert state.get_user(admin.id).is_active
@@ -122,7 +122,7 @@ def test_last_admin_cannot_be_demoted_or_deactivated_from_the_page(client, state
 
 def test_deactivate_reactivate_reset_unlock(app, client, state):
     bob = state.create_user("bob", hash_password(PASSWORD))
-    state.set_role(bob.id, "prod", "viewer", None)
+    state.set_role(bob.id, bob.username, "prod", "viewer", None)
     bob_client = app.test_client()
     sign_in(bob_client, "bob", PASSWORD)
 
@@ -154,8 +154,8 @@ def test_deactivate_reactivate_reset_unlock(app, client, state):
 
 def test_users_list_shows_status_and_roles(client, state):
     bob = state.create_user("bob", hash_password(PASSWORD))
-    state.set_role(bob.id, "prod", "operator", None)
-    state.set_role(bob.id, "*", "viewer", None)
+    state.set_role(bob.id, bob.username, "prod", "operator", None)
+    state.set_role(bob.id, bob.username, "*", "viewer", None)
     html = client.get("/users").data.decode()
     assert "viewer on *, operator on prod" in html
     assert "1 active admin" in html

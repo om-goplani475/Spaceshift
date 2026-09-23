@@ -37,6 +37,22 @@
     </div>
   </div>
   {% endif %}
+  {% if region_status %}
+  <div class="setting">
+    <div class="setting-text">
+      <span class="setting-label">By region</span>
+      <p class="setting-description">
+        {% for r in region_status %}
+        <span class="mono">{{ r.region }}</span>:
+        {% if r.last_error and (not r.last_ok_at or r.last_error_at > r.last_ok_at) %}<span class="badge badge-red">error</span> {{ r.last_error }}
+        {% elif r.last_ok_at %}<span class="badge badge-green">ok</span>
+        {% else %}<span class="badge badge-muted">not checked yet</span>{% endif %}
+        {% if not loop.last %}<br>{% endif %}
+        {% endfor %}
+      </p>
+    </div>
+  </div>
+  {% endif %}
 </section>
 
 <form class="settings-group" method="post" action="{{ url_for('accounts.update_account', name=account.name) }}">

@@ -16,6 +16,7 @@ from __future__ import annotations
 from controller.state.contracts.accounts import (
     AccountExistsError,
     AccountRecord,
+    AccountRegionStatus,
     AccountsStateContract,
     ResizeInFlightError,
 )
@@ -50,6 +51,7 @@ __all__ = [
     "WILDCARD_ACCOUNT",
     "AccountExistsError",
     "AccountRecord",
+    "AccountRegionStatus",
     "AuditRecord",
     "InstanceRecord",
     "LastAdminError",
