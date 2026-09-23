@@ -19,9 +19,12 @@ from flask import Blueprint, abort, flash, g, redirect, render_template, request
 from controller.audit import AuditAction
 from controller.dashboard._common import _state
 from controller.dashboard.auth import (
+    client_addr,
     current_actor,
     hash_password,
     login_session,
+    record_failure,
+    retry_after_seconds,
     validate_password,
     validate_username,
     verify_password,
@@ -213,10 +216,19 @@ def account():
     user: UserRecord = g.user
     if request.method == "GET":
         return render_template("account.html", user=user)
+    addr = client_addr()
+    retry_after = retry_after_seconds(user.username, addr)
+    if retry_after:
+        response = render_template("account.html", user=user, error="Too many attempts - try again shortly.")
+        return response, 429, {"Retry-After": str(retry_after)}
     current = request.form.get("current_password", "")
     new = request.form.get("new_password", "")
     confirm = request.form.get("confirm", "")
     if not verify_password(user.password_hash, current):
+        # Rate-limited and audited exactly like a login failure - a stolen
+        # session must not be able to brute-force the current password at
+        # argon2 speed with nothing recorded.
+        record_failure(user.username, addr, AuditAction.AUTH_PASSWORD_CHANGE_FAILED, actor=current_actor())
         return render_template("account.html", user=user, error="Your current password is not correct."), 400
     error = validate_password(new, user.username)
     if error is None and new != confirm:

@@ -71,6 +71,7 @@ class AuditAction(enum.StrEnum):
     AUTH_LOGIN_FAILED = "auth.login_failed"
     AUTH_LOCKOUT = "auth.lockout"
     AUTH_SETUP_TOKEN_REJECTED = "auth.setup_token_rejected"
+    AUTH_PASSWORD_CHANGE_FAILED = "auth.password_change_failed"
     AUTH_LOGOUT = "auth.logout"
     AUDIT_PRUNE = "audit.prune"
 
@@ -152,6 +153,7 @@ EVENT_ONLY_ACTIONS = frozenset(
         AuditAction.AUTH_LOGIN_FAILED,
         AuditAction.AUTH_LOCKOUT,
         AuditAction.AUTH_SETUP_TOKEN_REJECTED,
+        AuditAction.AUTH_PASSWORD_CHANGE_FAILED,
         AuditAction.AUTH_LOGOUT,
         AuditAction.ACCESS_DENIED,
         AuditAction.NOTIFICATION_TEST,

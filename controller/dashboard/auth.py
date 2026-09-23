@@ -370,11 +370,11 @@ def _require_login():
 # ---- Rate limiting ---------------------------------------------------------
 
 
-def _client_addr() -> str:
+def client_addr() -> str:
     return request.remote_addr or "0.0.0.0"
 
 
-def _retry_after_seconds(username: str, remote_addr: str) -> int:
+def retry_after_seconds(username: str, remote_addr: str) -> int:
     """Seconds until this username or address is allowed another attempt;
     0 if not locked. The lock lifts when the oldest of the failures that
     filled the window ages out of it."""
@@ -395,20 +395,25 @@ def _retry_after_seconds(username: str, remote_addr: str) -> int:
 
 def _too_many_attempts(retry_after: int, template: str, **context):
     logger.warning(
-        "login rate limit hit for %s from %s (retry in %ss)", context.get("username"), _client_addr(), retry_after
+        "login rate limit hit for %s from %s (retry in %ss)", context.get("username"), client_addr(), retry_after
     )
     response = render_template(template, error="Invalid username or password.", **context)
     return response, 429, {"Retry-After": str(retry_after)}
 
 
-def _record_failure(username: str, addr: str, action: AuditAction) -> None:
-    """Record a failed login/setup attempt for rate limiting and in the
-    audit log - plus an AUTH_LOCKOUT row the moment this failure is the
-    one that fills a window, so a lockout is one event, not one per
-    rejected retry."""
+def record_failure(username: str, addr: str, action: AuditAction, actor: AuditActor | None = None) -> None:
+    """Record a failed credential check (login, setup token, or a signed-in
+    user's own current-password check) for rate limiting and in the audit
+    log - plus an AUTH_LOCKOUT row the moment this failure is the one that
+    fills a window, so a lockout is one event, not one per rejected retry.
+
+    `actor` defaults to anonymous (nobody is signed in yet at /login or
+    /setup); a caller that already knows who's asking - /account, where
+    the failure is a signed-in user mistyping their own current password -
+    passes their real actor instead, so the row isn't misattributed."""
     state = _state()
     state.record_login_attempt(username, addr, succeeded=False)
-    actor = AuditActor.anonymous(addr, username)
+    actor = actor if actor is not None else AuditActor.anonymous(addr, username)
     record_audit_event(state, AuditEvent(actor, action, target_type="user", target_id=username))
 
     since = datetime.now(UTC) - RATE_LIMIT_WINDOW
@@ -424,7 +429,7 @@ def current_actor() -> AuditActor:
     """The signed-in user as an audit actor - what every mutating route
     passes to the state backend."""
     user: UserRecord = g.user
-    return AuditActor.user(user.id, user.username, _client_addr())
+    return AuditActor.user(user.id, user.username, client_addr())
 
 
 # ---- Views -----------------------------------------------------------------
@@ -449,9 +454,9 @@ def login():
 
     username = request.form.get("username", "").strip().lower()
     password = request.form.get("password", "")
-    addr = _client_addr()
+    addr = client_addr()
 
-    retry_after = _retry_after_seconds(username, addr)
+    retry_after = retry_after_seconds(username, addr)
     if retry_after:
         return _too_many_attempts(retry_after, "login.html", username=username)
 
@@ -463,7 +468,7 @@ def login():
         ok = user.is_active and verify_password(user.password_hash, password)
 
     if not ok:
-        _record_failure(username, addr, AuditAction.AUTH_LOGIN_FAILED)
+        record_failure(username, addr, AuditAction.AUTH_LOGIN_FAILED)
         logger.warning("failed login for %r from %s", username, addr)
         return render_template("login.html", error="Invalid username or password.", username=username), 401
 
@@ -504,14 +509,14 @@ def setup():
     username = request.form.get("username", "").strip().lower()
     password = request.form.get("password", "")
     confirm = request.form.get("confirm", "")
-    addr = _client_addr()
+    addr = client_addr()
 
-    retry_after = _retry_after_seconds(SETUP_ATTEMPT_USERNAME, addr)
+    retry_after = retry_after_seconds(SETUP_ATTEMPT_USERNAME, addr)
     if retry_after:
         return _too_many_attempts(retry_after, "setup.html", username=username)
 
     if not hmac.compare_digest(submitted_token.encode(), token.encode()):
-        _record_failure(SETUP_ATTEMPT_USERNAME, addr, AuditAction.AUTH_SETUP_TOKEN_REJECTED)
+        record_failure(SETUP_ATTEMPT_USERNAME, addr, AuditAction.AUTH_SETUP_TOKEN_REJECTED)
         logger.warning("wrong setup token from %s", addr)
         return render_template("setup.html", error="That setup token is not correct.", username=username), 401
 

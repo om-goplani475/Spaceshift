@@ -5,7 +5,7 @@ from __future__ import annotations
 import re
 
 from controller.audit import AuditAction, AuditFilters
-from controller.dashboard.auth import hash_password, verify_password
+from controller.dashboard.auth import MAX_FAILURES_PER_USERNAME, hash_password, verify_password
 from tests.dashboard.conftest import ADMIN_USERNAME, sign_in
 
 PASSWORD = "a perfectly fine passphrase"
@@ -195,3 +195,28 @@ def test_account_change_requires_current_password_and_signs_out_other_browsers(a
     assert client.get("/").status_code == 200
     assert other.get("/").status_code == 302
     assert sign_in(app.test_client(), password=PASSWORD).status_code == 302
+
+
+def test_account_wrong_current_password_is_rate_limited_and_audited(app, client, state, admin):
+    # A stolen session cookie must not be able to brute-force the current
+    # password at argon2 speed with nothing recorded - each wrong attempt
+    # is rate-limited and audited exactly like a login failure.
+    for _ in range(MAX_FAILURES_PER_USERNAME):
+        response = client.post(
+            "/account", data={"current_password": "nope", "new_password": "x" * 12, "confirm": "x" * 12}
+        )
+        assert response.status_code == 400
+
+    locked = client.post(
+        "/account",
+        data={"current_password": "correct horse battery staple", "new_password": PASSWORD, "confirm": PASSWORD},
+    )
+    assert locked.status_code == 429 and "Retry-After" in locked.headers
+
+    rows = _rows(state, AuditAction.AUTH_PASSWORD_CHANGE_FAILED)
+    assert len(rows) == MAX_FAILURES_PER_USERNAME
+    assert all(r.actor_username == ADMIN_USERNAME and r.actor_type == "user" for r in rows)
+    # The real new password was never persisted - the account is still
+    # locked out on the *old* password too, since it's a rate limit, not a
+    # rejection of this specific attempt.
+    assert verify_password(state.get_user(admin.id).password_hash, "correct horse battery staple")
