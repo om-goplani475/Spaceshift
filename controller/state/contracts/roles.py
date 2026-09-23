@@ -59,7 +59,12 @@ class RolesStateContract(abc.ABC):
 
     @abc.abstractmethod
     def revoke_role(
-        self, user_id: int, username: str, account_name: str, actor: AuditActor | None = None
+        self,
+        user_id: int,
+        username: str,
+        account_name: str,
+        actor: AuditActor | None = None,
+        detail: dict | None = None,
     ) -> RoleGrant | None:
         """Remove one grant; returns it (None if there was none - also a
         no-op, no audit row). Same last-admin guard as set_role."""

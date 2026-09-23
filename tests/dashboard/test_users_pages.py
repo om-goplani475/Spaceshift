@@ -104,6 +104,24 @@ def test_role_grid_saves_only_changes_with_before_after(client, state, admin):
     assert client.post("/users/bob/roles", data={"role:prod": "king"}).status_code == 400
 
 
+def test_role_grid_rejects_names_that_are_not_a_real_account(client, state):
+    # Only a real account, the wildcard, or an account bob already has a
+    # (possibly stale) grant on may appear as a role: key - never an
+    # invented name, which would be a junk grant and a junk audit row.
+    state.create_account("prod", None, ["us-east-1"])
+    bob = state.create_user("bob", hash_password(PASSWORD))
+
+    assert client.post("/users/bob/roles", data={"role:not-a-real-account": "viewer"}).status_code == 400
+    assert state.list_roles(bob.id) == []  # nothing was written
+
+    # Revoking a stale grant on an account that no longer exists still
+    # works - it's already in bob's own grants, just not in list_accounts().
+    state.set_role(bob.id, bob.username, "legacy", "viewer", None)
+    response = client.post("/users/bob/roles", data={"role:legacy": ""})
+    assert response.status_code == 302
+    assert state.list_roles(bob.id) == []
+
+
 def test_last_admin_cannot_be_demoted_or_deactivated_from_the_page(client, state, admin):
     response = client.post(f"/users/{ADMIN_USERNAME}/roles", data={"role:*": "viewer"}, follow_redirects=True)
     assert "last active admin" in response.data.decode()

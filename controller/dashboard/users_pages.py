@@ -133,13 +133,19 @@ def set_roles(username: str):
     state = _state()
     user = _user_or_404(username)
     current = {g.account_name: g.role for g in state.list_roles(user.id)}
+    # A grant may only name an account that exists, the wildcard, or one
+    # the user already has a (possibly stale) grant on - so a role can
+    # always be revoked even if the account was since disabled, but never
+    # created on a name nobody chose, which would be a junk audit row and
+    # a junk grant nothing else ever checks.
+    known_accounts = {WILDCARD_ACCOUNT, *(a.name for a in state.list_accounts()), *current}
     changed = 0
     for key, value in request.form.items():
         if not key.startswith("role:"):
             continue
         account = key[len("role:") :]
         wanted = value.strip()
-        if wanted not in ("", *ROLE_CHOICES):
+        if wanted not in ("", *ROLE_CHOICES) or account not in known_accounts:
             abort(400)
         before = current.get(account)
         if wanted == (before or ""):
