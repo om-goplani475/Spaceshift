@@ -30,9 +30,10 @@ import enum
 import logging
 from dataclasses import dataclass
 
-from flask import abort, current_app, g, request
+from flask import abort, g, request
 
 from controller.audit import AuditAction, AuditActor, AuditEvent, AuditScope, record_audit_event
+from controller.dashboard._common import _state
 from controller.state.base import WILDCARD_ACCOUNT, RoleGrant, StateBackend, UserRecord
 
 logger = logging.getLogger(__name__)
@@ -116,10 +117,9 @@ def _scope() -> AccountScope:
 def _deny(what: str, target_type: str | None = None, target_id: str | None = None, account: str | None = None):
     """Record the refusal and raise 403."""
     scope = _scope()
-    state: StateBackend = current_app.extensions["spaceshift_state"]
     actor = AuditActor.user(scope.user.id, scope.user.username, request.remote_addr)
     record_audit_event(
-        state,
+        _state(),
         AuditEvent(
             actor,
             AuditAction.ACCESS_DENIED,
@@ -146,8 +146,3 @@ def require_operator(account_name: str, target_type: str, target_id: str) -> Non
         abort(404)
     if not role_at_least(scope.role_for(account_name), Role.OPERATOR):
         _deny("operator", target_type, target_id, account_name)
-
-
-def readable_or_404(account_name: str) -> None:
-    if not _scope().can_read(account_name):
-        abort(404)

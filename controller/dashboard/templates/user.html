@@ -31,7 +31,7 @@
       <div class="setting-text">
         <span class="setting-label mono">{{ "every account (*)" if row.account == "*" else row.account }}</span>
         <p class="setting-description">
-          {% if row.account == "*" %}Applies to every account, including ones added to config.yaml later. A role on a specific account below overrides it.
+          {% if row.account == "*" %}Applies to every account, including ones added later. A role on a specific account below overrides it.
           {% elif not row.enabled %}This account is disabled - the grant stays until you remove it.
           {% endif %}
         </p>

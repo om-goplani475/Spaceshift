@@ -1,12 +1,10 @@
-"""PostgreSQL implementation of StateBackend - an optional swap-in for
-larger deployments where SQLite's single-file model doesn't fit. Implements
-the exact same contract as SqliteStateBackend; only the storage engine and
-concurrency model differ.
+"""The connection pool, schema init and cursor helper shared by every
+Postgres mixin in this package - the only StateBackend implementation
+this app ships.
 
-Uses a connection pool (rather than SqliteStateBackend's single
-lock-guarded connection) because Postgres, unlike SQLite, is meant to
-handle real concurrent connections - the scheduler's thread pool can
-borrow/return connections without serializing on a single lock.
+Uses a connection pool because Postgres is meant to handle real
+concurrent connections - the scheduler's thread pool can borrow/return
+connections without serializing on a single lock.
 """
 
 from __future__ import annotations
@@ -114,8 +112,8 @@ END $$;
 -- Live-editable settings (default_threshold_percent, dry_run, scheduler.*,
 -- resize.*) - a flat key-value table rather than typed columns, so a new
 -- setting never needs a schema migration to become DB-editable. A missing
--- key means "use config.yaml's value / its built-in default," not an error
--- - see controller/config.py's refresh_config_from_db.
+-- key means "use the built-in default," not an error - see
+-- controller/config.py's refresh_config_from_db.
 CREATE TABLE IF NOT EXISTS app_config (
     key         TEXT PRIMARY KEY,
     value       TEXT NOT NULL,
@@ -209,7 +207,7 @@ ALTER TABLE accounts ADD COLUMN IF NOT EXISTS verify_requested_at TIMESTAMPTZ;
 -- One row per (user, account) grant; '*' is the wildcard account. admin
 -- is global by definition, so it may only be granted on '*'. No FK to
 -- accounts: '*' isn't one, and a grant may name an account that is
--- temporarily out of config.yaml.
+-- temporarily disabled or not yet added on the Accounts page.
 CREATE TABLE IF NOT EXISTS user_account_roles (
     user_id       INTEGER NOT NULL REFERENCES users(id),
     account_name  TEXT NOT NULL,
@@ -222,8 +220,8 @@ CREATE TABLE IF NOT EXISTS user_account_roles (
 
 -- One-time backfills for databases from before multi-account support and
 -- before resize_state carried an account. '' was the implicit
--- single-account name; 'default' is what config.yaml.example calls it.
--- Idempotent: each touches only rows still at ''.
+-- single-account name; 'default' is what the old single-account example
+-- config called it. Idempotent: each touches only rows still at ''.
 UPDATE instances SET account_name = 'default' WHERE account_name = '';
 UPDATE volumes SET account_name = 'default' WHERE account_name = '';
 UPDATE scan_log SET account_name = 'default' WHERE account_name = '';

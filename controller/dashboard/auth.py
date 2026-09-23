@@ -2,11 +2,11 @@
 Flask signed-cookie sessions, DB-backed login rate limiting, and the
 one-time /setup page for the first admin.
 
-Every logged-in user is implicitly an admin in this phase - roles are a
-later feature and arrive as a join table on `users`, not here.
+Who may do what once signed in is rbac.py's job (roles live in the
+user_account_roles table); this module only establishes *who* is asking.
 
 Configuration is env-only (see AuthSettings) - none of it belongs in
-config.yaml or app_config, because it's exactly the kind of value an
+app_config, because it's exactly the kind of value an
 attacker with dashboard access must not be able to change.
 """
 
@@ -40,6 +40,7 @@ from flask_wtf.csrf import CSRFProtect
 from werkzeug.middleware.proxy_fix import ProxyFix
 
 from controller.audit import ActorType, AuditAction, AuditActor, AuditEvent, record_audit_event
+from controller.dashboard._common import _state
 from controller.dashboard.rbac import load_scope
 from controller.state.base import WILDCARD_ACCOUNT, StateBackend, UsernameTakenError, UserRecord
 
@@ -238,10 +239,6 @@ def init_auth(app: Flask, state: StateBackend, settings: AuthSettings) -> None:
     @app.context_processor
     def _auth_globals() -> dict[str, Any]:
         return {"current_user": g.get("user")}
-
-
-def _state() -> StateBackend:
-    return current_app.extensions["spaceshift_state"]
 
 
 def _settings() -> AuthSettings:

@@ -202,7 +202,7 @@ def build_parser() -> argparse.ArgumentParser:
         sub.add_parser(name, help=help_text).add_argument("username")
     grant_parser = sub.add_parser("grant", help="give a user a role on one account, or '*' for every account")
     grant_parser.add_argument("username")
-    grant_parser.add_argument("account", help="an account name from config.yaml, or '*'")
+    grant_parser.add_argument("account", help="an account name (see /accounts), or '*'")
     grant_parser.add_argument("role", choices=["viewer", "operator", "admin"])
     revoke_parser = sub.add_parser("revoke", help="remove a user's role on one account (or '*')")
     revoke_parser.add_argument("username")

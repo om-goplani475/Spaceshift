@@ -13,18 +13,13 @@ from __future__ import annotations
 import re
 
 import boto3
-from flask import Blueprint, abort, current_app, flash, jsonify, redirect, render_template, request, url_for
+from flask import Blueprint, abort, flash, jsonify, redirect, render_template, request, url_for
 
 from controller.audit import AuditAction, AuditEvent
+from controller.dashboard._common import _state
 from controller.dashboard.auth import current_actor
 from controller.dashboard.rbac import require_admin
-from controller.state.base import (
-    TERMINAL_STATUSES,
-    AccountExistsError,
-    AccountRecord,
-    ResizeInFlightError,
-    StateBackend,
-)
+from controller.state.base import TERMINAL_STATUSES, AccountExistsError, AccountRecord, ResizeInFlightError
 
 bp = Blueprint("accounts", __name__)
 
@@ -37,10 +32,6 @@ _ROLE_ARN_PATTERN = re.compile(r"^arn:aws[a-z-]*:iam::\d{12}:role/[\w+=,.@/-]+$"
 # a region that appears after this image was built isn't selectable until
 # the next dependency bump, which is fine.
 KNOWN_REGIONS = frozenset(boto3.Session().get_available_regions("ec2"))
-
-
-def _state() -> StateBackend:
-    return current_app.extensions["spaceshift_state"]
 
 
 def _account_or_404(name: str) -> AccountRecord:

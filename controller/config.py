@@ -49,9 +49,10 @@ MIN_AUDIT_LOG_RETENTION_DAYS = 30
 
 
 # Dotted app_config key -> the nested path into the dict shape
-# Config.from_dict() expects. Everything else config.yaml can set
-# (credentials, accounts, notifications) is deliberately not in this table -
-# those stay file-only identity/secrets, never DB-overridable. This is also
+# Config.from_dict() expects. AWS accounts and secrets (assume-role ARNs,
+# regions, the Slack bot token, AWS credentials) are deliberately not in
+# this table - accounts live in their own table (state/contracts/accounts.py)
+# and secrets stay in the environment, never DB-overridable. This is also
 # the canonical list of which settings are live-editable via app_config -
 # see docs/SETUP.md. Iteration order is /api/config's order; the dashboard's
 # Settings page groups them separately (see dashboard/app.py _CONFIG_GROUPS).
@@ -214,8 +215,8 @@ def apply_db_overrides(base: dict[str, Any], overrides: dict[str, str]) -> dict[
     expects - see refresh_config_from_db) with every recognized key in
     `overrides` applied on top. Values are stored as plain text in
     app_config and parsed as YAML scalars here (so "300" -> int, "true" ->
-    bool, etc, reusing the same parser config.yaml itself is read with,
-    rather than writing a second ad-hoc type-coercion path). Unrecognized
+    bool, etc - YAML's scalar rules are a convenient, already-a-dependency
+    type-coercion path rather than a second ad-hoc one). Unrecognized
     keys are ignored - app_config is meant to be edited via this tool's own
     dashboard/SQL examples (docs/SETUP.md), but nothing stops a stray or
     outdated row from existing.
@@ -239,18 +240,16 @@ def apply_db_overrides(base: dict[str, Any], overrides: dict[str, str]) -> dict[
 def refresh_config_from_db(base: dict[str, Any], state: StateBackend, previous: Config) -> Config:
     """Re-resolve the effective config for one scheduler cycle.
 
-    `base` is config.yaml's own dict (fixed for the life of the process -
-    typically dataclasses.asdict() of the Config built at startup, which is
-    just as good a "file defaults resolved" snapshot as the raw YAML dict
-    since Config.from_dict() already filled in every default once),
-    overlaid with whatever is currently in the app_config table.
+    `base` is the fixed defaults for the life of the process - typically
+    dataclasses.asdict() of the Config built at startup - overlaid with
+    whatever is currently in the app_config table.
 
     On any problem - a DB error, or an overridden value that fails Config's
     own validation (__post_init__) - logs a warning and returns `previous`
-    unchanged rather than raising. This is a deliberate departure from
-    load_config()'s fail-fast-at-startup behavior: app_config is a live,
-    externally-editable source that the scheduler must keep running through,
-    not a one-time boot-time check where crashing loudly is the right call.
+    unchanged rather than raising. Startup itself still fails fast on a bad
+    default; but app_config is a live, externally-editable source that the
+    scheduler must keep running through, so a bad override degrades to
+    "keep the last-known-good config" instead of crashing the process.
     """
     try:
         overrides = state.list_config()

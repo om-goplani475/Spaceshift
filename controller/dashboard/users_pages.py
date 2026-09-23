@@ -12,9 +12,10 @@ from __future__ import annotations
 
 import secrets
 
-from flask import Blueprint, abort, current_app, flash, g, redirect, render_template, request, url_for
+from flask import Blueprint, abort, flash, g, redirect, render_template, request, url_for
 
 from controller.audit import AuditAction, AuditEvent
+from controller.dashboard._common import _state
 from controller.dashboard.auth import (
     current_actor,
     hash_password,
@@ -27,7 +28,6 @@ from controller.dashboard.rbac import Role, require_admin
 from controller.state.base import (
     WILDCARD_ACCOUNT,
     LastAdminError,
-    StateBackend,
     UsernameTakenError,
     UserRecord,
 )
@@ -35,10 +35,6 @@ from controller.state.base import (
 bp = Blueprint("users", __name__)
 
 ROLE_CHOICES = [Role.VIEWER, Role.OPERATOR, Role.ADMIN]
-
-
-def _state() -> StateBackend:
-    return current_app.extensions["spaceshift_state"]
 
 
 def _user_or_404(username: str) -> UserRecord:
