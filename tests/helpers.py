@@ -552,6 +552,17 @@ class InMemoryStateBackend(StateBackend):
                 return None
             if previous.assume_role_arn == assume_role_arn and previous.regions == list(regions):
                 return previous  # no-op: nothing changed, nothing to audit
+            arn_changing = assume_role_arn != previous.assume_role_arn
+            removed_regions = set(previous.regions) - set(regions)
+            if arn_changing or removed_regions:
+                blocked_regions = None if arn_changing else removed_regions
+                if any(
+                    r.account_name == name
+                    and r.status not in TERMINAL_STATUSES
+                    and (blocked_regions is None or r.region in blocked_regions)
+                    for r in self._records.values()
+                ):
+                    raise ResizeInFlightError(name)
             self._accounts[name] = replace(
                 previous, assume_role_arn=assume_role_arn, regions=list(regions), updated_at=datetime.now(UTC)
             )

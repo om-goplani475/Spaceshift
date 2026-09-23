@@ -109,7 +109,15 @@ def update_account(name: str):
     if arn == account.assume_role_arn and regions == list(account.regions):
         flash("Nothing changed.", "info")
         return redirect(url_for("accounts.show_account", name=name))
-    _state().update_account(name, arn, regions, actor=current_actor())
+    try:
+        _state().update_account(name, arn, regions, actor=current_actor())
+    except ResizeInFlightError:
+        flash(
+            f"A resize is still in flight in {name} in a region being removed, or the role is changing - "
+            "wait for it to finish, then edit.",
+            "error",
+        )
+        return redirect(url_for("accounts.show_account", name=name))
     flash(f"Saved {name}. Applies on the controller's next cycle.", "info")
     return redirect(url_for("accounts.show_account", name=name))
 

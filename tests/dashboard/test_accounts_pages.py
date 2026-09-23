@@ -106,6 +106,43 @@ def test_disable_refused_while_resize_in_flight_then_allowed(client, state):
     assert _rows(state, AuditAction.ACCOUNT_ENABLE)[0].after == {"enabled": True}
 
 
+def test_update_refused_while_resize_in_flight_in_a_region_being_removed(client, state):
+    state.create_account("prod", None, ["us-east-1", "us-west-2"])
+    state.create_if_absent("vol-1", "i-1", 100, 120, account_name="prod", region="us-west-2")
+
+    # Dropping us-west-2 would orphan the in-flight row there: nothing
+    # left to scan it or retry the OS-side extend.
+    response = client.post("/accounts/prod", data={"regions": "us-east-1"}, follow_redirects=True)
+    assert "still in flight" in response.data.decode()
+    assert state.get_account("prod").regions == ["us-east-1", "us-west-2"]
+    assert _rows(state, AuditAction.ACCOUNT_UPDATE) == []
+
+    # A region with no in-flight row can still be dropped freely.
+    client.post("/accounts/prod", data={"regions": "us-west-2"})
+    assert state.get_account("prod").regions == ["us-west-2"]
+
+    state.update_status("vol-1", ResizeStatus.EXTEND_COMPLETED)
+    client.post("/accounts/prod", data={"regions": "us-east-1"})
+    assert state.get_account("prod").regions == ["us-east-1"]
+
+
+def test_update_refused_while_resize_in_flight_and_arn_is_changing(client, state):
+    state.create_account("prod", None, ["us-east-1"])
+    state.create_if_absent("vol-1", "i-1", 100, 120, account_name="prod", region="us-east-1")
+
+    # An ARN change may point at a different AWS account entirely, so it
+    # blocks on any in-flight row for the account, not just one region.
+    response = client.post(
+        "/accounts/prod", data={"assume_role_arn": ARN, "regions": "us-east-1"}, follow_redirects=True
+    )
+    assert "still in flight" in response.data.decode()
+    assert state.get_account("prod").assume_role_arn is None
+
+    state.update_status("vol-1", ResizeStatus.EXTEND_COMPLETED)
+    client.post("/accounts/prod", data={"assume_role_arn": ARN, "regions": "us-east-1"})
+    assert state.get_account("prod").assume_role_arn == ARN
+
+
 def test_verify_now_sets_the_request_and_page_shows_status(client, state):
     state.create_account("prod", None, ["us-east-1"])
     client.post("/accounts/prod/verify")

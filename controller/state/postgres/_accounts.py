@@ -83,6 +83,32 @@ class PostgresAccountsMixin(AccountsStateContract):
             previous = _row_to_account(row)
             if previous.assume_role_arn == assume_role_arn and previous.regions == regions:
                 return previous  # no-op: nothing changed, nothing to audit
+            arn_changing = assume_role_arn != previous.assume_role_arn
+            removed_regions = set(previous.regions) - set(regions)
+            if arn_changing or removed_regions:
+                # Same guard as disabling: a resize the controller started
+                # under the old ARN or in a region being dropped must be
+                # allowed to finish its OS-side extend, or the volume grows
+                # in AWS but the row is stranded - nothing left to scan it,
+                # nothing left to retry the extend. An ARN change is
+                # treated like every region changed (it may point at a
+                # different AWS account entirely); a region-only edit only
+                # blocks on rows in the regions actually being dropped.
+                if arn_changing:
+                    cur.execute(
+                        "SELECT 1 FROM resize_state WHERE account_name = %s AND status != ALL(%s) LIMIT 1",
+                        (name, _TERMINAL_STATUS_VALUES),
+                    )
+                else:
+                    cur.execute(
+                        """
+                        SELECT 1 FROM resize_state
+                        WHERE account_name = %s AND region = ANY(%s) AND status != ALL(%s) LIMIT 1
+                        """,
+                        (name, list(removed_regions), _TERMINAL_STATUS_VALUES),
+                    )
+                if cur.fetchone() is not None:
+                    raise ResizeInFlightError(name)
             cur.execute(
                 "UPDATE accounts SET assume_role_arn = %s, regions = %s, updated_at = %s WHERE name = %s",
                 (assume_role_arn, regions, datetime.now(UTC), name),

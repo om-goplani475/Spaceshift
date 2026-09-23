@@ -58,7 +58,12 @@ class ResizeInFlightError(Exception):
 class AccountsStateContract(abc.ABC):
     @abc.abstractmethod
     def create_account(
-        self, name: str, assume_role_arn: str | None, regions: list[str], actor: AuditActor | None = None
+        self,
+        name: str,
+        assume_role_arn: str | None,
+        regions: list[str],
+        actor: AuditActor | None = None,
+        detail: dict | None = None,
     ) -> AccountRecord:
         """Insert an enabled account. Raises AccountExistsError. The audit
         row (attributed to `actor`) is built from the inserted row and
@@ -66,12 +71,20 @@ class AccountsStateContract(abc.ABC):
 
     @abc.abstractmethod
     def update_account(
-        self, name: str, assume_role_arn: str | None, regions: list[str], actor: AuditActor | None = None
+        self,
+        name: str,
+        assume_role_arn: str | None,
+        regions: list[str],
+        actor: AuditActor | None = None,
+        detail: dict | None = None,
     ) -> AccountRecord | None:
         """Replace ARN and regions; returns the *previous* record, or None
-        if no such account. The audit before/after come from the row read
-        under FOR UPDATE, not from the caller; a call that changes nothing
-        writes no audit row. Same transaction."""
+        if no such account. Raises ResizeInFlightError - same as
+        set_account_enabled(False) - if the ARN is changing or a region
+        being dropped has a non-terminal resize_state row; checked in the
+        same transaction, so a resize can't slip in between. The audit
+        before/after come from the row read under FOR UPDATE, not from
+        the caller; a call that changes nothing writes no audit row."""
 
     @abc.abstractmethod
     def set_account_enabled(

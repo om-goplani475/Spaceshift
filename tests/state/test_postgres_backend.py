@@ -313,6 +313,28 @@ def test_admin_on_named_account_is_refused_by_the_database_too(postgres_state):
             cur.execute("INSERT INTO user_account_roles VALUES (%s, 'prod', 'admin', now(), NULL)", (user.id,))
 
 
+def test_update_account_refused_while_resize_in_flight(postgres_state):
+    from controller.state.base import ResizeInFlightError, ResizeStatus
+
+    postgres_state.create_account("prod", None, ["us-east-1", "us-west-2"])
+    postgres_state.create_if_absent("vol-1", "i-1", 100, 120, account_name="prod", region="us-west-2")
+
+    # Dropping the region with the in-flight row is refused; dropping the
+    # other one is fine.
+    with pytest.raises(ResizeInFlightError):
+        postgres_state.update_account("prod", None, ["us-east-1"])
+    postgres_state.update_account("prod", None, ["us-west-2"])
+    assert postgres_state.get_account("prod").regions == ["us-west-2"]
+
+    # An ARN change blocks on any in-flight row, region notwithstanding.
+    with pytest.raises(ResizeInFlightError):
+        postgres_state.update_account("prod", "arn:aws:iam::1:role/x", ["us-west-2"])
+
+    postgres_state.update_status("vol-1", ResizeStatus.EXTEND_COMPLETED)
+    postgres_state.update_account("prod", "arn:aws:iam::1:role/x", ["us-east-1"])
+    assert postgres_state.get_account("prod").assume_role_arn == "arn:aws:iam::1:role/x"
+
+
 def test_state_change_calls_with_no_actual_change_write_no_audit_row(postgres_state):
     from controller.audit import AuditActor, AuditFilters
 
