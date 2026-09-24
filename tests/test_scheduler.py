@@ -1,6 +1,7 @@
 """Tests for controller.scheduler."""
 
 import datetime as dt
+import logging
 from dataclasses import replace
 from unittest.mock import MagicMock, patch
 
@@ -10,7 +11,7 @@ import pytest
 from controller.discovery import EligibleVolume
 from controller.disk_check import DiskUsage
 from controller.resize import ModifyVolumeError
-from controller.scheduler import Scheduler, TickFailed
+from controller.scheduler import _VERIFY_POLL_SECONDS, Scheduler, TickFailed
 from controller.state.base import ResizeStatus
 
 _ACCOUNT = "default"
@@ -289,6 +290,26 @@ def test_verify_now_is_serviced_between_cycles(config, state, notifier):
     ):
         scheduler._sleep_servicing_verify_requests(1)
     assert "InvalidClientTokenId" in state.get_account("prod").last_error
+
+
+def test_verify_poll_logs_the_traceback_once_per_outage_not_every_slice(config, state, notifier, caplog):
+    scheduler = _scheduler_with(state, notifier, config, ("prod", ["us-east-1"]))
+    with (
+        patch.object(state, "list_verify_requests", side_effect=RuntimeError("connection refused")),
+        patch("controller.scheduler.time.sleep"),
+        caplog.at_level(logging.ERROR, logger="controller.scheduler"),
+    ):
+        scheduler._sleep_servicing_verify_requests(3 * _VERIFY_POLL_SECONDS)  # three failing slices
+    tracebacks = [r for r in caplog.records if r.exc_info is not None and r.levelno == logging.ERROR]
+    assert len(tracebacks) == 1
+    assert scheduler._verify_poll_failing is True
+
+    with (
+        patch.object(state, "list_verify_requests", return_value=[]),
+        patch("controller.scheduler.time.sleep"),
+    ):
+        scheduler._sleep_servicing_verify_requests(_VERIFY_POLL_SECONDS)  # recovers
+    assert scheduler._verify_poll_failing is False
 
 
 def test_ssm_not_ready_alert_keyed_per_account(config, state, notifier):

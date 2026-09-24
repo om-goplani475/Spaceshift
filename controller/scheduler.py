@@ -112,6 +112,11 @@ class Scheduler:
         # different accounts' instance IDs ever collide.
         self._ssm_not_ready_alerted: set[tuple[str, str]] = set()
 
+        # Set once the verify-request poll starts failing, so a Postgres
+        # outage logs one traceback instead of one every _VERIFY_POLL_SECONDS
+        # for the rest of the interval - see _sleep_servicing_verify_requests.
+        self._verify_poll_failing = False
+
     def run_forever(self) -> None:
         # Initial deadline so the health check has something to read
         # before the first (possibly long) tick finishes.
@@ -148,7 +153,17 @@ class Scheduler:
                 for name in self._state.list_verify_requests():
                     self.verify_account(name)
             except Exception:
-                logger.exception("could not service verify requests this slice")
+                # Full traceback once per outage, not once every slice -
+                # Postgres being down for a whole interval would otherwise
+                # log a traceback every _VERIFY_POLL_SECONDS and bury
+                # whatever else is in the log.
+                if not self._verify_poll_failing:
+                    logger.exception("could not service verify requests this slice")
+                    self._verify_poll_failing = True
+                else:
+                    logger.debug("still could not service verify requests this slice", exc_info=True)
+            else:
+                self._verify_poll_failing = False
             step = min(_VERIFY_POLL_SECONDS, remaining)
             time.sleep(step)
             remaining -= step
