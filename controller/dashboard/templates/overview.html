@@ -1,25 +1,91 @@
 {% extends "base.html" %}
-{% from "_macros.html" import filter_select, pager, empty_row with context %}
+{% from "_macros.html" import filter_select, pager, empty_row, usage_meter with context %}
 
 {% block title %}Overview{% endblock %}
 {% block heading %}Overview{% endblock %}
 {% block lede %}<p class="lede">What the controller has done, and what it's doing now.</p>{% endblock %}
 
 {% block content %}
-<div class="stats" id="dashboard-stats">
-  <div class="stat"><div class="l">Volumes scanned</div><div class="n">{{ stats.tracked }}</div></div>
-  <div class="stat"><div class="l">Autoresize enabled</div><div class="n">{{ stats.autoresize_enabled }}</div></div>
-  <div class="stat"><div class="l">Resizes completed</div><div class="n">{{ stats.completed }}</div></div>
-  <div class="stat"><div class="l">In progress</div><div class="n">{{ stats.in_progress }}</div></div>
-  <div class="stat{{ ' warn' if stats.needs_attention }}">
-    <div class="l">Needs attention</div><div class="n">{{ stats.needs_attention }}</div>
+{% if dry_run %}
+<div class="banner-dryrun" role="status">
+  <span class="banner-icon" aria-hidden="true">
+    <svg class="icon" viewBox="0 0 24 24"><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><path d="M12 9v4M12 17h.01"/></svg>
+  </span>
+  <div><strong>Dry run is on.</strong> <p>The controller is only logging what it would resize - no real AWS or filesystem change is being made. <a href="{{ url_for('settings') }}">Turn it off in Settings</a> when you're ready.</p></div>
+</div>
+{% endif %}
+
+<div class="kpi-grid" id="dashboard-stats">
+  <div class="kpi-card">
+    <div class="kpi-top">
+      <span class="kpi-label">Total managed storage</span>
+      <span class="kpi-icon" aria-hidden="true"><svg class="icon" viewBox="0 0 24 24"><ellipse cx="12" cy="5" rx="8" ry="3"/><path d="M4 5v6c0 1.7 3.6 3 8 3s8-1.3 8-3V5"/><path d="M4 11v6c0 1.7 3.6 3 8 3s8-1.3 8-3v-6"/></svg></span>
+    </div>
+    <div class="kpi-value">{{ "{:,}".format(stats.total_gb) }}<span class="kpi-unit">GB</span></div>
+  </div>
+  <div class="kpi-card">
+    <div class="kpi-top">
+      <span class="l kpi-label">Volumes scanned</span>
+      <span class="kpi-icon" aria-hidden="true"><svg class="icon" viewBox="0 0 24 24"><path d="M12 20V10M18 20V4M6 20v-4"/></svg></span>
+    </div>
+    <div class="n kpi-value">{{ stats.tracked }}</div>
+  </div>
+  <div class="kpi-card">
+    <div class="kpi-top">
+      <span class="l kpi-label">Autoresize enabled</span>
+      <span class="kpi-icon" aria-hidden="true"><svg class="icon" viewBox="0 0 24 24"><path d="M21 12a9 9 0 1 1-2.64-6.36"/><path d="M21 3v6h-6"/></svg></span>
+    </div>
+    <div class="n kpi-value">{{ stats.autoresize_enabled }}</div>
+  </div>
+  <div class="kpi-card">
+    <div class="kpi-top">
+      <span class="l kpi-label">Resizes completed</span>
+      <span class="kpi-icon" aria-hidden="true"><svg class="icon" viewBox="0 0 24 24"><path d="M20 6 9 17l-5-5"/></svg></span>
+    </div>
+    <div class="n kpi-value">{{ stats.completed }}</div>
+  </div>
+  <div class="kpi-card">
+    <div class="kpi-top">
+      <span class="l kpi-label">In progress</span>
+      <span class="kpi-icon" aria-hidden="true"><svg class="icon" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 3"/></svg></span>
+    </div>
+    <div class="n kpi-value">{{ stats.in_progress }}</div>
+  </div>
+  <div class="kpi-card{{ ' warn' if stats.needs_attention }}">
+    <div class="kpi-top">
+      <span class="l kpi-label">Needs attention</span>
+      <span class="kpi-icon" aria-hidden="true"><svg class="icon" viewBox="0 0 24 24"><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><path d="M12 9v4M12 17h.01"/></svg></span>
+    </div>
+    <div class="n kpi-value">{{ stats.needs_attention }}</div>
   </div>
 </div>
 
 <section class="section">
   <div class="section-header">
+    <h2>Storage fleet analytics</h2>
+    <p class="section-note">Disk usage across every scanned volume, and where each resize ended up.</p>
+  </div>
+  <div class="charts-grid">
+    <div class="chart-card">
+      <h2>Usage breakdown</h2>
+      <div id="chart-usage" class="chart-canvas" data-breakdown='{{ storage_breakdown | tojson }}'></div>
+      <div class="chart-legend">
+        <span><i class="dot-green"></i>Healthy &lt;70%</span>
+        <span><i class="dot-amber"></i>Warning 70-85%</span>
+        <span><i class="dot-red"></i>Critical &gt;85%</span>
+      </div>
+    </div>
+    <div class="chart-card">
+      <h2>Resize activity</h2>
+      <div id="chart-activity" class="chart-canvas" data-activity='{{ resize_activity | tojson }}'></div>
+    </div>
+  </div>
+</section>
+
+<section class="section">
+  <div class="section-header">
     <h2>Resize activity</h2>
-    <p class="section-note">Every resize the controller has started, and where it got to.</p>
+    <p class="section-note">Every resize the controller has started, and where it got to. Click a row for details.</p>
   </div>
   <div class="filters">
     <input type="search" id="resize-search" placeholder="Search volume or instance…" aria-label="Search resizes">
@@ -54,7 +120,7 @@
 <section class="section">
   <div class="section-header">
     <h2>Scan history</h2>
-    <p class="section-note">The most recent {{ scan_limit }} disk checks, newest first.</p>
+    <p class="section-note">The most recent {{ scan_limit }} disk checks, newest first. Click a row for details.</p>
   </div>
   <div class="filters">
     <input type="search" id="scan-search" placeholder="Search volume or instance…" aria-label="Search scans">
@@ -80,7 +146,7 @@
         <td>{{ s.account_name }}</td>
         <td>{{ s.region }}</td>
         <td class="num">{{ s.size_gb }} GB</td>
-        <td class="num">{{ (s.percent_used ~ "%") if s.percent_used is not none else "–" }}</td>
+        <td class="num">{{ usage_meter(s.percent_used) }}</td>
         <td class="num">{{ s.threshold_percent }}%</td>
         <td><span class="badge {{ decision_badge(s.decision) }}">{{ s.decision }}</span></td>
         <td class="ts" data-ts="{{ s.timestamp.isoformat() }}"></td>
@@ -93,4 +159,9 @@
   </div>
   {{ pager("scan-pager") }}
 </section>
+{% endblock %}
+
+{% block scripts %}
+<script src="{{ url_for('static', filename='js/vendor/apexcharts.min.js') }}"></script>
+<script src="{{ url_for('static', filename='js/overview-charts.js') }}"></script>
 {% endblock %}

@@ -38,6 +38,18 @@
 {% endif %}
 {% endmacro %}
 
+{% macro usage_meter(percent_used) %}
+{% if percent_used is not none %}
+{% set level = "critical" if percent_used > 85 else ("warning" if percent_used >= 70 else "healthy") %}
+<span class="meter" data-level="{{ level }}" data-pct="{{ [percent_used, 100] | min }}">
+  <span class="meter-track"><span class="meter-fill"></span></span>
+  <span class="meter-value">{{ percent_used }}%</span>
+</span>
+{% else %}
+<span class="muted-note">–</span>
+{% endif %}
+{% endmacro %}
+
 {% macro empty_row(colspan, message, hint) %}
 <tr class="empty-row"><td class="empty" colspan="{{ colspan }}">
   <span class="empty-title">{{ message }}</span>
