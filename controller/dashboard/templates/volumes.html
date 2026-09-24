@@ -18,7 +18,7 @@
 <div class="panel">
   <table id="volumes-table">
     <thead><tr>
-      <th>Volume</th><th>Name</th><th>Instance</th><th>Instance name</th><th>Account</th><th>Region</th><th class="num">Size</th><th>Device</th>
+      <th>Volume</th><th>Name</th><th>Instance name</th><th>Account</th><th>Region</th><th class="num">Size</th><th>Device</th>
       <th class="num">Threshold</th><th>Autoresize</th><th>Watched</th><th>Last scan</th><th>Last seen</th>
     </tr></thead>
     <tbody id="volumes-tbody">
@@ -29,7 +29,6 @@
         data-watched-reason="{{ row.watched_reason }}" data-instance-autoresize="{{ row.instance_autoresize|lower }}">
       <td class="mono">{{ v.volume_id }}</td>
       <td>{{ v.name or "–" }}</td>
-      <td class="mono">{{ v.instance_id or "–" }}</td>
       <td>{{ row.instance_name or "–" }}</td>
       <td>{{ v.account_name }}</td>
       <td>{{ v.region }}</td>
@@ -59,7 +58,7 @@
       <td class="ts" data-ts="{{ v.last_seen_at.isoformat() }}"></td>
     </tr>
     {% else %}
-    {{ empty_row(13, "No volumes discovered yet.", "The controller syncs everything it can see on its first cycle.") }}
+    {{ empty_row(12, "No volumes discovered yet.", "The controller syncs everything it can see on its first cycle.") }}
     {% endfor %}
     </tbody>
   </table>
