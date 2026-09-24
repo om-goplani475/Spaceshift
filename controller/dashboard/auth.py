@@ -437,10 +437,15 @@ def record_failure(username: str, addr: str, action: AuditAction, actor: AuditAc
     record_audit_event(state, AuditEvent(actor, action, target_type="user", target_id=username))
 
     since = datetime.now(UTC) - RATE_LIMIT_WINDOW
-    if len(state.recent_failure_times(since, username=username)) == MAX_FAILURES_PER_USERNAME:
+    # >=, not ==: under concurrent requests, several can all read "not
+    # locked yet" and record a failure before any of them sees the count
+    # that tips the window, so the count can jump past the limit (e.g.
+    # 4 -> 6) without ever landing on it exactly - == would then skip the
+    # lockout row entirely for that burst.
+    if len(state.recent_failure_times(since, username=username)) >= MAX_FAILURES_PER_USERNAME:
         logger.warning("username %r locked out for %s after repeated failures", username, RATE_LIMIT_WINDOW)
         record_audit_event(state, AuditEvent(actor, AuditAction.AUTH_LOCKOUT, target_type="user", target_id=username))
-    if len(state.recent_failure_times(since, remote_addr=addr)) == MAX_FAILURES_PER_ADDRESS:
+    if len(state.recent_failure_times(since, remote_addr=addr)) >= MAX_FAILURES_PER_ADDRESS:
         logger.warning("address %s locked out for %s after repeated failures", addr, RATE_LIMIT_WINDOW)
         record_audit_event(state, AuditEvent(actor, AuditAction.AUTH_LOCKOUT, target_type="address", target_id=addr))
 

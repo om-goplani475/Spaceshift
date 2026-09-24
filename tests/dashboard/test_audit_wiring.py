@@ -7,6 +7,7 @@ from __future__ import annotations
 import logging
 
 from controller.audit import AuditAction, AuditActor, AuditFilters
+from controller.dashboard import auth as auth_module
 from controller.dashboard import create_app
 from controller.dashboard.auth import MAX_FAILURES_PER_USERNAME, hash_password
 from controller.dashboard.users import create_admin, deactivate, reset_password, unlock
@@ -79,6 +80,22 @@ def test_lockout_is_one_event_not_one_per_rejected_retry(app, state):
     for _ in range(MAX_FAILURES_PER_USERNAME + 3):
         sign_in(client, password="wrong password!!")
     assert len(_rows(state, AuditAction.AUTH_LOGIN_FAILED)) == MAX_FAILURES_PER_USERNAME
+    lockout = _only(state, AuditAction.AUTH_LOCKOUT)
+    assert lockout.target_type == "user" and lockout.target_id == ADMIN_USERNAME
+
+
+def test_lockout_row_written_even_when_the_count_skips_past_the_limit(app, state):
+    # Concurrent requests can each read "not locked yet" and all record a
+    # failure before any of them observes the count that tips the window,
+    # so a single record_failure() call can find the count already past
+    # the limit (never landing on it exactly, e.g. 4 -> 6 in one jump). A
+    # strict == check would then never fire the lockout row at all - only
+    # >= catches it. Pre-seed extra failures directly (bypassing
+    # record_failure's own check each time) to reproduce that state.
+    for _ in range(MAX_FAILURES_PER_USERNAME + 1):
+        state.record_login_attempt(ADMIN_USERNAME, "10.0.0.1", succeeded=False)
+    with app.app_context():
+        auth_module.record_failure(ADMIN_USERNAME, "10.0.0.1", AuditAction.AUTH_LOGIN_FAILED)
     lockout = _only(state, AuditAction.AUTH_LOCKOUT)
     assert lockout.target_type == "user" and lockout.target_id == ADMIN_USERNAME
 
