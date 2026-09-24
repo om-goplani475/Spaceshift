@@ -17,6 +17,21 @@ function postJSON(url, body) {
 
 // ---- Timestamps -----------------------------------------------------------
 
+// ---- Usage meters -----------------------------------------------------------
+
+// Width comes from one of 21 fixed "pN" classes (dashboard.css), not a
+// style="width:" attribute or an el.style.width assignment - both count as
+// inline styles under the dashboard's CSP (no style-src 'unsafe-inline'),
+// and Chrome blocks script-set el.style mutations under it too.
+function renderMeters(root) {
+  root.querySelectorAll(".meter[data-pct]").forEach(function (el) {
+    const fill = el.querySelector(".meter-fill");
+    if (!fill) return;
+    const pct = Math.max(0, Math.min(100, Math.round(Number(el.dataset.pct) / 5) * 5));
+    fill.className = "meter-fill p" + pct;
+  });
+}
+
 function formatTimestamps(root) {
   root.querySelectorAll(".ts").forEach(function (el) {
     var d = new Date(el.dataset.ts);
@@ -141,6 +156,107 @@ wireFilters(
   ["volumes-account-filter", "volumes-region-filter", "volumes-autoresize-filter"],
   "volumes-count", "volumes-pager"
 );
+
+// ---- Slide-over detail drawer -------------------------------------------------
+
+// Generic: any table listed here shows a right-hand drawer with every
+// column of the clicked row, keyed off the table's own <thead> - no
+// per-table drawer markup or extra backend fields needed. The first
+// column is always an id (volume/instance) and becomes the drawer title;
+// clicks on an interactive cell (the autoresize switch, a link) pass
+// through instead of opening the drawer. Plain DOM, not a framework
+// component - the dashboard's CSP has no script-src 'unsafe-eval', which
+// rules out Alpine.js (and anything else that compiles expressions via
+// `new Function` at runtime).
+const DRAWER_TABLES = ["resize-table", "scan-table", "instances-table", "volumes-table"];
+
+function openDrawer(title, fields) {
+  const root = document.getElementById("drawer-root");
+  if (!root) return;
+  document.getElementById("drawer-title").textContent = title;
+  document.getElementById("drawer-id").textContent = title;
+  const fieldsEl = document.getElementById("drawer-fields");
+  fieldsEl.innerHTML = "";
+  fields.forEach(function (f) {
+    const row = document.createElement("div");
+    row.className = "drawer-field";
+    const k = document.createElement("span");
+    k.className = "k";
+    k.textContent = f.k;
+    const v = document.createElement("span");
+    v.className = "v";
+    v.textContent = f.v;
+    row.append(k, v);
+    fieldsEl.appendChild(row);
+  });
+
+  const cliMatch = /^(vol|i)-[0-9a-f]+$/.exec(title);
+  const cliSection = document.getElementById("drawer-cli-section");
+  if (cliMatch) {
+    const cmd = (title.startsWith("vol-") ? "aws ec2 describe-volumes --volume-ids " : "aws ec2 describe-instances --instance-ids ") + title;
+    document.getElementById("drawer-cli-cmd").textContent = cmd;
+    cliSection.classList.remove("is-hidden");
+  } else {
+    cliSection.classList.add("is-hidden");
+  }
+
+  document.getElementById("drawer-overlay").classList.add("is-open");
+  document.getElementById("drawer").classList.add("is-open");
+}
+
+function closeDrawer() {
+  const overlay = document.getElementById("drawer-overlay");
+  const drawer = document.getElementById("drawer");
+  if (overlay) overlay.classList.remove("is-open");
+  if (drawer) drawer.classList.remove("is-open");
+}
+
+function copyToClipboard(text, btn) {
+  if (!navigator.clipboard) return;
+  navigator.clipboard.writeText(text).then(function () {
+    btn.classList.add("is-copied");
+    setTimeout(function () { btn.classList.remove("is-copied"); }, 1400);
+  });
+}
+
+function wireDrawerChrome() {
+  const root = document.getElementById("drawer-root");
+  if (!root || root.dataset.wired) return;
+  root.dataset.wired = "1";
+  const overlay = document.getElementById("drawer-overlay");
+  const closeBtn = document.getElementById("drawer-close");
+  if (overlay) overlay.addEventListener("click", closeDrawer);
+  if (closeBtn) closeBtn.addEventListener("click", closeDrawer);
+  document.addEventListener("keydown", function (e) {
+    if (e.key === "Escape") closeDrawer();
+  });
+  const copyId = document.getElementById("drawer-copy-id");
+  if (copyId) copyId.addEventListener("click", function () { copyToClipboard(document.getElementById("drawer-id").textContent, copyId); });
+  const copyCli = document.getElementById("drawer-copy-cli");
+  if (copyCli) copyCli.addEventListener("click", function () { copyToClipboard(document.getElementById("drawer-cli-cmd").textContent, copyCli); });
+}
+
+function wireRowDrawer(tableId) {
+  const table = document.getElementById(tableId);
+  if (!table || table.dataset.drawerWired) return;
+  table.dataset.drawerWired = "1";
+  table.addEventListener("click", function (e) {
+    if (e.target.closest("input, select, button, a, label")) return;
+    const row = e.target.closest("tbody tr");
+    if (!row || !table.contains(row) || row.classList.contains("empty-row")) return;
+    const headers = Array.from(table.tHead.rows[0].cells).map(th => th.textContent.trim());
+    const cells = Array.from(row.cells);
+    const title = cells[0] && cells[0].textContent.trim();
+    if (!title) return;
+    const fields = headers.slice(1).map((k, i) => ({ k: k, v: (cells[i + 1] && cells[i + 1].textContent.trim()) || "–" }));
+    openDrawer(title, fields);
+  });
+}
+
+function wireAllDrawers() {
+  wireDrawerChrome();
+  DRAWER_TABLES.forEach(wireRowDrawer);
+}
 
 // ---- Autoresize toggles ----------------------------------------------------
 
@@ -280,11 +396,24 @@ function wireNotificationTestButton() {
   });
 }
 
+function markClickableRows() {
+  DRAWER_TABLES.forEach(function (id) {
+    const table = document.getElementById(id);
+    if (!table) return;
+    Array.from(table.tBodies[0].rows).forEach(function (r) {
+      if (!r.classList.contains("empty-row")) r.classList.add("is-clickable");
+    });
+  });
+}
+
 formatTimestamps(document);
+renderMeters(document);
 wireAutoresizeToggles(document);
 wireConfigDirtyTracking(document);
 wireSettingsUpdateButton();
 wireNotificationTestButton();
+wireAllDrawers();
+markClickableRows();
 
 // ---- Live refresh ------------------------------------------------------------
 
@@ -348,8 +477,10 @@ async function refreshLiveData() {
     }
 
     formatTimestamps(document);
+    renderMeters(document);
     wireAutoresizeToggles(document);
     wireConfigDirtyTracking(document);
+    markClickableRows();
     Object.values(tableControllers).forEach(function (c) { c.apply(); });
     lastRefreshedAt = Date.now();
     if (liveIndicator) liveIndicator.dataset.state = "idle";

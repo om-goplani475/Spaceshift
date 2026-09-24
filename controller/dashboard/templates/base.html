@@ -11,12 +11,18 @@
 <body{% if standalone %} data-live="off"{% endif %}>
 <header class="topbar">
   <div class="topbar-inner">
-    <a class="brand" href="{{ url_for('overview') }}">Spaceshift</a>
+    <a class="brand" href="{{ url_for('overview') }}">
+      <span class="brand-mark" aria-hidden="true">
+        <svg viewBox="0 0 24 24"><path d="M12 2l8 4v6c0 5-3.5 8.5-8 10-4.5-1.5-8-5-8-10V6z"/></svg>
+      </span>
+      Spaceshift
+    </a>
     {% if not standalone %}
+    {% if scope %}<span class="scope-badge">{{ "All accounts" if scope.is_admin else (scope.readable | length ~ " account" ~ ("s" if (scope.readable | length) != 1 else "")) if scope.readable is not none else "All accounts" }}</span>{% endif %}
     <nav class="nav" aria-label="Main">
       {% for endpoint, label in nav_items %}
       <a href="{{ url_for(endpoint) }}" class="nav-link{% if request.endpoint == endpoint %} is-active{% endif %}"
-         {% if request.endpoint == endpoint %}aria-current="page"{% endif %}>{{ label }}</a>
+         {% if request.endpoint == endpoint %}aria-current="page"{% endif %}>{{ nav_icon(endpoint) }}<span class="nav-text">{{ label }}</span></a>
       {% endfor %}
     </nav>
     <div class="live" id="live-indicator" data-state="idle" title="This page refreshes itself every 10 seconds while visible">
@@ -25,11 +31,21 @@
       <span class="live-age" id="live-age"></span>
     </div>
     {% if current_user %}
-    <form class="user-menu" method="post" action="{{ url_for('auth.logout') }}">
-      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-      <a class="user-name" href="{{ url_for('users.account') }}" title="Signed in as {{ current_user.username }} - change your password">{{ current_user.username }}</a>
-      <button type="submit" class="btn btn-quiet">Sign out</button>
-    </form>
+    <div class="user-menu">
+      <a class="user-chip" href="{{ url_for('users.account') }}" title="Signed in as {{ current_user.username }} - change your password">
+        <span class="user-avatar" aria-hidden="true">{{ current_user.username[:2] }}</span>
+        <span class="user-meta">
+          <span class="user-name">{{ current_user.username }}</span>
+          <span class="role-badge">{{ role_label }}</span>
+        </span>
+      </a>
+      <form method="post" action="{{ url_for('auth.logout') }}">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <button type="submit" class="btn btn-quiet" title="Sign out">
+          <svg class="icon" viewBox="0 0 24 24"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><path d="M16 17l5-5-5-5"/><path d="M21 12H9"/></svg>
+        </button>
+      </form>
+    </div>
     {% endif %}
     {% endif %}
   </div>
@@ -62,6 +78,48 @@
   {% block content %}{% endblock %}
 </main>
 
+{% if not standalone %}
+<div id="drawer-root">
+  <div class="drawer-overlay" id="drawer-overlay"></div>
+  <aside class="drawer" id="drawer" role="dialog" aria-modal="true" aria-label="Details">
+    <div class="drawer-header">
+      <div>
+        <div class="drawer-title" id="drawer-title"></div>
+        <div class="drawer-subtitle">Details from this row</div>
+      </div>
+      <button type="button" class="drawer-close" id="drawer-close" aria-label="Close">
+        <svg class="icon" viewBox="0 0 24 24"><path d="M18 6 6 18M6 6l12 12"/></svg>
+      </button>
+    </div>
+    <div class="drawer-body">
+      <div>
+        <div class="drawer-section-title">Identifier</div>
+        <div class="drawer-cli">
+          <span class="mono" id="drawer-id"></span>
+          <button type="button" class="copy-btn" id="drawer-copy-id" title="Copy ID">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="12" height="12" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+          </button>
+        </div>
+      </div>
+      <div id="drawer-cli-section" class="is-hidden">
+        <div class="drawer-section-title">AWS CLI</div>
+        <div class="drawer-cli">
+          <span class="mono" id="drawer-cli-cmd"></span>
+          <button type="button" class="copy-btn" id="drawer-copy-cli" title="Copy command">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="12" height="12" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+          </button>
+        </div>
+      </div>
+      <div>
+        <div class="drawer-section-title">Fields</div>
+        <div id="drawer-fields"></div>
+      </div>
+    </div>
+  </aside>
+</div>
+{% endif %}
+
 <script src="{{ url_for('static', filename='js/dashboard.js') }}"></script>
+{% block scripts %}{% endblock %}
 </body>
 </html>
