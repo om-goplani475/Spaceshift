@@ -207,11 +207,17 @@ def init_auth(app: Flask, state: StateBackend, settings: AuthSettings) -> None:
     CSRFProtect(app)
 
     if settings.behind_tls_proxy:
-        # Trust X-Forwarded-For / -Proto from exactly one hop, so
-        # request.remote_addr (per-IP rate limiting) and url_for's scheme
-        # reflect the real client. Never enable this without the proxy:
-        # any client could then spoof its address with a header.
-        app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1)  # type: ignore[method-assign]
+        # Trust X-Forwarded-For / -Proto / -Host from exactly one hop, so
+        # request.remote_addr (per-IP rate limiting), url_for's scheme,
+        # and request.host all reflect the real client - the last of
+        # those is what Flask-WTF's CSRF check compares the browser's
+        # Referer against on an HTTPS request (WTF_CSRF_SSL_STRICT,
+        # Flask-WTF's default). Without trusting X-Forwarded-Host too,
+        # a proxy that sets it instead of preserving Host outright (some
+        # load balancers do) makes every POST look like a forged request.
+        # Never enable this without the proxy: any client could then
+        # spoof its address/host with a header.
+        app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1)  # type: ignore[method-assign]
     else:
         logger.warning(
             "dashboard is serving plain HTTP - credentials are sent in cleartext; "

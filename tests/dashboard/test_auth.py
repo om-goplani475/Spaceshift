@@ -279,6 +279,31 @@ def test_plain_http_logs_a_warning_and_tls_proxy_enables_proxyfix(state, admin, 
     assert type(app.wsgi_app).__name__ == "ProxyFix"
 
 
+def test_post_behind_a_proxy_that_uses_x_forwarded_host_is_not_rejected_as_csrf(state, admin):
+    # Reproduces the real-world break: a reverse proxy in front of the
+    # dashboard forwards HTTPS termination (X-Forwarded-Proto) and the
+    # original hostname via X-Forwarded-Host rather than preserving the
+    # Host header itself (some load balancers do this instead of nginx's
+    # `proxy_set_header Host $host;`). Flask-WTF's CSRF check compares the
+    # browser's Referer against request.host on an HTTPS request
+    # (WTF_CSRF_SSL_STRICT) - without trusting X-Forwarded-Host too, that
+    # stays the test client's default "localhost", never matches the
+    # public hostname in Referer, and every POST 400s.
+    app = create_app(state, AuthSettings(secret_key=SECRET_KEY, setup_token=None, behind_tls_proxy=True))
+    client = app.test_client()
+    proxied = {
+        "X-Forwarded-Proto": "https",
+        "X-Forwarded-Host": "dashboard.example.com",
+        "X-Forwarded-For": "203.0.113.5",
+        "Referer": "https://dashboard.example.com/login",
+    }
+    token = _csrf_token_from(client.get("/login", headers=proxied).data.decode())
+    response = client.post(
+        "/login", data={"username": ADMIN_USERNAME, "password": ADMIN_PASSWORD, "csrf_token": token}, headers=proxied
+    )
+    assert response.status_code == 302
+
+
 def test_setup_token_left_set_after_setup_is_nudged_in_the_log(state, admin, caplog):
     with caplog.at_level(logging.INFO, logger="controller.dashboard.auth"):
         create_app(state, AuthSettings(secret_key=SECRET_KEY, setup_token=SETUP_TOKEN, behind_tls_proxy=False))

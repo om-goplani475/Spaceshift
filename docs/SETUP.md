@@ -246,7 +246,15 @@ dashboard.example.com {
 }
 ```
 
-Caddy sets both headers and provisions the certificate itself. For nginx, `proxy_set_header X-Forwarded-For $remote_addr; proxy_set_header X-Forwarded-Proto $scheme;` inside the `location` block does the same.
+Caddy sets both headers (and preserves `Host`) and provisions the certificate itself. For nginx, the `location` block needs all three:
+
+```
+proxy_set_header Host $host;
+proxy_set_header X-Forwarded-For $remote_addr;
+proxy_set_header X-Forwarded-Proto $scheme;
+```
+
+The `Host` line matters even though nothing above asked for it: without it, nginx sends its own upstream address as `Host` instead of the one the browser used, and every POST (including login) is rejected as a forged request - the CSRF check compares the browser's Referer against `Host`, and they'd never match.
 
 ### 7.6 Rate limiting
 
