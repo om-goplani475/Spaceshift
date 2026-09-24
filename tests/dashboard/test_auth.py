@@ -330,6 +330,27 @@ def test_username_locks_after_five_failures_even_with_the_right_password(app, cl
     assert sign_in(client).status_code == 302
 
 
+def test_an_address_that_recently_signed_in_is_exempt_from_the_username_lock(app):
+    # A per-username lockout is a cheap DoS against a known admin
+    # username from any address - the real admin's own address (one
+    # that's itself recently signed in as them) must still get in while
+    # an attacker elsewhere is hammering that username, even though the
+    # attacker's own address stays fully blocked by the same limit.
+    admin_addr = {"REMOTE_ADDR": "10.0.0.1"}
+    attacker_addr = {"REMOTE_ADDR": "203.0.113.9"}
+
+    assert sign_in(app.test_client(), environ_overrides=admin_addr).status_code == 302
+
+    attacker = app.test_client()
+    for _ in range(MAX_FAILURES_PER_USERNAME):
+        assert sign_in(attacker, password="wrong password!!", environ_overrides=attacker_addr).status_code == 401
+    locked = sign_in(attacker, environ_overrides=attacker_addr)
+    assert locked.status_code == 429  # the attacker's own address is still blocked
+
+    admin_again = sign_in(app.test_client(), environ_overrides=admin_addr)
+    assert admin_again.status_code == 302  # the admin's own address is exempt
+
+
 def test_address_locks_after_twenty_failures_across_usernames(app):
     client = app.test_client()
     for i in range(MAX_FAILURES_PER_ADDRESS):

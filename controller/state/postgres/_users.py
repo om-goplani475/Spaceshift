@@ -251,6 +251,18 @@ class PostgresUsersMixin(UsersStateContract):
             cur.execute(query, params)
             return [row[0] for row in cur.fetchall()]
 
+    def had_recent_successful_login(self, username: str, remote_addr: str, since: datetime) -> bool:
+        with self._cursor() as cur:
+            cur.execute(
+                """
+                SELECT 1 FROM login_attempts
+                WHERE username = %s AND remote_addr = %s AND succeeded AND attempted_at >= %s
+                LIMIT 1
+                """,
+                (username, remote_addr, since),
+            )
+            return cur.fetchone() is not None
+
     def clear_login_failures(self, username: str) -> None:
         with self._cursor(commit=True) as cur:
             cur.execute("DELETE FROM login_attempts WHERE username = %s AND NOT succeeded", (username,))

@@ -517,6 +517,12 @@ class InMemoryStateBackend(StateBackend):
             reverse=True,
         )
 
+    def had_recent_successful_login(self, username: str, remote_addr: str, since: datetime) -> bool:
+        return any(
+            name == username and addr == remote_addr and succeeded and attempted_at >= since
+            for name, addr, succeeded, attempted_at in self._login_attempts
+        )
+
     def clear_login_failures(self, username: str) -> None:
         with self._lock:
             self._login_attempts = [a for a in self._login_attempts if a[0] != username or a[2]]

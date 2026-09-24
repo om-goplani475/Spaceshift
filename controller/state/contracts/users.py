@@ -156,6 +156,18 @@ class UsersStateContract(abc.ABC):
         caller stops recording once a key is locked out."""
 
     @abc.abstractmethod
+    def had_recent_successful_login(self, username: str, remote_addr: str, since: datetime) -> bool:
+        """Whether this exact (username, address) pair has a successful
+        login since `since`. Used to exempt an address that has itself
+        recently signed in as this user from the per-username lockout
+        (a cheap DoS otherwise: 5 failed guesses of a known admin
+        username from *any* address locks that admin out everywhere).
+        The per-address limit still applies to that address regardless,
+        and every other address remains fully subject to the
+        per-username limit - this narrows the exemption to probably
+        actually this person, not anyone."""
+
+    @abc.abstractmethod
     def clear_login_failures(self, username: str) -> None:
         """Forget this username's failed attempts (the CLI's `unlock`)."""
 

@@ -400,18 +400,27 @@ def client_addr() -> str:
     return addr
 
 
-def retry_after_seconds(username: str, remote_addr: str) -> int:
+def retry_after_seconds(username: str, remote_addr: str, exempt_recent_login: bool = False) -> int:
     """Seconds until this username or address is allowed another attempt;
     0 if not locked. The lock lifts when the oldest of the failures that
-    filled the window ages out of it."""
+    filled the window ages out of it.
+
+    exempt_recent_login=True skips the per-username check when `addr` has
+    itself signed in as `username` within the window - login()'s defense
+    against a per-username lockout being a cheap DoS on a known username
+    (see had_recent_successful_login). Left False by default: /account's
+    own current-password check must stay strictly 5-per-username with no
+    address-based exemption, since a stolen *session* cookie needs no
+    login of its own and would otherwise inherit this exemption for free
+    on whatever address the legitimate user last signed in from."""
     now = datetime.now(UTC)
     since = now - RATE_LIMIT_WINDOW
     state = _state()
     retry_after = 0.0
-    for failures, limit in (
-        (state.recent_failure_times(since, username=username), MAX_FAILURES_PER_USERNAME),
-        (state.recent_failure_times(since, remote_addr=remote_addr), MAX_FAILURES_PER_ADDRESS),
-    ):
+    checks = [(state.recent_failure_times(since, remote_addr=remote_addr), MAX_FAILURES_PER_ADDRESS)]
+    if not (exempt_recent_login and state.had_recent_successful_login(username, remote_addr, since)):
+        checks.append((state.recent_failure_times(since, username=username), MAX_FAILURES_PER_USERNAME))
+    for failures, limit in checks:
         if len(failures) >= limit:
             # newest first, so index limit-1 is the failure that tipped it
             lifts_at = failures[limit - 1] + RATE_LIMIT_WINDOW
@@ -487,7 +496,7 @@ def login():
     password = request.form.get("password", "")
     addr = client_addr()
 
-    retry_after = retry_after_seconds(username, addr)
+    retry_after = retry_after_seconds(username, addr, exempt_recent_login=True)
     if retry_after:
         return _too_many_attempts(retry_after, "login.html", username=username)
 
