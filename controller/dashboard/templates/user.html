@@ -9,7 +9,6 @@
   {% else %}<span class="badge badge-green">active</span>{% endif %}
   · created <span class="ts" data-ts="{{ user.created_at.isoformat() }}"></span>
   {% if user.last_login_at %}· last sign-in <span class="ts" data-ts="{{ user.last_login_at.isoformat() }}"></span>{% endif %}
-  · <a href="{{ url_for('users.list_users') }}">all users</a>
 </p>
 {% endblock %}
 
