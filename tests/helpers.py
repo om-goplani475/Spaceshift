@@ -347,6 +347,7 @@ class InMemoryStateBackend(StateBackend):
         actor: AuditActor | None = None,
         action: AuditAction | None = None,
         detail: dict | None = None,
+        grant_admin: bool = False,
     ) -> UserRecord | None:
         with self._lock:
             if only_if_no_users and self._users:
@@ -365,9 +366,13 @@ class InMemoryStateBackend(StateBackend):
             )
             self._users[user.id] = user
             self._next_user_id += 1
+            if actor is not None and actor.user_id is None and actor.actor_type == ActorType.USER:
+                actor = replace(actor, user_id=user.id)
+            if grant_admin:
+                self._roles[(user.id, WILDCARD_ACCOUNT)] = RoleGrant(
+                    user.id, WILDCARD_ACCOUNT, "admin", datetime.now(UTC), None
+                )
             if actor is not None:
-                if actor.user_id is None and actor.actor_type == ActorType.USER:
-                    actor = replace(actor, user_id=user.id)
                 self._append_audit(
                     AuditEvent(
                         actor,
@@ -378,6 +383,19 @@ class InMemoryStateBackend(StateBackend):
                         detail=detail,
                     )
                 )
+                if grant_admin:
+                    self._append_audit(
+                        AuditEvent(
+                            actor,
+                            AuditAction.USER_ROLE_SET,
+                            target_type="user",
+                            target_id=user.username,
+                            account_name=WILDCARD_ACCOUNT,
+                            before={"role": None},
+                            after={"role": "admin"},
+                            detail={"reason": "first admin"},
+                        )
+                    )
             return user
 
     def get_user(self, user_id: int) -> UserRecord | None:

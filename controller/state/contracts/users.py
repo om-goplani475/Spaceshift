@@ -54,6 +54,7 @@ class UsersStateContract(abc.ABC):
         actor: AuditActor | None = None,
         detail: dict | None = None,
         action: AuditAction | None = None,
+        grant_admin: bool = False,
     ) -> UserRecord | None:
         """Insert a new active user. Raises UsernameTakenError on a
         case-insensitive clash.
@@ -63,11 +64,17 @@ class UsersStateContract(abc.ABC):
         against concurrent callers so two simultaneous setup submissions
         can never both succeed.
 
+        grant_admin=True grants admin on '*' in the same transaction as
+        the insert (also /setup's path) - the user and their first grant
+        either both exist or neither does, so a crash between the two
+        can't leave a role-less user /setup then 404s on forever.
+
         The audit row (attributed to `actor`, written in the same
         transaction) is built here rather than by the caller, so `after`
         always reflects the row that was actually inserted. `action`
         defaults to USER_CREATE; /setup passes USER_SETUP explicitly since
-        that intent isn't derivable from the arguments above.
+        that intent isn't derivable from the arguments above. grant_admin
+        writes a second, equally transactional USER_ROLE_SET row.
         """
 
     @abc.abstractmethod

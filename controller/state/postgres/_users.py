@@ -36,6 +36,7 @@ class PostgresUsersMixin(UsersStateContract):
         actor: AuditActor | None = None,
         action: AuditAction | None = None,
         detail: dict | None = None,
+        grant_admin: bool = False,
     ) -> UserRecord | None:
         with self._cursor(commit=True) as cur:
             if only_if_no_users:
@@ -58,11 +59,26 @@ class PostgresUsersMixin(UsersStateContract):
             except psycopg2.errors.UniqueViolation as exc:
                 raise UsernameTakenError(username) from exc
             user = self._row_to_user(cur.fetchone())
+            attributed_actor = _attributed_to(actor, user.id) if actor is not None else None
+            if grant_admin:
+                # /setup's atomic path: the first admin's account and
+                # their admin grant either both exist or neither does -
+                # no window where a crash between two separate calls
+                # leaves a role-less user that /setup can't recover
+                # (previously two transactions; see users.py CLI/grant()
+                # for the ordinary, already-atomic-per-call grant path).
+                cur.execute(
+                    """
+                    INSERT INTO user_account_roles (user_id, account_name, role, granted_at, granted_by)
+                    VALUES (%s, %s, 'admin', %s, NULL)
+                    """,
+                    (user.id, WILDCARD_ACCOUNT, datetime.now(UTC)),
+                )
             if actor is not None:
                 self._insert_audit(
                     cur,
                     AuditEvent(
-                        _attributed_to(actor, user.id),
+                        attributed_actor,
                         action if action is not None else AuditAction.USER_CREATE,
                         target_type="user",
                         target_id=user.username,
@@ -70,6 +86,20 @@ class PostgresUsersMixin(UsersStateContract):
                         detail=detail,
                     ),
                 )
+                if grant_admin:
+                    self._insert_audit(
+                        cur,
+                        AuditEvent(
+                            attributed_actor,
+                            AuditAction.USER_ROLE_SET,
+                            target_type="user",
+                            target_id=user.username,
+                            account_name=WILDCARD_ACCOUNT,
+                            before={"role": None},
+                            after={"role": "admin"},
+                            detail={"reason": "first admin"},
+                        ),
+                    )
             return user
 
     def get_user(self, user_id: int) -> UserRecord | None:

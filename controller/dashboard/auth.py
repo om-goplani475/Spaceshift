@@ -42,7 +42,7 @@ from werkzeug.middleware.proxy_fix import ProxyFix
 from controller.audit import ActorType, AuditAction, AuditActor, AuditEvent, record_audit_event
 from controller.dashboard._common import _state
 from controller.dashboard.rbac import load_scope
-from controller.state.base import WILDCARD_ACCOUNT, StateBackend, UsernameTakenError, UserRecord
+from controller.state.base import StateBackend, UsernameTakenError, UserRecord
 
 logger = logging.getLogger(__name__)
 
@@ -527,11 +527,19 @@ def setup():
         return render_template("setup.html", error=error, username=username), 400
 
     # The actor *is* the user being created; create_user fills in the id
-    # once the row exists (its id doesn't exist yet at this point).
+    # once the row exists (its id doesn't exist yet at this point). The
+    # account and its admin grant are inserted in one transaction
+    # (grant_admin=True) - no window where a crash between two separate
+    # calls leaves a role-less user that /setup can't recover from.
     setup_actor = AuditActor(ActorType.USER, username=username, remote_addr=addr)
     try:
         user = state.create_user(
-            username, hash_password(password), only_if_no_users=True, actor=setup_actor, action=AuditAction.USER_SETUP
+            username,
+            hash_password(password),
+            only_if_no_users=True,
+            actor=setup_actor,
+            action=AuditAction.USER_SETUP,
+            grant_admin=True,
         )
     except UsernameTakenError:
         user = None
@@ -540,15 +548,6 @@ def setup():
         # is the admin now; this page is a 404 from here on.
         abort(404)
 
-    state.set_role(
-        user.id,
-        user.username,
-        WILDCARD_ACCOUNT,
-        "admin",
-        granted_by=None,
-        actor=AuditActor.user(user.id, user.username, addr),
-        detail={"reason": "first admin"},
-    )
     state.record_login_attempt(SETUP_ATTEMPT_USERNAME, addr, succeeded=True)
     login_session(user)
     logger.info("first admin %r created via /setup from %s", user.username, addr)

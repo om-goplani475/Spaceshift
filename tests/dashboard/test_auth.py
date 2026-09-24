@@ -9,6 +9,7 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
+from controller.audit import AuditAction, AuditFilters
 from controller.dashboard import auth as auth_module
 from controller.dashboard import create_app
 from controller.dashboard.auth import (
@@ -367,6 +368,19 @@ def test_setup_creates_the_admin_and_signs_them_in(empty_app, state):
     assert state.get_user_by_username("first.admin") is not None
     assert client.get("/").status_code == 200
     assert client.get("/setup").status_code == 404
+
+
+def test_setup_grants_admin_in_the_same_call_as_create_user(empty_app, state):
+    # The user row and their admin grant are written by one create_user()
+    # call (grant_admin=True), not two separate state changes - so there
+    # is no window where the user exists without the grant.
+    client = empty_app.test_client()
+    client.post("/setup", data=_setup_form())
+    user = state.get_user_by_username("first.admin")
+    grants = state.list_roles(user.id)
+    assert len(grants) == 1 and grants[0].role == "admin" and grants[0].account_name == "*"
+    role_row = state.list_audit(AuditFilters(action=AuditAction.USER_ROLE_SET), limit=10)[0]
+    assert role_row.detail == {"reason": "first admin"} and role_row.actor_username == "first.admin"
 
 
 def test_setup_rejects_wrong_token_and_locks_after_five(empty_app, state):
