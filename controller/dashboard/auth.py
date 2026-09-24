@@ -13,6 +13,7 @@ attacker with dashboard access must not be able to change.
 from __future__ import annotations
 
 import hmac
+import ipaddress
 import logging
 import os
 from dataclasses import dataclass
@@ -376,7 +377,21 @@ def _require_login():
 
 
 def client_addr() -> str:
-    return request.remote_addr or "0.0.0.0"
+    """request.remote_addr, or a fallback if it isn't a real IP address.
+
+    Behind a proxy that forwards X-Forwarded-For as given (ProxyFix trusts
+    it under SPACESHIFT_BEHIND_TLS_PROXY), this is attacker- or
+    misconfiguration-controlled text, not guaranteed to be an address -
+    e.g. Squid's default is the literal string "unknown" for an
+    anonymized client. It's written into an INET column (login_attempts),
+    so anything that isn't a valid IP must never reach there raw or every
+    login from behind that proxy is a 500, not a login."""
+    addr = request.remote_addr or ""
+    try:
+        ipaddress.ip_address(addr)
+    except ValueError:
+        return "0.0.0.0"
+    return addr
 
 
 def retry_after_seconds(username: str, remote_addr: str) -> int:

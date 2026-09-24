@@ -37,8 +37,8 @@ def app(state: InMemoryStateBackend, auth_settings: AuthSettings, admin):
     return app
 
 
-def sign_in(client, username: str = ADMIN_USERNAME, password: str = ADMIN_PASSWORD):
-    return client.post("/login", data={"username": username, "password": password})
+def sign_in(client, username: str = ADMIN_USERNAME, password: str = ADMIN_PASSWORD, **kwargs):
+    return client.post("/login", data={"username": username, "password": password}, **kwargs)
 
 
 @pytest.fixture

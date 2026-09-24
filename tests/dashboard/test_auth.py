@@ -98,6 +98,27 @@ def test_healthz_fails_when_the_database_does_not_answer(app, state, monkeypatch
 # ---- Login / logout ----------------------------------------------------------
 
 
+def test_client_addr_falls_back_on_a_non_ip_value(app):
+    # The InMemory backend used by most of this file doesn't enforce
+    # column types, so it would let a bad value through silently - this
+    # is what actually proves the guard, since login_attempts.remote_addr
+    # is a real Postgres INET column that rejects anything that isn't an
+    # address (e.g. Squid's "unknown" for an anonymized client).
+    for bad in ("unknown", "", "not-an-ip", "10.0.0.1; DROP TABLE users"):
+        with app.test_request_context(environ_overrides={"REMOTE_ADDR": bad}):
+            assert auth_module.client_addr() == "0.0.0.0"
+    with app.test_request_context(environ_overrides={"REMOTE_ADDR": "203.0.113.7"}):
+        assert auth_module.client_addr() == "203.0.113.7"
+
+
+def test_login_survives_a_non_ip_remote_address(app, state, admin):
+    # End-to-end: the route itself must not blow up on the same input.
+    response = sign_in(app.test_client(), environ_overrides={"REMOTE_ADDR": "unknown"})
+    assert response.status_code == 302  # not 500
+    bad = sign_in(app.test_client(), password="wrong wrong wrong wrong", environ_overrides={"REMOTE_ADDR": "unknown"})
+    assert bad.status_code == 401  # the failure is recorded, not a crash
+
+
 def test_login_with_correct_password_sets_session_and_redirects(app, state, admin):
     client = app.test_client()
     response = sign_in(client)
