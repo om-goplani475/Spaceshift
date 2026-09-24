@@ -329,6 +329,14 @@ def test_accounts_create_update_disable_and_verify(state):
     assert state.get_account("prod").last_ok_at is not None
 
 
+def test_record_account_check_on_an_unknown_name_is_a_no_op(state):
+    # Matches PostgresAccountsMixin: UPDATE ... WHERE name = %s is a
+    # silent no-op on an unknown name, not an error - accounts are never
+    # deleted, but the scheduler's snapshot of names can be briefly stale.
+    state.record_account_check("nope", "AccessDenied")  # must not raise
+    assert state.get_account("nope") is None
+
+
 def test_region_status_is_independent_per_region(state):
     state.create_account("multi", None, ["us-east-1", "us-west-2"])
     state.record_region_check("multi", "us-east-1", None)

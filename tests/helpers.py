@@ -642,7 +642,9 @@ class InMemoryStateBackend(StateBackend):
 
     def record_account_check(self, name: str, error: str | None) -> None:
         with self._lock:
-            record = self._accounts[name]
+            record = self._accounts.get(name)
+            if record is None:
+                return  # matches Postgres: UPDATE ... WHERE name = %s is a no-op on an unknown name
             now = datetime.now(UTC)
             if error is None:
                 self._accounts[name] = replace(record, last_ok_at=now, verify_requested_at=None)

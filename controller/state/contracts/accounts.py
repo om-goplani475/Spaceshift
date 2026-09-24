@@ -118,7 +118,13 @@ class AccountsStateContract(abc.ABC):
         error=None sets last_ok_at, otherwise last_error/last_error_at.
         Always clears verify_requested_at. This is the account-level
         summary (the accounts list); see record_region_check for the
-        per-region detail behind it."""
+        per-region detail behind it.
+
+        Unknown name -> silent no-op, not an error: accounts are never
+        deleted, so this is unreachable in practice, but the scheduler
+        reads the name from a snapshot (list_accounts/list_verify_requests)
+        that can be one cycle stale by the time it calls back here, and a
+        transient race like that must not raise."""
 
     @abc.abstractmethod
     def record_region_check(self, account_name: str, region: str, error: str | None) -> None:
