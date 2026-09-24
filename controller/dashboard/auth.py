@@ -252,6 +252,11 @@ def _add_security_headers(response):
     # Nothing is inline: templates load one stylesheet and one script by
     # URL, and the only inline handler moved into dashboard.js for this.
     response.headers.setdefault("Content-Security-Policy", "default-src 'self'; frame-ancestors 'none'")
+    if g.get("user") is not None:
+        # Every signed-in page (the once-only temp-password page, the
+        # audit log, account details) must not be recoverable from
+        # browser/bfcache after logout on a shared machine.
+        response.headers.setdefault("Cache-Control", "no-store")
     return response
 
 

@@ -474,6 +474,14 @@ def test_security_headers_on_every_response(client, app):
         assert response.headers["Content-Security-Policy"].startswith("default-src 'self'")
 
 
+def test_cache_control_no_store_only_on_authenticated_pages(client, app):
+    # A signed-in page (the once-only temp-password page, the audit log)
+    # must not be recoverable via bfcache/back-button after logout on a
+    # shared machine; the unauthenticated login page has nothing to hide.
+    assert client.get("/").headers["Cache-Control"] == "no-store"
+    assert "Cache-Control" not in app.test_client().get("/login").headers
+
+
 def test_templates_have_no_inline_handlers_or_styles(client):
     # default-src 'self' blocks them; a regression here fails silently in
     # the browser, so check the markup instead.
