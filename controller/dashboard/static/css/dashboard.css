@@ -648,8 +648,10 @@ td.empty {
 .settings-actions {
   display: flex;
   align-items: center;
+  justify-content: flex-end;
   gap: var(--sp-3);
   margin-top: var(--sp-2);
+  padding: 0 var(--sp-4) var(--sp-4);
 }
 .settings-actions .config-status { font-size: var(--text-sm); }
 
