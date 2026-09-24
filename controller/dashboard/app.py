@@ -9,11 +9,12 @@ from dataclasses import asdict, replace
 from datetime import UTC, datetime, timedelta
 
 from flask import Flask, Response, g, jsonify, render_template, request, stream_with_context, url_for
+from markupsafe import Markup
 
 from controller.audit import AuditAction, AuditEvent, AuditFilters, iter_csv, record_audit_event, record_to_json
 from controller.config import DB_CONFIG_KEYS, Config, apply_db_overrides
 from controller.dashboard.auth import AuthSettings, current_actor, init_auth
-from controller.dashboard.rbac import require_admin, require_operator
+from controller.dashboard.rbac import Role, require_admin, require_operator
 from controller.notifications import NotificationError, Notifier
 from controller.state.base import TERMINAL_STATUSES, ResizeStatus, StateBackend
 
@@ -191,8 +192,38 @@ def _latest_decision_by(scans, key) -> dict[str, str]:
     return latest
 
 
+def _storage_breakdown(scans) -> dict[str, int]:
+    """Healthy (<70%) / warning (70-85%) / critical (>85%) counts, one bucket
+    per volume using its most recent scan - `scans` is already newest-first,
+    so the same setdefault-on-first-hit trick as `_latest_decision_by` gives
+    the latest percent_used per volume without a second query."""
+    latest: dict[str, int] = {}
+    for s in scans:
+        if s.percent_used is not None:
+            latest.setdefault(s.volume_id, s.percent_used)
+    counts = {"healthy": 0, "warning": 0, "critical": 0}
+    for pct in latest.values():
+        if pct > 85:
+            counts["critical"] += 1
+        elif pct >= 70:
+            counts["warning"] += 1
+        else:
+            counts["healthy"] += 1
+    return counts
+
+
+def _resize_activity(records) -> list[dict]:
+    """Count of resize records per status, in the same order as the
+    Overview's own status badges so the bar chart's colours line up."""
+    counts: dict[str, int] = {}
+    for r in records:
+        counts[r.status.value] = counts.get(r.status.value, 0) + 1
+    return [{"status": status, "count": count} for status, count in sorted(counts.items())]
+
+
 def _compute_stats(records, scans, volume_rows: list[dict]) -> dict[str, int]:
     return {
+        "total_gb": sum(row["v"].size_gb for row in volume_rows),
         "tracked": len({s.volume_id for s in scans}),
         # Counts the *resolved* outcome (own flag OR its instance's, minus
         # unattached volumes), not just each volume's own raw autoresize
@@ -230,6 +261,17 @@ def _effective_default_threshold(state: StateBackend) -> int:
         return config.default_threshold_percent
     except (ValueError, TypeError):
         return _DEFAULT_CONFIG_DICT["default_threshold_percent"]
+
+
+def _effective_dry_run(state: StateBackend) -> bool:
+    # Same resolution as above - what the scheduler is actually running
+    # with, for the Overview banner, not just what's set (or unset) in
+    # app_config.
+    try:
+        config = Config.from_dict(apply_db_overrides(_DEFAULT_CONFIG_DICT, state.list_config()))
+        return config.dry_run
+    except (ValueError, TypeError):
+        return _DEFAULT_CONFIG_DICT["dry_run"]
 
 
 def _resolve_volume_row(volume, instances_by_id: dict, default_threshold: int) -> dict:
@@ -301,6 +343,55 @@ _NAV_ITEMS = [
     ("users.list_users", "Users"),
 ]
 _ADMIN_NAV_ENDPOINTS = frozenset({"accounts.list_accounts", "settings", "users.list_users"})
+
+# Inline Lucide-style icon paths per nav endpoint - avoids a font/icon-sprite
+# dependency for a handful of static glyphs. Kept in Python (not Jinja) so
+# there's exactly one place to add an icon for a new nav entry.
+_NAV_ICON_PATHS: dict[str, str] = {
+    "overview": (
+        '<rect x="3" y="3" width="7" height="9" rx="1.5"/><rect x="14" y="3" width="7" height="5" rx="1.5"/>'
+        '<rect x="14" y="12" width="7" height="9" rx="1.5"/><rect x="3" y="16" width="7" height="5" rx="1.5"/>'
+    ),
+    "instances": (
+        '<rect x="2" y="4" width="20" height="6" rx="1.5"/><rect x="2" y="14" width="20" height="6" rx="1.5"/>'
+        '<path d="M6 7h.01M6 17h.01"/>'
+    ),
+    "volumes": (
+        '<ellipse cx="12" cy="5" rx="8" ry="3"/><path d="M4 5v6c0 1.7 3.6 3 8 3s8-1.3 8-3V5"/>'
+        '<path d="M4 11v6c0 1.7 3.6 3 8 3s8-1.3 8-3v-6"/>'
+    ),
+    "audit": (
+        '<path d="M9 3v4M15 3v4M4 9h16M6 3h12a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2z"/>'
+        '<path d="M8 13h5M8 17h8"/>'
+    ),
+    "accounts.list_accounts": '<path d="M3 7l9-4 9 4-9 4-9-4z"/><path d="M3 7v10l9 4 9-4V7"/><path d="M12 11v10"/>',
+    # A plain cog (12 spokes simplified to a notched ring) - far shorter
+    # than a literal Lucide "settings" path and still reads as one at 16px.
+    "settings": (
+        '<circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M22 12h-3M5 12H2"/>'
+        '<path d="M19.07 4.93l-2.12 2.12M7.05 16.95l-2.12 2.12M19.07 19.07l-2.12-2.12M7.05 7.05 4.93 4.93"/>'
+    ),
+    "users.list_users": (
+        '<path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/>'
+        '<path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/>'
+    ),
+}
+
+
+def _nav_icon(endpoint: str) -> Markup:
+    path = _NAV_ICON_PATHS.get(endpoint, "")
+    return Markup(f'<svg class="icon" viewBox="0 0 24 24" aria-hidden="true">{path}</svg>')
+
+
+def _role_label(scope) -> str:
+    if scope is None:
+        return ""
+    if scope.is_admin:
+        return "Admin"
+    roles = set(scope.grants.values())
+    if not roles:
+        return "No access"
+    return "Operator" if Role.OPERATOR in roles else "Viewer"
 
 
 class _BadFilter(ValueError):
@@ -388,6 +479,8 @@ def create_app(state: StateBackend, auth: AuthSettings) -> Flask:
             "status_badge": _status_badge,
             "decision_badge": _decision_badge,
             "audit_badge": _audit_badge,
+            "nav_icon": _nav_icon,
+            "role_label": _role_label(scope),
         }
 
     @app.get("/")
@@ -406,6 +499,9 @@ def create_app(state: StateBackend, auth: AuthSettings) -> Flask:
             scan_regions=sorted({s.region for s in scans}),
             scan_sizes=sorted({s.size_gb for s in scans}),
             scan_decisions=sorted({s.decision for s in scans}),
+            dry_run=_effective_dry_run(state),
+            storage_breakdown=_storage_breakdown(scans),
+            resize_activity=_resize_activity(records),
         )
 
     @app.get("/instances")
