@@ -26,7 +26,7 @@ def test_pages_render_empty_states(state, client):
 
 def test_nav_marks_current_page(state, client):
 
-    pages = [("/", "Overview"), ("/instances", "Instances"), ("/volumes", "Volumes"), ("/settings", "Settings")]
+    pages = [("/", "Dashboard"), ("/instances", "Instances"), ("/volumes", "Volumes"), ("/settings", "Settings")]
     for path, label in pages:
         html = client.get(path).data.decode()
         # The current nav link carries aria-current and, somewhere inside
@@ -35,6 +35,12 @@ def test_nav_marks_current_page(state, client):
         assert re.search(rf'aria-current="page"[^>]*>.*?{re.escape(label)}</span></a>', html)
         # exactly one link is current
         assert html.count('aria-current="page"') == 1
+
+
+def test_live_indicator_has_no_ticking_age_text(client):
+    html = client.get("/").data.decode()
+    assert 'id="live-label"' in html
+    assert 'id="live-age"' not in html
 
 
 def test_instances_page_shows_the_name_tag_or_a_dash(state, client):
@@ -104,6 +110,27 @@ def test_index_renders_scan_history(state, client):
     # A hover tooltip on the decision badge, so "below_threshold" reads as
     # more than an internal code name.
     assert b"Usage is under the threshold" in response.data
+
+
+def test_scan_history_shows_the_name_tag_instead_of_the_id_when_one_exists(state, client):
+    state.upsert_instance("default", "i-9", "us-east-1", "t3.micro", "running", name="db-1")
+    state.upsert_volume("default", "vol-9", "i-9", "us-east-1", 100, "/dev/xvdf", name="data-9")
+    state.record_scan("default", "us-east-1", "vol-9", "i-9", 100, 80, 42.0, "below_threshold")
+
+    html = client.get("/").data.decode()
+    row = html.split('data-volume="vol-9"')[1].split("</tr>")[0]
+
+    assert "data-9" in row and "db-1" in row
+    assert 'data-id="vol-9"' in row  # the real id stays available for the drawer/CLI command
+
+
+def test_scan_history_falls_back_to_the_id_when_untagged(state, client):
+    state.record_scan("default", "us-east-1", "vol-9", "i-9", 100, 80, 42.0, "below_threshold")
+
+    html = client.get("/").data.decode()
+    row = html.split('data-volume="vol-9"')[1].split("</tr>")[0]
+
+    assert "vol-9" in row and "i-9" in row
 
 
 def test_api_scans_returns_json_newest_first(state, client):

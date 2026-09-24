@@ -364,7 +364,7 @@ def _group_settings(settings: list[dict]) -> list[dict]:
 # (endpoint, nav label) in display order - base.html renders these and
 # marks the current one via request.endpoint.
 _NAV_ITEMS = [
-    ("overview", "Overview"),
+    ("overview", "Dashboard"),
     ("instances", "Instances"),
     ("volumes", "Volumes"),
     ("audit", "Audit log"),
@@ -519,6 +519,13 @@ def create_app(state: StateBackend, auth: AuthSettings) -> Flask:
         records = state.list_all(account_names=_readable())
         scans = state.list_scans(limit=_SCAN_LIST_LIMIT, account_names=_readable())
         volume_rows = _build_volume_rows(state, state.list_volumes(account_names=_readable()))
+        # Scan/resize rows only ever store the volume/instance id - these
+        # let the Scan history table show the AWS Name tag instead (the id
+        # is still what search/filter and the drawer's Identifier section
+        # use, from the row's own data-volume/data-instance attribute).
+        # Skips untagged resources so .get(id, id) falls back to the id.
+        volume_names = {row["v"].volume_id: row["v"].name for row in volume_rows if row["v"].name}
+        instance_names = {i.instance_id: i.name for i in state.list_instances(account_names=_readable()) if i.name}
         return render_template(
             "overview.html",
             records=records,
@@ -533,6 +540,8 @@ def create_app(state: StateBackend, auth: AuthSettings) -> Flask:
             dry_run=_effective_dry_run(state),
             storage_breakdown=_storage_breakdown(scans),
             resize_activity=_resize_activity(records),
+            volume_names=volume_names,
+            instance_names=instance_names,
         )
 
     @app.get("/instances")

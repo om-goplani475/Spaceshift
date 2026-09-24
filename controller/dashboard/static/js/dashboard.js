@@ -118,7 +118,11 @@ function wireFilters(tableId, searchId, selectIds, countId, pagerId) {
         prev.disabled = page <= 1;
         prev.onclick = function () { page--; apply(); };
         const label = document.createElement("span");
-        label.textContent = "Page " + page + " of " + totalPages;
+        // Same "shown–shownEnd of total" wording as the count above the
+        // table, not "Page N of M" - a row range is what tells you where
+        // you are relative to what you're looking for; the page number
+        // doesn't.
+        label.textContent = (start + 1) + "–" + Math.min(start + PAGE_SIZE, matched.length) + " of " + matched.length;
         const next = document.createElement("button");
         next.type = "button";
         next.className = "btn";
@@ -264,15 +268,26 @@ function wireRowDrawer(tableId) {
     if (!row || !table.contains(row) || row.classList.contains("empty-row")) return;
     const headers = Array.from(table.tHead.rows[0].cells).map(th => th.textContent.trim());
     const cells = Array.from(row.cells);
-    const id = cells[0] && cells[0].textContent.trim();
+    const idCell = cells[0];
+    // Usually the id is just cells[0]'s own text (Volumes/Instances
+    // pages) - but the Scan history table shows the AWS Name tag there
+    // instead (per row["v"]/instance_names in app.py), with the real id
+    // stashed in data-id so the Identifier section and the AWS CLI command
+    // still work from the actual id, not the display name.
+    const id = (idCell && idCell.dataset.id) || (idCell && idCell.textContent.trim());
     if (!id) return;
     const fields = headers
       .slice(1)
       .map((k, i) => ({ k: k, v: _drawerCellValue(k, cells[i + 1], row) }))
       .filter((f) => f.k !== "Name");
     const nameIndex = headers.indexOf("Name");
-    const name = nameIndex > 0 && cells[nameIndex] && cells[nameIndex].textContent.trim();
-    const title = name && name !== "–" ? name : id;
+    let title = id;
+    if (nameIndex > 0 && cells[nameIndex]) {
+      const n = cells[nameIndex].textContent.trim();
+      if (n && n !== "–") title = n;
+    } else if (idCell && idCell.dataset.id && idCell.textContent.trim() !== id) {
+      title = idCell.textContent.trim();
+    }
     openDrawer(id, title, fields);
   });
 }
@@ -469,16 +484,9 @@ const SWAP_IDS = [
   "accounts-tbody", "account-status",
 ];
 let refreshInFlight = false;
-let lastRefreshedAt = Date.now();
 
 const liveIndicator = document.getElementById("live-indicator");
-const liveAge = document.getElementById("live-age");
-
-function renderLiveAge() {
-  if (!liveAge) return;
-  const seconds = Math.round((Date.now() - lastRefreshedAt) / 1000);
-  liveAge.textContent = seconds < 5 ? "just now" : seconds + "s ago";
-}
+const liveLabel = document.getElementById("live-label");
 
 async function refreshLiveData() {
   if (document.hidden || refreshInFlight) return;
@@ -523,21 +531,22 @@ async function refreshLiveData() {
     wireConfigDirtyTracking(document);
     markClickableRows();
     Object.values(tableControllers).forEach(function (c) { c.apply(); });
-    lastRefreshedAt = Date.now();
     if (liveIndicator) liveIndicator.dataset.state = "idle";
+    if (liveLabel) liveLabel.textContent = "Live";
   } catch (e) {
-    // Network hiccup or similar - show it, and try again next tick.
+    // Network hiccup or similar - show it, and try again next tick. No
+    // countdown/age text on this indicator (just "is it live right now",
+    // not "how many seconds ago") - only the error state needs to say
+    // anything at all.
     if (liveIndicator) liveIndicator.dataset.state = "error";
+    if (liveLabel) liveLabel.textContent = "Error";
   } finally {
     refreshInFlight = false;
-    renderLiveAge();
   }
 }
 
 if (document.body.dataset.live !== "off") {
   setInterval(refreshLiveData, POLL_INTERVAL_MS);
-  setInterval(renderLiveAge, 1000);
-  renderLiveAge();
   document.addEventListener("visibilitychange", function () {
     if (!document.hidden) refreshLiveData();
   });

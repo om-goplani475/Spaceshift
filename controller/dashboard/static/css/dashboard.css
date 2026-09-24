@@ -218,7 +218,7 @@ svg.icon { width: 16px; height: 16px; stroke: currentColor; fill: none; stroke-w
 }
 .live[data-state="refreshing"] .live-dot { animation: live-pulse 900ms ease-in-out infinite; }
 .live[data-state="error"] .live-dot { background: var(--red); box-shadow: 0 0 0 3px color-mix(in srgb, var(--red) 20%, transparent); }
-.live[data-state="error"] .live-age::after { content: " · couldn't refresh"; color: var(--red); }
+.live[data-state="error"] .live-label { color: var(--red); }
 
 @keyframes live-pulse {
   0%, 100% { opacity: 1; transform: scale(1); }
@@ -815,7 +815,7 @@ a.user-name:hover { text-decoration: underline; }
   .nav::-webkit-scrollbar { display: none; }
   .nav-link { padding: 0 var(--sp-2); }
   .nav-link span.nav-text { display: none; }
-  .live-label, .live-age { display: none; }
+  .live-label { display: none; }
   .user-meta { display: none; }
   .scope-badge { display: none; }
   .page { padding: var(--sp-5) var(--sp-4) var(--sp-8); }
