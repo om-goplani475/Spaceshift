@@ -162,19 +162,27 @@ wireFilters(
 // Generic: any table listed here shows a right-hand drawer with every
 // column of the clicked row, keyed off the table's own <thead> - no
 // per-table drawer markup or extra backend fields needed. The first
-// column is always an id (volume/instance) and becomes the drawer title;
-// clicks on an interactive cell (the autoresize switch, a link) pass
-// through instead of opening the drawer. Plain DOM, not a framework
-// component - the dashboard's CSP has no script-src 'unsafe-eval', which
-// rules out Alpine.js (and anything else that compiles expressions via
-// `new Function` at runtime).
+// column is always the row's real identifier (volume/instance id) and
+// drives the Identifier section and the generated AWS CLI command; a
+// "Name" column, when the table has one, becomes the drawer's big title
+// instead (falling back to the id for tables with no Name column) so the
+// drawer reads the way the AWS console does - human name up top, id
+// underneath. Clicks on an interactive cell (the autoresize switch, a
+// link) pass through instead of opening the drawer. Plain DOM, not a
+// framework component - the dashboard's CSP has no script-src
+// 'unsafe-eval', which rules out Alpine.js (and anything else that
+// compiles expressions via `new Function` at runtime).
 const DRAWER_TABLES = ["resize-table", "scan-table", "instances-table", "volumes-table"];
 
-function openDrawer(title, fields) {
+function openDrawer(id, title, fields) {
   const root = document.getElementById("drawer-root");
   if (!root) return;
   document.getElementById("drawer-title").textContent = title;
-  document.getElementById("drawer-id").textContent = title;
+  const isNamed = title !== id;
+  const subtitle = document.getElementById("drawer-subtitle");
+  subtitle.textContent = isNamed ? id : "Details from this row";
+  subtitle.classList.toggle("mono", isNamed);
+  document.getElementById("drawer-id").textContent = id;
   const fieldsEl = document.getElementById("drawer-fields");
   fieldsEl.innerHTML = "";
   fields.forEach(function (f) {
@@ -190,10 +198,10 @@ function openDrawer(title, fields) {
     fieldsEl.appendChild(row);
   });
 
-  const cliMatch = /^(vol|i)-[0-9a-f]+$/.exec(title);
+  const cliMatch = /^(vol|i)-[0-9a-f]+$/.exec(id);
   const cliSection = document.getElementById("drawer-cli-section");
   if (cliMatch) {
-    const cmd = (title.startsWith("vol-") ? "aws ec2 describe-volumes --volume-ids " : "aws ec2 describe-instances --instance-ids ") + title;
+    const cmd = (id.startsWith("vol-") ? "aws ec2 describe-volumes --volume-ids " : "aws ec2 describe-instances --instance-ids ") + id;
     document.getElementById("drawer-cli-cmd").textContent = cmd;
     cliSection.classList.remove("is-hidden");
   } else {
@@ -236,6 +244,16 @@ function wireDrawerChrome() {
   if (copyCli) copyCli.addEventListener("click", function () { copyToClipboard(document.getElementById("drawer-cli-cmd").textContent, copyCli); });
 }
 
+// A handful of cells aren't plain text (the autoresize switch has none at
+// all) - read those from the row's own data-* attributes instead of the
+// cell's rendered text, which is what a generic "read every <td>" pass
+// would otherwise show as a blank "–".
+function _drawerCellValue(header, cell, row) {
+  if (header === "Autoresize") return row.dataset.autoresize === "true" ? "On" : "Off";
+  const text = cell && cell.textContent.trim();
+  return text || "–";
+}
+
 function wireRowDrawer(tableId) {
   const table = document.getElementById(tableId);
   if (!table || table.dataset.drawerWired) return;
@@ -246,10 +264,16 @@ function wireRowDrawer(tableId) {
     if (!row || !table.contains(row) || row.classList.contains("empty-row")) return;
     const headers = Array.from(table.tHead.rows[0].cells).map(th => th.textContent.trim());
     const cells = Array.from(row.cells);
-    const title = cells[0] && cells[0].textContent.trim();
-    if (!title) return;
-    const fields = headers.slice(1).map((k, i) => ({ k: k, v: (cells[i + 1] && cells[i + 1].textContent.trim()) || "–" }));
-    openDrawer(title, fields);
+    const id = cells[0] && cells[0].textContent.trim();
+    if (!id) return;
+    const fields = headers
+      .slice(1)
+      .map((k, i) => ({ k: k, v: _drawerCellValue(k, cells[i + 1], row) }))
+      .filter((f) => f.k !== "Name");
+    const nameIndex = headers.indexOf("Name");
+    const name = nameIndex > 0 && cells[nameIndex] && cells[nameIndex].textContent.trim();
+    const title = name && name !== "–" ? name : id;
+    openDrawer(id, title, fields);
   });
 }
 

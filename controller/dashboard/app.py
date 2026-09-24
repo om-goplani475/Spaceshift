@@ -519,6 +519,7 @@ def create_app(state: StateBackend, auth: AuthSettings) -> Flask:
             latest_instance_decisions=_latest_decision_by(scans, lambda s: s.instance_id),
             instance_accounts=sorted({i.account_name for i in instances}),
             instance_regions=sorted({i.region for i in instances}),
+            default_threshold=_effective_default_threshold(state),
         )
 
     @app.get("/volumes")
