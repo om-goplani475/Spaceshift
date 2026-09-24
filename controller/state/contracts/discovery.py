@@ -72,6 +72,7 @@ class VolumeRecord:
     threshold_percent: int | None
     last_seen_at: datetime
     is_stale: bool
+    name: str | None = None
 
 
 class DiscoveryStateContract(abc.ABC):
@@ -131,9 +132,11 @@ class DiscoveryStateContract(abc.ABC):
         region: str,
         size_gb: int,
         device_name: str | None,
+        name: str | None = None,
     ) -> None:
         """Insert or refresh one volume row from a discovery scan. Same
-        admin-controlled-fields contract as upsert_instance."""
+        admin-controlled-fields contract as upsert_instance, including the
+        EC2 "Name" tag (None if untagged)."""
 
     @abc.abstractmethod
     def mark_stale(

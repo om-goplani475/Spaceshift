@@ -64,4 +64,11 @@ MIGRATIONS: list[tuple[str, str]] = [
         ALTER TABLE instances ADD COLUMN name TEXT;
         """,
     ),
+    (
+        "0004_volume_name_tag",
+        """
+        -- Same as 0003, for volumes - the EBS volume's own "Name" tag.
+        ALTER TABLE volumes ADD COLUMN name TEXT;
+        """,
+    ),
 ]

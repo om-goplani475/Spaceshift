@@ -148,7 +148,7 @@
         <td class="num">{{ s.size_gb }} GB</td>
         <td class="num">{{ usage_meter(s.percent_used) }}</td>
         <td class="num">{{ s.threshold_percent }}%</td>
-        <td><span class="badge {{ decision_badge(s.decision) }}">{{ s.decision }}</span></td>
+        <td><span class="badge {{ decision_badge(s.decision) }}" title="{{ decision_hint(s.decision) }}">{{ s.decision }}</span></td>
         <td class="ts" data-ts="{{ s.timestamp.isoformat() }}"></td>
       </tr>
       {% else %}

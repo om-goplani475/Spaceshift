@@ -48,6 +48,31 @@ def test_instances_page_shows_the_name_tag_or_a_dash(state, client):
     assert "–" in row  # en dash placeholder for an instance with no Name tag
 
 
+def test_volumes_page_shows_the_volumes_own_and_its_instances_name_tag(state, client):
+    state.upsert_instance("default", "i-1", "us-east-1", "t3.micro", "running", name="web-1")
+    state.upsert_volume("default", "vol-1", "i-1", "us-east-1", 100, "/dev/xvdf", name="data-1")
+
+    html = client.get("/volumes").data.decode()
+    row = html.split('data-volume="vol-1"')[1].split("</tr>")[0]
+
+    assert "data-1" in row  # the volume's own Name tag
+    assert "web-1" in row  # its attached instance's Name tag
+
+
+def test_watched_toggle_carries_the_instance_autoresize_flag_for_optimistic_ui_updates(state, client):
+    # instances.html has no Watched column to update optimistically, but
+    # volumes.html does - the row needs to tell dashboard.js whether the
+    # attached instance's own autoresize is on, since turning the volume's
+    # own toggle off still leaves it watched "via instance" when it is.
+    state.upsert_instance("default", "i-1", "us-east-1", "t3.micro", "running")
+    state.set_instance_autoresize("i-1", True)
+    state.upsert_volume("default", "vol-1", "i-1", "us-east-1", 100, "/dev/xvdf")
+
+    html = client.get("/volumes").data.decode()
+
+    assert 'data-instance-autoresize="true"' in html
+
+
 def test_index_renders_records(state, client):
     state.create_if_absent("vol-1", "i-1", 100, 120)
     state.update_status("vol-1", ResizeStatus.EXTEND_COMPLETED)
@@ -76,6 +101,9 @@ def test_index_renders_scan_history(state, client):
     assert response.status_code == 200
     assert b"vol-9" in response.data
     assert b"below_threshold" in response.data
+    # A hover tooltip on the decision badge, so "below_threshold" reads as
+    # more than an internal code name.
+    assert b"Usage is under the threshold" in response.data
 
 
 def test_api_scans_returns_json_newest_first(state, client):

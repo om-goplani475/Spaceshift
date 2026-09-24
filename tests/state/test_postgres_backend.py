@@ -145,6 +145,11 @@ def test_upsert_instance_stores_and_refreshes_the_name_tag(postgres_state):
     assert postgres_state.list_instances(region="us-east-1")[0].name is None
 
 
+def test_upsert_volume_stores_the_name_tag(postgres_state):
+    postgres_state.upsert_volume(_ACCOUNT, "vol-1", "i-1", "us-east-1", 100, "/dev/xvdf", name="data-1")
+    assert postgres_state.list_volumes(region="us-east-1")[0].name == "data-1"
+
+
 def test_set_autoresize_returns_false_for_unknown_id(postgres_state):
     assert postgres_state.set_instance_autoresize("i-nonexistent", True) is False
     assert postgres_state.set_volume_autoresize("vol-nonexistent", True) is False

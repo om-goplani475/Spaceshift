@@ -154,6 +154,21 @@ _DECISION_BADGES = {
     "resize_failed": "badge-red",
 }
 
+# What each scan_log.decision value means in plain English - shown as a
+# tooltip on the badge, since the raw value (e.g. "ssm_not_ready") reads as
+# an internal code name to anyone who hasn't read scheduler.py.
+_DECISION_HINTS: dict[str, str] = {
+    "ssm_not_ready": "The SSM Agent on this instance isn't reporting Online yet, so disk usage can't be checked.",
+    "below_threshold": "Usage is under the threshold - no action needed.",
+    "would_resize": "Usage crossed the threshold, but dry run is on - nothing was actually resized.",
+    "resize_triggered": "Usage crossed the threshold - a real AWS resize and filesystem extend were triggered.",
+    "resize_skipped": "Eligible for a resize but skipped this cycle (e.g. one is already in progress).",
+    "resize_failed": "The AWS-side volume resize call itself failed - see the Resize activity table for detail.",
+    "needs_attention": "The filesystem extend failed too many times and needs manual review.",
+    "extend_retry_waiting": "The AWS resize succeeded; waiting out the backoff before the next extend retry.",
+    "extend_retry_attempted": "Retried the OS-side filesystem extend after an earlier AWS resize.",
+}
+
 
 _AUDIT_BADGES = {
     AuditAction.AUTH_LOGIN_FAILED: "badge-amber",
@@ -176,6 +191,10 @@ def _status_badge(status: ResizeStatus) -> str:
 
 def _decision_badge(decision: str) -> str:
     return _DECISION_BADGES.get(decision, "badge-muted")
+
+
+def _decision_hint(decision: str) -> str:
+    return _DECISION_HINTS.get(decision, "")
 
 
 def _latest_decision_by(scans, key) -> dict[str, str]:
@@ -285,9 +304,18 @@ def _resolve_volume_row(volume, instances_by_id: dict, default_threshold: int) -
     so this has to match it exactly or the two would quietly disagree.
     """
     instance = instances_by_id.get(volume.instance_id) if volume.instance_id else None
+    instance_name = instance.name if instance is not None else None
+    instance_autoresize = instance.autoresize if instance is not None else False
 
     if volume.instance_id is None or volume.device_name is None:
-        return {"watched": False, "watched_reason": "unattached", "threshold": None, "threshold_source": None}
+        return {
+            "watched": False,
+            "watched_reason": "unattached",
+            "threshold": None,
+            "threshold_source": None,
+            "instance_name": instance_name,
+            "instance_autoresize": instance_autoresize,
+        }
 
     if volume.autoresize:
         watched, watched_reason = True, "own"
@@ -308,6 +336,8 @@ def _resolve_volume_row(volume, instances_by_id: dict, default_threshold: int) -
         "watched_reason": watched_reason,
         "threshold": threshold,
         "threshold_source": threshold_source,
+        "instance_name": instance_name,
+        "instance_autoresize": instance_autoresize,
     }
 
 
@@ -478,6 +508,7 @@ def create_app(state: StateBackend, auth: AuthSettings) -> Flask:
             "no_accounts": no_accounts,
             "status_badge": _status_badge,
             "decision_badge": _decision_badge,
+            "decision_hint": _decision_hint,
             "audit_badge": _audit_badge,
             "nav_icon": _nav_icon,
             "role_label": _role_label(scope),

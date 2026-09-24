@@ -302,7 +302,24 @@ function wireAutoresizeToggles(root) {
           return resp.json();
         })
         .then(function () {
-          toggle.closest("tr").dataset.autoresize = String(desired);
+          const row = toggle.closest("tr");
+          row.dataset.autoresize = String(desired);
+          // The real "is it watched" resolution (including threshold
+          // fallback) lives server-side and settles within one live-poll
+          // cycle (10s) - but the Watched badge only needs the same two
+          // facts the toggle itself just changed, so update it now rather
+          // than leaving it stale until the next poll.
+          if (kind === "volumes" && row.dataset.watchedReason !== "unattached") {
+            const viaInstance = !desired && row.dataset.instanceAutoresize === "true";
+            const watched = desired || viaInstance;
+            const cell = row.querySelector(".watched-cell");
+            if (cell) {
+              cell.innerHTML = watched
+                ? '<span class="badge badge-green">Yes' + (viaInstance ? " · via instance" : "") + "</span>"
+                : '<span class="badge badge-muted">No</span>';
+            }
+            row.dataset.watchedReason = watched ? (viaInstance ? "instance" : "own") : "off";
+          }
         })
         .catch(function () {
           toggle.checked = !desired;
