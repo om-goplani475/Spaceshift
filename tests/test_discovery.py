@@ -30,6 +30,27 @@ def test_full_scan_syncs_everything_but_nothing_eligible_by_default(aws, state, 
     assert any(v.volume_id == volume_id for v in state.list_volumes(region=_REGION))
 
 
+def test_sync_captures_the_ec2_name_tag(aws, state, config):
+    ec2 = boto3.client("ec2", region_name=_REGION)
+    instance_id = _new_instance(ec2)
+    ec2.create_tags(Resources=[instance_id], Tags=[{"Key": "Name", "Value": "web-1"}])
+
+    discover_eligible_volumes(ec2, state, _ACCOUNT, _REGION, config)
+
+    instance = next(i for i in state.list_instances(region=_REGION) if i.instance_id == instance_id)
+    assert instance.name == "web-1"
+
+
+def test_sync_leaves_name_none_for_an_untagged_instance(aws, state, config):
+    ec2 = boto3.client("ec2", region_name=_REGION)
+    instance_id = _new_instance(ec2)
+
+    discover_eligible_volumes(ec2, state, _ACCOUNT, _REGION, config)
+
+    instance = next(i for i in state.list_instances(region=_REGION) if i.instance_id == instance_id)
+    assert instance.name is None
+
+
 def test_volume_level_autoresize_makes_it_eligible(aws, state, config):
     ec2 = boto3.client("ec2", region_name=_REGION)
     instance_id = _new_instance(ec2)

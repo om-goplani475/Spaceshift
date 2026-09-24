@@ -134,6 +134,17 @@ def test_upsert_never_overwrites_autoresize(postgres_state):
     assert instance.state == "stopped"
 
 
+def test_upsert_instance_stores_and_refreshes_the_name_tag(postgres_state):
+    postgres_state.upsert_instance(_ACCOUNT, "i-1", "us-east-1", "t3.micro", "running", name="web-1")
+    assert postgres_state.list_instances(region="us-east-1")[0].name == "web-1"
+
+    # A later sync with no Name tag clears it - the AWS console is the
+    # source of truth, so a removed tag should disappear here too, not
+    # linger from the previous cycle.
+    postgres_state.upsert_instance(_ACCOUNT, "i-1", "us-east-1", "t3.micro", "running", name=None)
+    assert postgres_state.list_instances(region="us-east-1")[0].name is None
+
+
 def test_set_autoresize_returns_false_for_unknown_id(postgres_state):
     assert postgres_state.set_instance_autoresize("i-nonexistent", True) is False
     assert postgres_state.set_volume_autoresize("vol-nonexistent", True) is False

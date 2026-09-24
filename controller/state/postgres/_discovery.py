@@ -54,21 +54,25 @@ class PostgresDiscoveryMixin(DiscoveryStateContract):
         with self._cursor(commit=True) as cur:
             cur.execute("DELETE FROM scan_log WHERE timestamp < %s", (older_than,))
 
-    def upsert_instance(self, account_name: str, instance_id: str, region: str, instance_type: str, state: str) -> None:
+    def upsert_instance(
+        self, account_name: str, instance_id: str, region: str, instance_type: str, state: str, name: str | None = None
+    ) -> None:
         with self._cursor(commit=True) as cur:
             cur.execute(
                 """
-                INSERT INTO instances (instance_id, account_name, region, instance_type, state, last_seen_at, is_stale)
-                VALUES (%s, %s, %s, %s, %s, %s, FALSE)
+                INSERT INTO instances
+                    (instance_id, account_name, region, instance_type, state, name, last_seen_at, is_stale)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, FALSE)
                 ON CONFLICT (instance_id) DO UPDATE SET
                     account_name  = EXCLUDED.account_name,
                     region        = EXCLUDED.region,
                     instance_type = EXCLUDED.instance_type,
                     state         = EXCLUDED.state,
+                    name          = EXCLUDED.name,
                     last_seen_at  = EXCLUDED.last_seen_at,
                     is_stale      = FALSE
                 """,
-                (instance_id, account_name, region, instance_type, state, datetime.now(UTC)),
+                (instance_id, account_name, region, instance_type, state, name, datetime.now(UTC)),
             )
 
     def upsert_volume(

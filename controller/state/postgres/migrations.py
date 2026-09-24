@@ -54,4 +54,14 @@ MIGRATIONS: list[tuple[str, str]] = [
         );
         """,
     ),
+    (
+        "0003_instance_name_tag",
+        """
+        -- The EC2 "Name" tag, captured by discovery alongside the other
+        -- AWS-observed fields, purely for display - lets the dashboard
+        -- show what an instance is called in the AWS console next to its
+        -- id, instead of only the id. NULL means "no Name tag", not "".
+        ALTER TABLE instances ADD COLUMN name TEXT;
+        """,
+    ),
 ]

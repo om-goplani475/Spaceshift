@@ -181,7 +181,9 @@ class InMemoryStateBackend(StateBackend):
         with self._lock:
             self._scans = [s for s in self._scans if s.timestamp >= older_than]
 
-    def upsert_instance(self, account_name: str, instance_id: str, region: str, instance_type: str, state: str) -> None:
+    def upsert_instance(
+        self, account_name: str, instance_id: str, region: str, instance_type: str, state: str, name: str | None = None
+    ) -> None:
         with self._lock:
             existing = self._instances.get(instance_id)
             self._instances[instance_id] = InstanceRecord(
@@ -194,6 +196,7 @@ class InMemoryStateBackend(StateBackend):
                 threshold_percent=existing.threshold_percent if existing else None,
                 last_seen_at=datetime.now(UTC),
                 is_stale=False,
+                name=name,
             )
 
     def upsert_volume(

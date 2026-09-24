@@ -131,6 +131,12 @@ def test_upsert_never_overwrites_autoresize():
     assert instance.state == "stopped"
 
 
+def test_upsert_instance_stores_the_name_tag():
+    backend = InMemoryStateBackend()
+    backend.upsert_instance(_ACCOUNT, "i-1", "us-east-1", "t3.micro", "running", name="web-1")
+    assert backend.list_instances(region="us-east-1")[0].name == "web-1"
+
+
 def test_set_autoresize_returns_false_for_unknown_id():
     backend = InMemoryStateBackend()
     assert backend.set_instance_autoresize("i-nonexistent", True) is False

@@ -86,6 +86,15 @@ def is_ssm_ready(ssm_client, instance_id: str) -> bool:
     return bool(entries) and entries[0].get("PingStatus") == "Online"
 
 
+def _name_tag(tags: list[dict]) -> str | None:
+    """The EC2 "Name" tag's value, or None if untagged - AWS tag keys are
+    case-sensitive, so only an exact "Name" counts, same as the console."""
+    for tag in tags:
+        if tag.get("Key") == "Name":
+            return tag.get("Value") or None
+    return None
+
+
 def _sync_instances(ec2_client, state: StateBackend, account_name: str, region: str) -> set[str]:
     seen_ids: set[str] = set()
     paginator = ec2_client.get_paginator("describe_instances")
@@ -100,6 +109,7 @@ def _sync_instances(ec2_client, state: StateBackend, account_name: str, region: 
                     region=region,
                     instance_type=instance.get("InstanceType", ""),
                     state=instance.get("State", {}).get("Name", ""),
+                    name=_name_tag(instance.get("Tags", [])),
                 )
     return seen_ids
 

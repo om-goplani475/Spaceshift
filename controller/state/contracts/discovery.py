@@ -41,7 +41,7 @@ class InstanceRecord:
 
     autoresize/threshold_percent are admin-controlled (set via the
     dashboard toggle), never overwritten by upsert_instance - discovery
-    only refreshes the AWS-observed fields (instance_type, state,
+    only refreshes the AWS-observed fields (instance_type, state, name,
     last_seen_at) and never touches the eligibility flag itself.
     """
 
@@ -54,6 +54,7 @@ class InstanceRecord:
     threshold_percent: int | None
     last_seen_at: datetime
     is_stale: bool
+    name: str | None = None
 
 
 @dataclass
@@ -107,13 +108,18 @@ class DiscoveryStateContract(abc.ABC):
         """
 
     @abc.abstractmethod
-    def upsert_instance(self, account_name: str, instance_id: str, region: str, instance_type: str, state: str) -> None:
+    def upsert_instance(
+        self, account_name: str, instance_id: str, region: str, instance_type: str, state: str, name: str | None = None
+    ) -> None:
         """Insert or refresh one instance row from a discovery scan.
 
         Only touches AWS-observed fields (account_name, instance_type,
-        state, last_seen_at, is_stale=False) - never autoresize/
+        state, name, last_seen_at, is_stale=False) - never autoresize/
         threshold_percent, which are exclusively admin-controlled via
-        set_instance_autoresize.
+        set_instance_autoresize. `name` is the EC2 "Name" tag, shown on the
+        dashboard next to the instance id - None if the instance has no
+        Name tag, not the empty string, so the UI can tell "no tag" apart
+        from "tagged with an empty name".
         """
 
     @abc.abstractmethod

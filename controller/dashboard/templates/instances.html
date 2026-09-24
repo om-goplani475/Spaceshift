@@ -18,7 +18,7 @@
 <div class="panel">
   <table id="instances-table">
     <thead><tr>
-      <th>Instance ID</th><th>Account</th><th>Region</th><th>Type</th><th>State</th><th class="num">Threshold</th>
+      <th>Instance ID</th><th>Name</th><th>Account</th><th>Region</th><th>Type</th><th>State</th><th class="num">Threshold</th>
       <th>Autoresize</th><th>Last scan</th><th>Last seen</th>
     </tr></thead>
     <tbody id="instances-tbody">
@@ -26,6 +26,7 @@
     <tr data-volume="" data-instance="{{ i.instance_id|lower }}" data-account="{{ i.account_name }}"
         data-region="{{ i.region }}" data-autoresize="{{ i.autoresize|lower }}">
       <td class="mono">{{ i.instance_id }}</td>
+      <td>{{ i.name or "–" }}</td>
       <td>{{ i.account_name }}</td>
       <td>{{ i.region }}</td>
       <td>{{ i.instance_type }}</td>
@@ -36,7 +37,7 @@
       <td class="ts" data-ts="{{ i.last_seen_at.isoformat() }}"></td>
     </tr>
     {% else %}
-    {{ empty_row(9, "No instances discovered yet.", "The controller syncs everything it can see on its first cycle.") }}
+    {{ empty_row(10, "No instances discovered yet.", "The controller syncs everything it can see on its first cycle.") }}
     {% endfor %}
     </tbody>
   </table>

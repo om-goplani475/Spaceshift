@@ -37,6 +37,17 @@ def test_nav_marks_current_page(state, client):
         assert html.count('aria-current="page"') == 1
 
 
+def test_instances_page_shows_the_name_tag_or_a_dash(state, client):
+    state.upsert_instance("default", "i-named", "us-east-1", "t3.micro", "running", name="web-1")
+    state.upsert_instance("default", "i-unnamed", "us-east-1", "t3.micro", "running")
+
+    html = client.get("/instances").data.decode()
+
+    assert "web-1" in html
+    row = html.split('data-instance="i-unnamed"')[1].split("</tr>")[0]
+    assert "–" in row  # en dash placeholder for an instance with no Name tag
+
+
 def test_index_renders_records(state, client):
     state.create_if_absent("vol-1", "i-1", 100, 120)
     state.update_status("vol-1", ResizeStatus.EXTEND_COMPLETED)
