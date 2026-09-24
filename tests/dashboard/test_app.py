@@ -29,7 +29,10 @@ def test_nav_marks_current_page(state, client):
     pages = [("/", "Overview"), ("/instances", "Instances"), ("/volumes", "Volumes"), ("/settings", "Settings")]
     for path, label in pages:
         html = client.get(path).data.decode()
-        assert f'aria-current="page">{label}</a>' in html
+        # The current nav link carries aria-current and, somewhere inside
+        # it (after its icon), the page's label - not pinned to the exact
+        # markup between them.
+        assert re.search(rf'aria-current="page"[^>]*>.*?{re.escape(label)}</span></a>', html)
         # exactly one link is current
         assert html.count('aria-current="page"') == 1
 
@@ -176,9 +179,9 @@ def test_api_instances_still_includes_stopped(state, client):
 
 
 def _stat(html: str, label: str) -> int:
-    """Read one stat tile's number by its label, so tests don't pin the
+    """Read one KPI tile's number by its label, so tests don't pin the
     tile's exact markup."""
-    match = re.search(rf'<div class="l">{re.escape(label)}</div><div class="n">(\d+)</div>', html)
+    match = re.search(rf'class="l[^"]*">{re.escape(label)}</span>.*?class="n[^"]*">(\d+)</div>', html, re.DOTALL)
     assert match, f"no stat tile labelled {label!r}"
     return int(match.group(1))
 
