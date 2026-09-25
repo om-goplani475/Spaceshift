@@ -4,7 +4,7 @@
 {% block title %}Accounts{% endblock %}
 {% block heading %}AWS accounts{% endblock %}
 {% block lede %}
-<p class="lede">Which AWS accounts the controller watches, through which role, in which regions. The controller re-reads this list every cycle. Secrets never live here: the base identity is the host's instance role or <code>AWS_ACCESS_KEY_ID</code>/<code>AWS_SECRET_ACCESS_KEY</code> in <code>.env</code>.</p>
+<p class="lede">Which AWS accounts the controller watches, through which role, in which regions. The controller re-reads this list every cycle. Secrets never live here: the base identity is the host's instance role or <code>AWS_ACCESS_KEY_ID</code>/<code>AWS_SECRET_ACCESS_KEY</code> in <code>.env</code>. Adding a second AWS account? The <a href="{{ url_for('setup_guide') }}">setup guide</a> has the trust-policy steps.</p>
 {% endblock %}
 
 {% block content %}

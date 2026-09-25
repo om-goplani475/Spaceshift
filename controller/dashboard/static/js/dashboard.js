@@ -292,6 +292,30 @@ function wireRowDrawer(tableId) {
   });
 }
 
+// The setup guide's "Copy" buttons next to a policy snippet - separate from
+// copyToClipboard's icon-button callers above since these are text buttons
+// that swap their own label rather than just a color, to confirm the click
+// landed without the reader having to notice a subtle color change.
+function wireCodeCopyButtons(root) {
+  root.querySelectorAll(".code-copy-btn").forEach(function (btn) {
+    if (btn.dataset.copyWired) return;
+    btn.dataset.copyWired = "1";
+    const original = btn.textContent;
+    btn.addEventListener("click", function () {
+      const target = document.getElementById(btn.dataset.copyTarget);
+      if (!target || !navigator.clipboard) return;
+      navigator.clipboard.writeText(target.textContent).then(function () {
+        btn.textContent = "Copied";
+        btn.classList.add("is-copied");
+        setTimeout(function () {
+          btn.textContent = original;
+          btn.classList.remove("is-copied");
+        }, 1400);
+      });
+    });
+  });
+}
+
 function wireAllDrawers() {
   wireDrawerChrome();
   DRAWER_TABLES.forEach(wireRowDrawer);
@@ -469,6 +493,7 @@ wireConfigDirtyTracking(document);
 wireSettingsUpdateButton();
 wireNotificationTestButton();
 wireAllDrawers();
+wireCodeCopyButtons(document);
 markClickableRows();
 
 // ---- Live refresh ------------------------------------------------------------

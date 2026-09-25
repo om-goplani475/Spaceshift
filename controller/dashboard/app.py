@@ -7,6 +7,7 @@ from __future__ import annotations
 
 from dataclasses import asdict, replace
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 
 from flask import Flask, Response, g, jsonify, render_template, request, stream_with_context, url_for
 from markupsafe import Markup
@@ -29,6 +30,19 @@ _AUDIT_API_MAX_LIMIT = 1000
 # validated against before being persisted. See docs/SETUP.md section 5 for
 # why config.yaml itself no longer carries these fields.
 _DEFAULT_CONFIG_DICT = asdict(Config.from_dict({}))
+
+
+_DOCS_DIR = Path(__file__).resolve().parents[2] / "docs"
+
+
+def _read_doc(name: str) -> str:
+    """The setup guide reads these off disk rather than embedding a second
+    copy in Python, so the policy shown on the page can never drift from
+    docs/*.json - see the Dockerfile for what actually ships into the image."""
+    try:
+        return (_DOCS_DIR / name).read_text().strip()
+    except OSError:
+        return ""
 
 
 def _default_config_value(key: str) -> str:
@@ -583,6 +597,30 @@ def create_app(state: StateBackend, auth: AuthSettings) -> Flask:
             "nav_icon": _nav_icon,
             "role_label": _role_label(scope),
         }
+
+    @app.get("/setup-guide")
+    def setup_guide():
+        require_admin()
+        accounts = [a for a in state.list_accounts() if a.enabled and a.regions]
+        healthy_accounts = [a for a in accounts if _account_status(a)[0] == "healthy"]
+        error_accounts = [a for a in accounts if _account_status(a)[0] == "error"]
+        autoresize_on = any(i.autoresize for i in state.list_instances(account_names=_readable())) or any(
+            v.autoresize for v in state.list_volumes(account_names=_readable())
+        )
+        try:
+            config = Config.from_dict(apply_db_overrides(_DEFAULT_CONFIG_DICT, state.list_config()))
+            notifications_on = config.notifications.method != "none"
+        except (ValueError, TypeError):
+            notifications_on = False
+        return render_template(
+            "setup_guide.html",
+            accounts_ready=bool(accounts),
+            any_healthy=bool(healthy_accounts),
+            error_accounts=error_accounts,
+            autoresize_on=autoresize_on,
+            notifications_on=notifications_on,
+            iam_policy_json=_read_doc("iam-policy.json"),
+        )
 
     @app.get("/")
     def overview():

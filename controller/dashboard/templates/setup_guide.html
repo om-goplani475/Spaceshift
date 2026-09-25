@@ -1,0 +1,114 @@
+{% extends "base.html" %}
+
+{% block title %}Setup guide{% endblock %}
+{% block heading %}Setup guide{% endblock %}
+{% block lede %}<p class="lede">From a fresh install to the controller actively managing volumes. Steps 1-2 happen outside this dashboard (AWS IAM, your instances); steps 3-6 you can do right here, and update live as you complete them.</p>{% endblock %}
+
+{% block content %}
+<ol class="setup-steps">
+
+  <li class="setup-step">
+    <span class="step-marker"><span class="step-num">1</span></span>
+    <div class="step-body">
+      <h2 class="step-title">Give the controller AWS access</h2>
+      <p>Prefer an IAM role attached to the host running the controller (an instance profile, if it's on EC2) - there's no long-lived secret to leak, since AWS rotates its credentials automatically. Attach this policy to it:</p>
+      <div class="code-block">
+        <button type="button" class="btn btn-quiet code-copy-btn" data-copy-target="iam-policy-code">Copy</button>
+        <pre id="iam-policy-code">{{ iam_policy_json }}</pre>
+      </div>
+      <p class="muted-note">The last statement (<code>sts:AssumeRole</code>) is only needed once you're managing a second AWS account (step 3) - delete it if you'll only ever manage this one.</p>
+      <p class="muted-note">No instance role available (running locally, on your own server, or off AWS entirely)? Put an IAM <strong>user's</strong> access key in <code>.env</code> as <code>AWS_ACCESS_KEY_ID</code> / <code>AWS_SECRET_ACCESS_KEY</code> instead - the same policy applies to that user. Static keys are a weaker posture than a role; use them only when a role genuinely isn't an option.</p>
+    </div>
+  </li>
+
+  <li class="setup-step">
+    <span class="step-marker"><span class="step-num">2</span></span>
+    <div class="step-body">
+      <h2 class="step-title">Get your target instances SSM-ready</h2>
+      <p>For every instance whose volumes you want managed:</p>
+      <ul>
+        <li>The <strong>SSM Agent</strong> must be installed and running - it ships pre-installed on Amazon Linux 2/2023 and recent Ubuntu AMIs.</li>
+        <li>The instance's <strong>own</strong> IAM instance profile (not the controller's role from step 1) must include the AWS-managed policy <code class="mono">AmazonSSMManagedInstanceCore</code>.</li>
+        <li>The instance needs outbound access to the SSM endpoints (internet route, or VPC endpoints for <code class="mono">ssm</code>, <code class="mono">ssmmessages</code>, <code class="mono">ec2messages</code> if it's fully private).</li>
+      </ul>
+      <p class="muted-note">Nothing to check here on this page - the controller checks this automatically per instance once it's discovered, and simply skips one that isn't ready rather than failing.</p>
+    </div>
+  </li>
+
+  <li class="setup-step{{ ' is-done' if accounts_ready }}">
+    <span class="step-marker">
+      {% if accounts_ready %}<svg class="icon step-check" viewBox="0 0 24 24"><path d="M20 6 9 17l-5-5"/></svg>{% else %}<span class="step-num">3</span>{% endif %}
+    </span>
+    <div class="step-body">
+      <h2 class="step-title">Add an AWS account</h2>
+      <p>One entry per AWS account: a name you choose (permanent - it appears in every table and the audit log), an optional assume-role ARN, and the regions to scan.</p>
+      <p><strong>Just this one AWS account?</strong> Add it with no ARN - the controller scans the base identity's own account (the role or keys from step 1) directly.</p>
+      <p><strong>A second AWS account?</strong> The base identity from step 1 has to be allowed to assume a role over there:</p>
+      <ol class="substeps">
+        <li>In the <em>target</em> account, create a role (e.g. named <code class="mono">spaceshift</code>) with the same policy from step 1 attached.</li>
+        <li>Give that role a trust policy allowing your base identity to assume it:
+          <div class="code-block">
+            <button type="button" class="btn btn-quiet code-copy-btn" data-copy-target="trust-policy-code">Copy</button>
+            <pre id="trust-policy-code">{
+  "Version": "2012-10-17",
+  "Statement": [{
+    "Effect": "Allow",
+    "Principal": { "AWS": "arn:aws:iam::YOUR-BASE-ACCOUNT-ID:role-or-user/name" },
+    "Action": "sts:AssumeRole"
+  }]
+}</pre>
+          </div>
+          <p class="muted-note">Find your base identity's exact ARN by running <code class="mono">aws sts get-caller-identity</code> with the credentials from step 1.</p>
+        </li>
+        <li>Add the account below with that role's ARN (<code class="mono">arn:aws:iam::TARGET-ACCOUNT-ID:role/spaceshift</code>) and the regions to scan there.</li>
+      </ol>
+      <a class="btn btn-primary" href="{{ url_for('accounts.list_accounts') }}">{{ "Manage accounts" if accounts_ready else "Add an account" }}</a>
+      {% if accounts_ready %}<p class="muted-note">Done - at least one account is enabled with a region.</p>{% endif %}
+    </div>
+  </li>
+
+  <li class="setup-step{{ ' is-done' if any_healthy }}">
+    <span class="step-marker">
+      {% if any_healthy %}<svg class="icon step-check" viewBox="0 0 24 24"><path d="M20 6 9 17l-5-5"/></svg>{% else %}<span class="step-num">4</span>{% endif %}
+    </span>
+    <div class="step-body">
+      <h2 class="step-title">Verify it can actually connect</h2>
+      <p>Open the account on the Accounts page and click <strong>Verify now</strong> - the controller checks it (STS <code class="mono">GetCallerIdentity</code> plus a <code class="mono">DescribeRegions</code>) within a few seconds and shows the exact AWS error if it fails.</p>
+      <a class="btn" href="{{ url_for('accounts.list_accounts') }}">Go to Accounts</a>
+      {% if any_healthy %}
+      <p class="muted-note">Done - at least one account is healthy.</p>
+      {% elif error_accounts %}
+      <p class="muted-note">
+        {% for a in error_accounts %}<span class="mono">{{ a.name }}</span>: {{ a.last_error }}{% if not loop.last %}<br>{% endif %}{% endfor %}
+      </p>
+      {% endif %}
+    </div>
+  </li>
+
+  <li class="setup-step{{ ' is-done' if autoresize_on }}">
+    <span class="step-marker">
+      {% if autoresize_on %}<svg class="icon step-check" viewBox="0 0 24 24"><path d="M20 6 9 17l-5-5"/></svg>{% else %}<span class="step-num">5</span>{% endif %}
+    </span>
+    <div class="step-body">
+      <h2 class="step-title">Turn on autoresize for what you want managed</h2>
+      <p>Every instance and volume the controller can see shows up on Instances/Volumes regardless - nothing is actually resized until its <strong>Autoresize</strong> toggle is on. Turning it on for an instance covers every volume attached to it, including its root volume.</p>
+      <a class="btn" href="{{ url_for('instances') }}">Instances</a>
+      <a class="btn" href="{{ url_for('volumes') }}">Volumes</a>
+      {% if autoresize_on %}<p class="muted-note">Done - autoresize is on for at least one instance or volume.</p>{% endif %}
+    </div>
+  </li>
+
+  <li class="setup-step optional-step{{ ' is-done' if notifications_on }}">
+    <span class="step-marker">
+      {% if notifications_on %}<svg class="icon step-check" viewBox="0 0 24 24"><path d="M20 6 9 17l-5-5"/></svg>{% else %}<span class="step-num">6</span>{% endif %}
+    </span>
+    <div class="step-body">
+      <h2 class="step-title">Resize alerts in Slack <span class="badge badge-muted">optional</span></h2>
+      <p>Skip this to keep the default - alerts go to the controller's log only. Otherwise, add a Slack bot token to <code>.env</code>, then pick Slack and a channel ID on the Settings page.</p>
+      <a class="btn" href="{{ url_for('settings') }}">Go to Settings</a>
+      {% if notifications_on %}<p class="muted-note">Done - notifications are configured.</p>{% endif %}
+    </div>
+  </li>
+
+</ol>
+{% endblock %}

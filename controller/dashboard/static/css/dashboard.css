@@ -810,6 +810,60 @@ a.user-name:hover { text-decoration: underline; }
 
 .is-hidden { display: none; }
 
+/* ---- Setup guide ---------------------------------------------------------- */
+
+.setup-steps { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; }
+
+.setup-step {
+  display: flex;
+  gap: var(--sp-4);
+  padding: var(--sp-5) 0;
+  border-bottom: 1px solid var(--border);
+}
+.setup-step:last-child { border-bottom: none; }
+
+.step-marker {
+  flex: 0 0 auto;
+  width: 32px;
+  height: 32px;
+  border-radius: 999px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--surface-2);
+  border: 1px solid var(--border-strong);
+  color: var(--text-2);
+}
+.setup-step.is-done .step-marker { background: color-mix(in srgb, var(--green) 18%, transparent); border-color: transparent; color: var(--green); }
+.step-num { font-weight: 600; font-size: var(--text-sm); }
+.step-check { width: 16px; height: 16px; }
+
+.step-body { min-width: 0; flex: 1; }
+.step-title { font-size: var(--text-base); margin: 0 0 var(--sp-2); display: flex; align-items: center; gap: var(--sp-2); }
+.step-body p { margin: 0 0 var(--sp-3); color: var(--text-2); }
+.step-body ul { margin: 0 0 var(--sp-3); padding-left: var(--sp-5); color: var(--text-2); }
+.step-body li { margin-bottom: var(--sp-1); }
+.step-body .btn { margin-right: var(--sp-2); }
+
+.substeps { margin: 0 0 var(--sp-3); padding-left: var(--sp-5); color: var(--text-2); }
+.substeps li { margin-bottom: var(--sp-3); }
+
+.code-block { position: relative; margin: 0 0 var(--sp-3); }
+.code-block pre {
+  margin: 0;
+  padding: var(--sp-4);
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  font-family: var(--font-mono);
+  font-size: 12.5px;
+  line-height: 1.5;
+  overflow-x: auto;
+  white-space: pre;
+}
+.code-copy-btn { position: absolute; top: var(--sp-2); right: var(--sp-2); }
+.code-copy-btn.is-copied { color: var(--green); border-color: color-mix(in srgb, var(--green) 40%, var(--border)); }
+
 /* ---- Small screens ------------------------------------------------------- */
 
 @media (max-width: 720px) {
