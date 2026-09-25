@@ -195,8 +195,8 @@ def test_non_admin_audit_view_is_their_accounts_and_themselves(app, state, fleet
     bob_client = _client_for(app, "bob")
     html = bob_client.get("/audit").data.decode()
     assert "vol-dev" in html and "vol-prod" not in html
-    assert "config.set</span>" not in html  # the action filter dropdown still lists it; no row does
-    assert "auth.login" in html  # bob's own sign-in
+    assert "Setting changed</span>" not in html  # the action filter dropdown still lists it; no row does
+    assert "Signed in" in html  # bob's own sign-in
     rows = bob_client.get("/api/audit").get_json()["rows"]
     assert {r["action"] for r in rows} <= {"volume.autoresize", "auth.login", "user.role_set"}
     assert all(r["account_name"] in ("dev", None) for r in rows)

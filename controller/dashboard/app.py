@@ -170,19 +170,85 @@ _DECISION_HINTS: dict[str, str] = {
 }
 
 
+_AUDIT_LABELS = {
+    AuditAction.INSTANCE_AUTORESIZE: "Autoresize toggled (instance)",
+    AuditAction.VOLUME_AUTORESIZE: "Autoresize toggled (volume)",
+    AuditAction.CONFIG_SET: "Setting changed",
+    AuditAction.USER_SETUP: "First admin set up",
+    AuditAction.USER_CREATE: "User created",
+    AuditAction.USER_PASSWORD_RESET: "Password reset",
+    AuditAction.USER_UNLOCK: "Account unlocked",
+    AuditAction.USER_DEACTIVATE: "User deactivated",
+    AuditAction.USER_REACTIVATE: "User reactivated",
+    AuditAction.USER_PASSWORD_CHANGE: "Password changed",
+    AuditAction.USER_ROLE_SET: "Role granted",
+    AuditAction.USER_ROLE_REVOKED: "Role revoked",
+    AuditAction.ACCESS_DENIED: "Access denied",
+    AuditAction.ACCOUNT_CREATE: "AWS account added",
+    AuditAction.ACCOUNT_UPDATE: "AWS account updated",
+    AuditAction.ACCOUNT_DISABLE: "AWS account disabled",
+    AuditAction.ACCOUNT_ENABLE: "AWS account enabled",
+    AuditAction.ACCOUNT_VERIFY_REQUESTED: "Verify requested",
+    AuditAction.NOTIFICATION_TEST: "Test notification sent",
+    AuditAction.AUTH_LOGIN: "Signed in",
+    AuditAction.AUTH_LOGIN_FAILED: "Sign-in failed",
+    AuditAction.AUTH_LOCKOUT: "Locked out",
+    AuditAction.AUTH_SETUP_TOKEN_REJECTED: "Setup token rejected",
+    AuditAction.AUTH_PASSWORD_CHANGE_FAILED: "Password change failed",
+    AuditAction.AUTH_LOGOUT: "Signed out",
+    AuditAction.AUDIT_PRUNE: "Old audit rows pruned",
+}
+
+_ACTOR_LABELS = {"cli": "CLI", "system": "System", "anonymous": "Anonymous"}
+
+
 _AUDIT_BADGES = {
-    AuditAction.AUTH_LOGIN_FAILED: "badge-amber",
+    # Red: the actor was blocked or something failed outright.
     AuditAction.AUTH_LOCKOUT: "badge-red",
     AuditAction.AUTH_SETUP_TOKEN_REJECTED: "badge-red",
+    AuditAction.AUTH_PASSWORD_CHANGE_FAILED: "badge-red",
+    AuditAction.ACCESS_DENIED: "badge-red",
+    # Amber: worth a second look, but not a failure.
+    AuditAction.AUTH_LOGIN_FAILED: "badge-amber",
     AuditAction.USER_DEACTIVATE: "badge-amber",
-    AuditAction.CONFIG_SET: "badge-blue",
-    AuditAction.INSTANCE_AUTORESIZE: "badge-blue",
-    AuditAction.VOLUME_AUTORESIZE: "badge-blue",
+    AuditAction.USER_ROLE_REVOKED: "badge-amber",
+    AuditAction.ACCOUNT_DISABLE: "badge-amber",
+    # Muted: routine, self-service, or system housekeeping.
+    AuditAction.USER_PASSWORD_CHANGE: "badge-muted",
+    AuditAction.AUTH_LOGOUT: "badge-muted",
+    AuditAction.AUDIT_PRUNE: "badge-muted",
+    # Everything else - normal changes an admin made on purpose - is blue.
 }
 
 
 def _audit_badge(action: str) -> str:
-    return _AUDIT_BADGES.get(action, "badge-muted")
+    return _AUDIT_BADGES.get(action, "badge-blue")
+
+
+def _audit_label(action: str) -> str:
+    return _AUDIT_LABELS.get(action, action)
+
+
+def _actor_label(actor_type: str) -> str:
+    return _ACTOR_LABELS.get(actor_type, actor_type)
+
+
+def _health_status(last_ok_at, last_error_at) -> tuple[str, str]:
+    """(label, badge class) from a pair of last-ok/last-error timestamps -
+    shared by an account's own status and each of its per-region rows."""
+    if last_error_at and (not last_ok_at or last_error_at > last_ok_at):
+        return "error", "badge-red"
+    if last_ok_at:
+        return "healthy", "badge-green"
+    return "not checked yet", "badge-muted"
+
+
+def _account_status(account) -> tuple[str, str]:
+    if not account.enabled:
+        return "disabled", "badge-muted"
+    if not account.regions:
+        return "no regions", "badge-amber"
+    return _health_status(account.last_ok_at, account.last_error_at)
 
 
 def _status_badge(status: ResizeStatus) -> str:
@@ -510,6 +576,10 @@ def create_app(state: StateBackend, auth: AuthSettings) -> Flask:
             "decision_badge": _decision_badge,
             "decision_hint": _decision_hint,
             "audit_badge": _audit_badge,
+            "audit_label": _audit_label,
+            "actor_label": _actor_label,
+            "account_status": _account_status,
+            "health_status": _health_status,
             "nav_icon": _nav_icon,
             "role_label": _role_label(scope),
         }

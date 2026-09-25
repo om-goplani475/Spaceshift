@@ -25,9 +25,9 @@ def test_audit_page_renders_rows_with_change_and_actor(client, state):
     _seed(state)
     html = client.get("/audit").data.decode()
     assert "off → on" in html and "— → false" in html
-    assert "auth.login_failed" in html
+    assert 'title="auth.login_failed"' in html and "Sign-in failed" in html
     # the typed name is the target of a failed login, never shown as the actor
-    assert '<span class="muted-note">anonymous</span>' in html
+    assert '<span class="muted-note">Anonymous</span>' in html
     assert '<span class="mono">mallory</span>' not in html
     assert 'id="audit-tbody"' in html  # live-refresh swap target
 
@@ -35,7 +35,7 @@ def test_audit_page_renders_rows_with_change_and_actor(client, state):
 def test_audit_page_filters_narrow_and_export_link_carries_them(client, state):
     _seed(state)
     html = client.get("/audit?actor=alice&action=volume.autoresize").data.decode()
-    assert "mallory" not in html and html.count("volume.autoresize</span>") == 3
+    assert "mallory" not in html and html.count("Autoresize toggled (volume)</span>") == 3
     assert 'href="/api/audit?format=csv&amp;actor=alice&amp;action=volume.autoresize"' in html
     assert ">Clear<" in html
 
