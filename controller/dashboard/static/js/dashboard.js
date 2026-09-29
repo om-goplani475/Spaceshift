@@ -327,6 +327,18 @@ function copyToClipboard(text, btn) {
   });
 }
 
+// The setup guide's "Copy" buttons next to a policy snippet.
+function wireCodeCopyButtons(root) {
+  root.querySelectorAll(".code-copy-btn").forEach(function (btn) {
+    if (btn.dataset.copyWired) return;
+    btn.dataset.copyWired = "1";
+    btn.addEventListener("click", function () {
+      const target = document.getElementById(btn.dataset.copyTarget);
+      if (target) copyToClipboard(target.textContent, btn);
+    });
+  });
+}
+
 function wireDrawerChrome() {
   const root = document.getElementById("drawer-root");
   if (!root || root.dataset.wired) return;
@@ -543,16 +555,25 @@ function wireAuditDetailModal() {
   if (closeBtn) closeBtn.addEventListener("click", closeModal);
 
   document.addEventListener("click", function (e) {
+    if (e.target.closest("a, button, input, select, label")) return;
     const row = e.target.closest(".audit-row");
     if (!row) return;
+    const lines = [];
+    if (row.dataset.target) lines.push("Target: " + row.dataset.target);
+    if (row.dataset.account) lines.push("Account: " + row.dataset.account);
+    if (row.dataset.from) lines.push("From: " + row.dataset.from);
+    if (row.dataset.change) lines.push("Change: " + row.dataset.change);
     const detailRaw = row.dataset.detail;
-    if (!detailRaw) return;
-    try {
-      const detail = JSON.parse(detailRaw);
-      metaEl.textContent = "Actor: " + row.dataset.who + " | Action: " + row.dataset.action + " | " + row.dataset.ts;
-      contentEl.textContent = JSON.stringify(detail, null, 2);
-      modal.classList.remove("is-hidden");
-    } catch (_) {}
+    if (detailRaw) {
+      try {
+        lines.push("Detail: " + JSON.stringify(JSON.parse(detailRaw), null, 2));
+      } catch (_) {
+        // malformed JSON in data-detail - skip it, the rest of the event still shows.
+      }
+    }
+    metaEl.textContent = "Actor: " + row.dataset.who + " | Action: " + row.dataset.action + " | " + row.dataset.ts;
+    contentEl.textContent = lines.length ? lines.join("\n") : "No further detail recorded for this event.";
+    modal.classList.remove("is-hidden");
   });
 }
 
@@ -599,6 +620,11 @@ function wireRowDrawer(tableId) {
     }
     openDrawer(id, title, fields);
   });
+}
+
+function wireAllDrawers() {
+  wireDrawerChrome();
+  DRAWER_TABLES.forEach(wireRowDrawer);
 }
 
 function updateVolumesKPI() {
@@ -698,16 +724,6 @@ function wireAutoresizeToggles(root) {
             showToast((kind === "volumes" ? "Volume " : "Instance ") + id + " autoresize " + (desired ? "enabled" : "disabled"), "success");
           }
         })
-        .catch(function () {
-          toggle.checked = !desired;
-          alert("Couldn't update autoresize for " + id + ". Please try again.");
-        })
-        .finally(function () {
-          toggle.disabled = false;
-        });
-    });
-  });
-}
         .catch(function () {
           toggle.checked = !desired;
           alert("Couldn't update autoresize for " + id + ". Please try again.");

@@ -600,7 +600,7 @@ th {
 tbody tr:last-child td { border-bottom: none; }
 tbody tr:hover td { background: var(--surface-2); }
 tbody tr.is-hidden { display: none; }
-tbody tr.is-clickable { cursor: pointer; }
+tbody tr.is-clickable, tbody tr.audit-row { cursor: pointer; }
 
 td.mono { font-size: 12.5px; }
 th.num, td.num { text-align: right; font-variant-numeric: tabular-nums; }
