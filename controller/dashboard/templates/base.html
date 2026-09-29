@@ -119,6 +119,24 @@
 </div>
 {% endif %}
 
+<div id="shortcuts-modal" class="modal-root is-hidden" role="dialog" aria-modal="true" aria-label="Keyboard shortcuts">
+  <div class="modal-overlay" id="shortcuts-overlay"></div>
+  <div class="modal-card">
+    <div class="modal-header">
+      <div class="modal-title">Keyboard Shortcuts</div>
+      <button type="button" class="drawer-close" id="shortcuts-close" aria-label="Close shortcuts dialog">
+        <svg class="icon" viewBox="0 0 24 24"><path d="M18 6 6 18M6 6l12 12"/></svg>
+      </button>
+    </div>
+    <div class="modal-body">
+      <div class="shortcut-row"><span>Focus search filter</span><kbd class="shortcut-key">/</kbd></div>
+      <div class="shortcut-row"><span>Close drawer or modal</span><kbd class="shortcut-key">Esc</kbd></div>
+      <div class="shortcut-row"><span>Toggle dark / light theme</span><kbd class="shortcut-key">T</kbd></div>
+      <div class="shortcut-row"><span>Show keyboard shortcuts</span><kbd class="shortcut-key">?</kbd></div>
+    </div>
+  </div>
+</div>
+
 <div id="toast-container" class="toast-container" aria-live="polite"></div>
 
 <script src="{{ url_for('static', filename='js/dashboard.js') }}"></script>

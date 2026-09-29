@@ -91,6 +91,10 @@
     <input type="search" id="resize-search" placeholder="Search volume or instance…" aria-label="Search resizes">
     {{ filter_select("resize-status-filter", "status", "All statuses", resize_statuses) }}
     <span class="count" id="resize-count"></span>
+    <button type="button" class="btn btn-quiet export-csv-btn" data-table="resize-table" data-filename="spaceshift-resizes.csv" title="Export resizes to CSV">
+      <svg class="icon" viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+      Export CSV
+    </button>
   </div>
   <div class="panel">
     <table id="resize-table">
@@ -129,6 +133,10 @@
     {{ filter_select("scan-size-filter", "size", "All sizes", scan_sizes, suffix=" GB") }}
     {{ filter_select("scan-decision-filter", "decision", "All decisions", scan_decisions) }}
     <span class="count" id="scan-count"></span>
+    <button type="button" class="btn btn-quiet export-csv-btn" data-table="scan-table" data-filename="spaceshift-scans.csv" title="Export scans to CSV">
+      <svg class="icon" viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+      Export CSV
+    </button>
   </div>
   <div class="panel">
     <table id="scan-table">

@@ -8,12 +8,35 @@
 {% endblock %}
 
 {% block content %}
+<div class="kpi-grid kpi-grid-compact" id="volumes-summary">
+  <div class="kpi-card">
+    <div class="kpi-top"><span class="kpi-label">Discovered volumes</span></div>
+    <div class="kpi-value">{{ volume_rows | length }}</div>
+  </div>
+  <div class="kpi-card">
+    <div class="kpi-top"><span class="kpi-label">Total storage</span></div>
+    <div class="kpi-value">{{ "{:,}".format(volume_rows | map(attribute='v.size_gb') | sum) }}<span class="kpi-unit">GB</span></div>
+  </div>
+  <div class="kpi-card">
+    <div class="kpi-top"><span class="kpi-label">Autoresize watched</span></div>
+    <div class="kpi-value">{{ volume_rows | selectattr('watched') | list | length }}</div>
+  </div>
+  <div class="kpi-card">
+    <div class="kpi-top"><span class="kpi-label">Excluded / Unwatched</span></div>
+    <div class="kpi-value">{{ volume_rows | rejectattr('watched') | list | length }}</div>
+  </div>
+</div>
+
 <div class="filters">
   <input type="search" id="volumes-search" placeholder="Search volume or instance ID…" aria-label="Search volumes">
   {{ filter_select("volumes-account-filter", "account", "All accounts", volume_accounts) }}
   {{ filter_select("volumes-region-filter", "region", "All regions", volume_regions) }}
   {{ autoresize_select("volumes-autoresize-filter") }}
   <span class="count" id="volumes-count"></span>
+  <button type="button" class="btn btn-quiet export-csv-btn" data-table="volumes-table" data-filename="spaceshift-volumes.csv" title="Export volumes to CSV">
+    <svg class="icon" viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+    Export CSV
+  </button>
 </div>
 <div class="panel">
   <table id="volumes-table">
