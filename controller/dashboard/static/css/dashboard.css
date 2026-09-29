@@ -49,8 +49,55 @@
   --glow-accent: 0 0 0 1px color-mix(in srgb, var(--accent) 35%, transparent);
 }
 
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --bg: #0a0e14;
+  --surface: #10151d;
+  --surface-2: #161c26;
+  --surface-raised: #1a212c;
+  --border: #232b38;
+  --border-strong: #333e4f;
+  --text: #eef1f6;
+  --text-2: #9aa6b8;
+  --text-3: #667186;
+  --accent: #6c8dff;
+  --accent-hover: #86a2ff;
+  --accent-soft: color-mix(in srgb, #6c8dff 16%, transparent);
+  --on-accent: #06101f;
+  --green: #35d399;
+  --red: #ff6b6b;
+  --amber: #f0b93a;
+  --shadow: 0 1px 2px rgba(0, 0, 0, 0.35), 0 8px 24px rgba(0, 0, 0, 0.22);
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.3);
+  --glow-accent: 0 0 0 1px color-mix(in srgb, var(--accent) 35%, transparent);
+}
+
+:root[data-theme="light"] {
+  color-scheme: light;
+  --bg: #f4f5f7;
+  --surface: #ffffff;
+  --surface-2: #f8f9fb;
+  --surface-raised: #ffffff;
+  --border: #e3e6eb;
+  --border-strong: #cdd2da;
+  --text: #1a1d23;
+  --text-2: #5b6370;
+  --text-3: #8a919d;
+  --accent: #2f5fd6;
+  --accent-hover: #2551bb;
+  --accent-soft: color-mix(in srgb, #2f5fd6 10%, transparent);
+  --on-accent: #ffffff;
+  --green: #1d7f4c;
+  --red: #c2362f;
+  --amber: #9a6700;
+  --shadow: 0 1px 2px rgba(20, 24, 32, 0.05), 0 8px 24px rgba(20, 24, 32, 0.04);
+  --shadow-sm: 0 1px 2px rgba(20, 24, 32, 0.05);
+  --glow-accent: 0 0 0 1px color-mix(in srgb, var(--accent) 25%, transparent);
+}
+
 @media (prefers-color-scheme: light) {
-  :root {
+  :root:not([data-theme="dark"]) {
+    color-scheme: light;
     --bg: #f4f5f7;
     --surface: #ffffff;
     --surface-2: #f8f9fb;
@@ -67,13 +114,11 @@
     --green: #1d7f4c;
     --red: #c2362f;
     --amber: #9a6700;
-    --shadow: 0 1px 2px rgba(20, 24, 32, 0.05);
+    --shadow: 0 1px 2px rgba(20, 24, 32, 0.05), 0 8px 24px rgba(20, 24, 32, 0.04);
     --shadow-sm: 0 1px 2px rgba(20, 24, 32, 0.05);
+    --glow-accent: 0 0 0 1px color-mix(in srgb, var(--accent) 25%, transparent);
   }
 }
-
-:root[data-theme="dark"] { color-scheme: dark; }
-:root[data-theme="light"] { color-scheme: light; }
 
 /* ---- Base ------------------------------------------------------------- */
 
