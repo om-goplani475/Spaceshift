@@ -7,15 +7,25 @@
 {% endblock %}
 
 {% block content %}
+<div class="settings-nav-tabs" id="settings-tabs">
+  {% for group in setting_groups %}
+  <button type="button" class="settings-tab-btn{{ ' is-active' if loop.first }}" data-target="group-{{ loop.index }}">{{ group.title }}</button>
+  {% endfor %}
+</div>
+
 <form class="settings" id="settings-form">
   <div id="settings-list">
     {% for group in setting_groups %}
-    <section class="settings-group">
+    <section class="settings-group" id="group-{{ loop.index }}">
       <h2>{{ group.title }}</h2>
       {% for s in group.settings %}
-      <div class="setting" data-key="{{ s.key }}">
+      {% set is_modified = s.value is not none and s.value != s.default %}
+      <div class="setting" data-key="{{ s.key }}" data-modified="{{ 'true' if is_modified else 'false' }}">
         <div class="setting-text">
-          <label class="setting-label" for="setting-{{ s.key }}">{{ s.label }}</label>
+          <label class="setting-label" for="setting-{{ s.key }}">
+            {{ s.label }}
+            {% if is_modified %}<span class="setting-modified-badge">custom</span>{% endif %}
+          </label>
           <p class="setting-description">{{ s.description }}</p>
         </div>
         <div class="setting-control">

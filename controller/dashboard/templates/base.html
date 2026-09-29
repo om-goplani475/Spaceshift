@@ -137,6 +137,32 @@
   </div>
 </div>
 
+<div id="batch-action-bar" class="batch-bar" role="toolbar" aria-label="Batch actions">
+  <span class="batch-bar-count" id="batch-bar-count">0 selected</span>
+  <div class="batch-bar-actions">
+    <button type="button" class="btn btn-primary" id="batch-enable-btn">Enable Autoresize</button>
+    <button type="button" class="btn" id="batch-disable-btn">Disable Autoresize</button>
+    <button type="button" class="btn btn-quiet" id="batch-export-btn">Export Selected</button>
+    <button type="button" class="btn btn-quiet" id="batch-cancel-btn">Deselect</button>
+  </div>
+</div>
+
+<div id="detail-modal" class="modal-root is-hidden" role="dialog" aria-modal="true" aria-label="Event details">
+  <div class="modal-overlay" id="detail-modal-overlay"></div>
+  <div class="modal-card">
+    <div class="modal-header">
+      <div class="modal-title" id="detail-modal-title">Event Detail</div>
+      <button type="button" class="drawer-close" id="detail-modal-close" aria-label="Close event detail">
+        <svg class="icon" viewBox="0 0 24 24"><path d="M18 6 6 18M6 6l12 12"/></svg>
+      </button>
+    </div>
+    <div class="modal-body">
+      <div id="detail-modal-meta" class="detail-modal-meta"></div>
+      <pre class="audit-detail-pre" id="detail-modal-content"></pre>
+    </div>
+  </div>
+</div>
+
 <div id="toast-container" class="toast-container" aria-live="polite"></div>
 
 <script src="{{ url_for('static', filename='js/dashboard.js') }}"></script>

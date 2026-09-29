@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% from "_macros.html" import filter_select, autoresize_select, pager, autoresize_switch, scan_decision, empty_row with context %}
+{% from "_macros.html" import filter_select, autoresize_select, pager, autoresize_switch, scan_decision, empty_row, copy_button, search_input with context %}
 
 {% block title %}Volumes{% endblock %}
 {% block heading %}Volumes{% endblock %}
@@ -27,8 +27,29 @@
   </div>
 </div>
 
+{% set total_gb = volume_rows | map(attribute='v.size_gb') | sum %}
+{% set watched_gb = volume_rows | selectattr('watched') | map(attribute='v.size_gb') | sum %}
+{% set unwatched_gb = total_gb - watched_gb %}
+{% set watched_pct = ((watched_gb / total_gb * 100) | round | int) if total_gb > 0 else 0 %}
+{% set watched_p = ((watched_pct / 5) | round * 5) | int %}
+{% set unwatched_p = 100 - watched_p %}
+<div class="storage-dist-card" id="volumes-dist-card">
+  <div class="storage-dist-header">
+    <strong>Storage Capacity Distribution</strong>
+    <span>{{ watched_pct }}% Watched</span>
+  </div>
+  <div class="storage-dist-bar">
+    <div class="dist-segment watched p{{ watched_p }}" title="Watched: {{ watched_gb }} GB ({{ watched_pct }}%)"></div>
+    <div class="dist-segment unwatched p{{ unwatched_p }}" title="Unwatched: {{ unwatched_gb }} GB ({{ 100 - watched_pct }}%)"></div>
+  </div>
+  <div class="storage-dist-legend">
+    <span><span class="dot-green"></span> Watched: <strong>{{ watched_gb }} GB</strong> ({{ watched_pct }}%)</span>
+    <span><span class="dot-gray"></span> Excluded / Unwatched: <strong>{{ unwatched_gb }} GB</strong> ({{ 100 - watched_pct }}%)</span>
+  </div>
+</div>
+
 <div class="filters">
-  <input type="search" id="volumes-search" placeholder="Search volume or instance ID…" aria-label="Search volumes">
+  {{ search_input("volumes-search", "Search volume, instance ID, or name…") }}
   {{ filter_select("volumes-account-filter", "account", "All accounts", volume_accounts) }}
   {{ filter_select("volumes-region-filter", "region", "All regions", volume_regions) }}
   {{ autoresize_select("volumes-autoresize-filter") }}
@@ -38,9 +59,12 @@
     Export CSV
   </button>
 </div>
+<div class="active-filters-bar" id="volumes-active-filters"></div>
+
 <div class="panel">
   <table id="volumes-table">
     <thead><tr>
+      <th class="select-col"><input type="checkbox" class="select-all-checkbox" data-table="volumes-table" aria-label="Select all volumes"></th>
       <th>Volume</th><th>Name</th><th>Instance name</th><th>Account</th><th>Region</th><th class="num">Size</th><th>Device</th>
       <th class="num">Threshold</th><th>Autoresize</th><th>Watched</th><th>Last scan</th><th>Last seen</th>
     </tr></thead>
@@ -50,7 +74,8 @@
     <tr data-volume="{{ v.volume_id|lower }}" data-instance="{{ (v.instance_id or '')|lower }}"
         data-account="{{ v.account_name }}" data-region="{{ v.region }}" data-autoresize="{{ v.autoresize|lower }}"
         data-watched-reason="{{ row.watched_reason }}" data-instance-autoresize="{{ row.instance_autoresize|lower }}">
-      <td class="mono">{{ v.volume_id }}</td>
+      <td class="select-col"><input type="checkbox" class="row-checkbox" data-kind="volumes" data-id="{{ v.volume_id }}" aria-label="Select {{ v.volume_id }}"></td>
+      <td class="mono"><span class="copyable-cell"><span>{{ v.volume_id }}</span>{{ copy_button(v.volume_id) }}</span></td>
       <td>{{ v.name or "–" }}</td>
       <td>{{ row.instance_name or "–" }}</td>
       <td>{{ v.account_name }}</td>
@@ -81,7 +106,7 @@
       <td class="ts" data-ts="{{ v.last_seen_at.isoformat() }}"></td>
     </tr>
     {% else %}
-    {{ empty_row(12, "No volumes discovered yet.", "The controller syncs everything it can see on its first cycle.") }}
+    {{ empty_row(13, "No volumes discovered yet.", "The controller syncs everything it can see on its first cycle.") }}
     {% endfor %}
     </tbody>
   </table>
