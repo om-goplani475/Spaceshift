@@ -2,23 +2,63 @@
 {% set standalone = true %}
 
 {% block title %}Sign in{% endblock %}
-{% block heading %}Sign in{% endblock %}
+{% block heading %}{% endblock %}
 
 {% block content %}
-<form class="auth-form" method="post" action="{{ url_for('auth.login', next=request.args.get('next')) }}">
-  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-  {% if error %}<p class="form-error" role="alert">{{ error }}</p>{% endif %}
-  <div class="field">
-    <label for="username">Username</label>
-    <input type="text" id="username" name="username" value="{{ username }}" autocomplete="username"
-           autocapitalize="none" spellcheck="false" required autofocus>
+<div class="auth-wrapper">
+  <div class="auth-card">
+    <div class="auth-header">
+      <div class="auth-brand-mark" aria-hidden="true">
+        <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+          <defs>
+            <linearGradient id="ss-auth-g" x1="2" y1="2" x2="22" y2="22" gradientUnits="userSpaceOnUse">
+              <stop offset="0%" stop-color="#38bdf8"/>
+              <stop offset="50%" stop-color="#6366f1"/>
+              <stop offset="100%" stop-color="#c084fc"/>
+            </linearGradient>
+          </defs>
+          <path d="M18 4H9C6.23858 4 4 6.23858 4 9C4 11.7614 6.23858 14 9 14H15C17.7614 14 20 16.2386 20 19C20 21.7614 17.7614 24 15 24H6" stroke="url(#ss-auth-g)" stroke-width="2.75" stroke-linecap="round" stroke-linejoin="round"/>
+          <circle cx="18" cy="4" r="2" fill="#38bdf8"/>
+          <circle cx="6" cy="24" r="2" fill="#c084fc"/>
+        </svg>
+      </div>
+      <h1 class="auth-title">Welcome back</h1>
+      <p class="auth-subtitle">Sign in to manage your autonomous EBS elasticity &amp; storage</p>
+    </div>
+
+    {% if error %}
+    <div class="auth-error-banner" role="alert">
+      <svg class="icon" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+      <span>{{ error }}</span>
+    </div>
+    {% endif %}
+
+    <form class="auth-form-body" method="post" action="{{ url_for('auth.login', next=request.args.get('next')) }}">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <div class="field">
+        <label for="username">Username</label>
+        <div class="input-with-icon">
+          <svg class="field-icon icon" viewBox="0 0 24 24"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+          <input type="text" id="username" name="username" value="{{ username }}" autocomplete="username"
+                 autocapitalize="none" spellcheck="false" placeholder="admin" required autofocus>
+        </div>
+      </div>
+      <div class="field">
+        <label for="password">Password</label>
+        <div class="input-with-icon">
+          <svg class="field-icon icon" viewBox="0 0 24 24"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+          <input type="password" id="password" name="password" autocomplete="current-password" placeholder="••••••••••••" required>
+        </div>
+      </div>
+      <button type="submit" class="btn btn-primary auth-submit-btn">
+        <span>Sign in</span>
+        <svg class="icon" viewBox="0 0 24 24"><line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/></svg>
+      </button>
+    </form>
+
+    <div class="auth-footer">
+      <span>Spaceshift · Elastic Cloud Storage Management</span>
+    </div>
   </div>
-  <div class="field">
-    <label for="password">Password</label>
-    <input type="password" id="password" name="password" autocomplete="current-password" required>
-  </div>
-  <div class="form-actions">
-    <button type="submit" class="btn btn-primary">Sign in</button>
-  </div>
-</form>
+</div>
 {% endblock %}

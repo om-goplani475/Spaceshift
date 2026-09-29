@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="csrf-token" content="{{ csrf_token() }}">
 <title>{% block title %}{% endblock %} · Spaceshift</title>
-<link rel="stylesheet" href="{{ url_for('static', filename='css/dashboard.css') }}?v=2.6.2">
+<link rel="stylesheet" href="{{ url_for('static', filename='css/dashboard.css') }}?v=2.6.3">
 </head>
 {# Sign-in pages set standalone: no nav, no live refresh - there's nothing to refresh. #}
 <body{% if standalone %} data-live="off"{% endif %}>
@@ -13,10 +13,17 @@
   <div class="topbar-inner">
     <a class="brand" href="{{ url_for('overview') }}">
       <span class="brand-mark" aria-hidden="true">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor">
-          <path d="M12 2.5L20.5 7.4V16.6L12 21.5L3.5 16.6V7.4L12 2.5Z" stroke-width="2" stroke-linejoin="round"/>
-          <path d="M12 2.5V12M20.5 7.4L12 12M3.5 7.4L12 12" stroke-width="1.75" stroke-linejoin="round" opacity="0.65"/>
-          <path d="M12 15.5V9M9.5 11.5L12 9L14.5 11.5" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/>
+        <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+          <defs>
+            <linearGradient id="ss-brand-g" x1="2" y1="2" x2="22" y2="22" gradientUnits="userSpaceOnUse">
+              <stop offset="0%" stop-color="#38bdf8"/>
+              <stop offset="50%" stop-color="#6366f1"/>
+              <stop offset="100%" stop-color="#c084fc"/>
+            </linearGradient>
+          </defs>
+          <path d="M18 4H9C6.23858 4 4 6.23858 4 9C4 11.7614 6.23858 14 9 14H15C17.7614 14 20 16.2386 20 19C20 21.7614 17.7614 24 15 24H6" stroke="url(#ss-brand-g)" stroke-width="2.75" stroke-linecap="round" stroke-linejoin="round"/>
+          <circle cx="18" cy="4" r="2" fill="#38bdf8"/>
+          <circle cx="6" cy="24" r="2" fill="#c084fc"/>
         </svg>
       </span>
       Spaceshift
@@ -54,6 +61,11 @@
       </form>
     </div>
     {% endif %}
+    {% else %}
+    <button type="button" class="theme-toggle auth-theme-toggle" id="theme-toggle" title="Toggle dark/light theme" aria-label="Toggle theme">
+      <svg class="icon theme-icon-dark" viewBox="0 0 24 24"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
+      <svg class="icon theme-icon-light" viewBox="0 0 24 24"><circle cx="12" cy="12" r="5"/><path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"/></svg>
+    </button>
     {% endif %}
   </div>
 </header>
@@ -78,10 +90,12 @@
   </div>
   {% endif %}
   {% endwith %}
+  {% if not standalone %}
   <div class="page-header">
     <h1>{% block heading %}{% endblock %}</h1>
     {% block lede %}{% endblock %}
   </div>
+  {% endif %}
   {% block content %}{% endblock %}
 </main>
 
