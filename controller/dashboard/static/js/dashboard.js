@@ -342,8 +342,39 @@ function wireAllDrawers() {
 // Each of these wiring functions re-queries root (default: the whole
 // document) every time it's called, so calling it again after
 // refreshLiveData() swaps in fresh table rows picks up the new elements -
-// old elements are gone from the DOM by then, so there's no risk of
-// double-binding the same listener twice.
+function updateVolumesKPI() {
+  const summary = document.getElementById("volumes-summary");
+  if (!summary) return;
+  const rows = Array.from(document.querySelectorAll("#volumes-tbody tr[data-volume]"));
+  if (!rows.length) return;
+  const watchedCount = rows.filter(function (r) {
+    return r.dataset.watchedReason === "own" || r.dataset.watchedReason === "instance";
+  }).length;
+  const unwatchedCount = rows.length - watchedCount;
+
+  const watchedEl = document.getElementById("kpi-vol-watched");
+  if (watchedEl) watchedEl.textContent = String(watchedCount);
+  const unwatchedEl = document.getElementById("kpi-vol-unwatched");
+  if (unwatchedEl) unwatchedEl.textContent = String(unwatchedCount);
+  const totalEl = document.getElementById("kpi-vol-total");
+  if (totalEl) totalEl.textContent = String(rows.length);
+}
+
+function updateInstancesKPI() {
+  const summary = document.getElementById("instances-summary");
+  if (!summary) return;
+  const rows = Array.from(document.querySelectorAll("#instances-tbody tr[data-instance]"));
+  if (!rows.length) return;
+  const watchedCount = rows.filter(function (r) {
+    return r.dataset.autoresize === "true";
+  }).length;
+
+  const watchedEl = document.getElementById("kpi-inst-watched");
+  if (watchedEl) watchedEl.textContent = String(watchedCount);
+  const totalEl = document.getElementById("kpi-inst-total");
+  if (totalEl) totalEl.textContent = String(rows.length);
+}
+
 function wireAutoresizeToggles(root) {
   root.querySelectorAll(".autoresize-toggle").forEach(function (toggle) {
     toggle.addEventListener("change", function () {
@@ -374,6 +405,12 @@ function wireAutoresizeToggles(root) {
                 : '<span class="badge badge-muted">No</span>';
             }
             row.dataset.watchedReason = watched ? (viaInstance ? "instance" : "own") : "off";
+            updateVolumesKPI();
+          } else if (kind === "instances") {
+            updateInstancesKPI();
+          }
+          if (typeof showToast === "function") {
+            showToast((kind === "volumes" ? "Volume " : "Instance ") + id + " autoresize " + (desired ? "enabled" : "disabled"), "success");
           }
         })
         .catch(function () {
@@ -525,9 +562,130 @@ function initThemeToggle() {
   });
 }
 
+// ---- Table Sorting ---------------------------------------------------------
+
+function wireTableSorting() {
+  document.querySelectorAll("table").forEach(function (table) {
+    const thead = table.tHead;
+    if (!thead || table.dataset.sortWired) return;
+    table.dataset.sortWired = "1";
+    const headers = Array.from(thead.rows[0].cells);
+
+    headers.forEach(function (th, colIdx) {
+      if (th.textContent.trim().toLowerCase() === "autoresize") return;
+      th.classList.add("is-sortable");
+
+      th.addEventListener("click", function () {
+        const tbody = table.tBodies[0];
+        if (!tbody) return;
+        const rows = Array.from(tbody.rows).filter(r => !r.classList.contains("empty-row"));
+        if (rows.length <= 1) return;
+
+        const isAsc = th.classList.contains("sort-asc");
+        headers.forEach(h => h.classList.remove("sort-asc", "sort-desc"));
+        th.classList.add(isAsc ? "sort-desc" : "sort-asc");
+        const dir = isAsc ? -1 : 1;
+
+        rows.sort(function (a, b) {
+          const cellA = (a.cells[colIdx] && a.cells[colIdx].textContent.trim()) || "";
+          const cellB = (b.cells[colIdx] && b.cells[colIdx].textContent.trim()) || "";
+
+          const numA = parseFloat(cellA.replace(/[^0-9.-]/g, ""));
+          const numB = parseFloat(cellB.replace(/[^0-9.-]/g, ""));
+          if (!isNaN(numA) && !isNaN(numB) && cellA.match(/\d/) && cellB.match(/\d/)) {
+            return (numA - numB) * dir;
+          }
+          return cellA.localeCompare(cellB) * dir;
+        });
+
+        rows.forEach(r => tbody.appendChild(r));
+        const controller = tableControllers[table.id];
+        if (controller && controller.apply) controller.apply();
+      });
+    });
+  });
+}
+
+// ---- CSV Export ------------------------------------------------------------
+
+function wireExportCSVButtons() {
+  document.querySelectorAll(".export-csv-btn").forEach(function (btn) {
+    if (btn.dataset.wired) return;
+    btn.dataset.wired = "1";
+    btn.addEventListener("click", function () {
+      const tableId = btn.dataset.table;
+      const filename = btn.dataset.filename || "export.csv";
+      const table = document.getElementById(tableId);
+      if (!table) return;
+
+      const headers = Array.from(table.tHead.rows[0].cells).map(th => th.textContent.trim()).filter(h => h.toLowerCase() !== "autoresize");
+      const rows = Array.from(table.tBodies[0].rows).filter(r => !r.classList.contains("empty-row") && !r.classList.contains("is-hidden"));
+
+      if (rows.length === 0) {
+        showToast("No visible data to export", "error");
+        return;
+      }
+
+      const csvRows = [headers.map(h => '"' + h.replace(/"/g, '""') + '"').join(",")];
+
+      rows.forEach(function (row) {
+        const cells = Array.from(row.cells).map(c => c.textContent.trim().replace(/\s+/g, " "));
+        const rowData = cells.slice(0, headers.length).map(v => '"' + v.replace(/"/g, '""') + '"');
+        csvRows.push(rowData.join(","));
+      });
+
+      const blob = new Blob([csvRows.join("\n")], { type: "text/csv;charset=utf-8;" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+      showToast("Exported " + rows.length + " rows to CSV", "success");
+    });
+  });
+}
+
+// ---- Shortcuts Modal & Keyboard Handlers -----------------------------------
+
+function wireShortcutsModal() {
+  const modal = document.getElementById("shortcuts-modal");
+  if (!modal || modal.dataset.wired) return;
+  modal.dataset.wired = "1";
+
+  function openShortcuts() { modal.classList.remove("is-hidden"); }
+  function closeShortcuts() { modal.classList.add("is-hidden"); }
+
+  const closeBtn = document.getElementById("shortcuts-close");
+  const overlay = document.getElementById("shortcuts-overlay");
+  if (closeBtn) closeBtn.addEventListener("click", closeShortcuts);
+  if (overlay) overlay.addEventListener("click", closeShortcuts);
+
+  document.addEventListener("keydown", function (e) {
+    if (["INPUT", "TEXTAREA", "SELECT"].includes(document.activeElement.tagName) || document.activeElement.isContentEditable) {
+      return;
+    }
+    if (e.key === "?" || (e.shiftKey && e.key === "?") || (e.key === "/" && e.shiftKey)) {
+      e.preventDefault();
+      modal.classList.contains("is-hidden") ? openShortcuts() : closeShortcuts();
+    } else if (e.key === "Escape") {
+      closeShortcuts();
+    } else if (e.key === "t" || e.key === "T") {
+      const toggleBtn = document.getElementById("theme-toggle");
+      if (toggleBtn) toggleBtn.click();
+    } else if (e.key === "r" || e.key === "R") {
+      e.preventDefault();
+      showToast("Refreshing data…", "info");
+      refreshLiveData();
+    }
+  });
+}
+
 function initKeyboardShortcuts() {
   document.addEventListener("keydown", function (e) {
-    if (e.key === "/" && !["INPUT", "TEXTAREA", "SELECT"].includes(document.activeElement.tagName) && !document.activeElement.isContentEditable) {
+    if (e.key === "/" && !e.shiftKey && !["INPUT", "TEXTAREA", "SELECT"].includes(document.activeElement.tagName) && !document.activeElement.isContentEditable) {
       const searchBox = document.querySelector("input[type='search']");
       if (searchBox) {
         e.preventDefault();
@@ -549,6 +707,9 @@ wireCodeCopyButtons(document);
 markClickableRows();
 initThemeToggle();
 initKeyboardShortcuts();
+wireTableSorting();
+wireExportCSVButtons();
+wireShortcutsModal();
 
 // ---- Live refresh ------------------------------------------------------------
 
@@ -559,7 +720,7 @@ initKeyboardShortcuts();
 // outside the swapped elements, so they're untouched.
 const POLL_INTERVAL_MS = 10000;
 const SWAP_IDS = [
-  "dashboard-stats", "instances-tbody", "volumes-tbody", "resize-tbody", "scan-tbody", "audit-tbody",
+  "dashboard-stats", "volumes-summary", "instances-summary", "instances-tbody", "volumes-tbody", "resize-tbody", "scan-tbody", "audit-tbody",
   "accounts-tbody", "account-status",
 ];
 let refreshInFlight = false;

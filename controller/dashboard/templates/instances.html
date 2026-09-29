@@ -8,12 +8,35 @@
 {% endblock %}
 
 {% block content %}
+<div class="kpi-grid kpi-grid-compact" id="instances-summary">
+  <div class="kpi-card">
+    <div class="kpi-top"><span class="kpi-label">Discovered instances</span></div>
+    <div class="kpi-value" id="kpi-inst-total">{{ instances | length }}</div>
+  </div>
+  <div class="kpi-card">
+    <div class="kpi-top"><span class="kpi-label">Running instances</span></div>
+    <div class="kpi-value" id="kpi-inst-running">{{ instances | selectattr('state', 'equalto', 'running') | list | length }}</div>
+  </div>
+  <div class="kpi-card">
+    <div class="kpi-top"><span class="kpi-label">Autoresize watched</span></div>
+    <div class="kpi-value" id="kpi-inst-watched">{{ instances | selectattr('autoresize') | list | length }}</div>
+  </div>
+  <div class="kpi-card">
+    <div class="kpi-top"><span class="kpi-label">Stopped instances</span></div>
+    <div class="kpi-value" id="kpi-inst-stopped">{{ instances | selectattr('state', 'equalto', 'stopped') | list | length }}</div>
+  </div>
+</div>
+
 <div class="filters">
   <input type="search" id="instances-search" placeholder="Search instance ID…" aria-label="Search instances">
   {{ filter_select("instances-account-filter", "account", "All accounts", instance_accounts) }}
   {{ filter_select("instances-region-filter", "region", "All regions", instance_regions) }}
   {{ autoresize_select("instances-autoresize-filter") }}
   <span class="count" id="instances-count"></span>
+  <button type="button" class="btn btn-quiet export-csv-btn" data-table="instances-table" data-filename="spaceshift-instances.csv" title="Export instances to CSV">
+    <svg class="icon" viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+    Export CSV
+  </button>
 </div>
 <div class="panel">
   <table id="instances-table">
@@ -30,7 +53,15 @@
       <td>{{ i.account_name }}</td>
       <td>{{ i.region }}</td>
       <td>{{ i.instance_type }}</td>
-      <td>{{ i.state }}</td>
+      <td>
+        {% if i.state == "running" %}
+        <span class="badge badge-green"><span class="dot-green"></span>running</span>
+        {% elif i.state == "stopped" %}
+        <span class="badge badge-muted"><span class="dot-gray"></span>stopped</span>
+        {% else %}
+        <span class="badge badge-muted">{{ i.state }}</span>
+        {% endif %}
+      </td>
       <td class="num">
         {{ i.threshold_percent if i.threshold_percent is not none else default_threshold }}%
         {%- if i.threshold_percent is none %}
