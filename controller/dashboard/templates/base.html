@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="csrf-token" content="{{ csrf_token() }}">
 <title>{% block title %}{% endblock %} · Spaceshift</title>
-<link rel="stylesheet" href="{{ url_for('static', filename='css/dashboard.css') }}?v=2.6.1">
+<link rel="stylesheet" href="{{ url_for('static', filename='css/dashboard.css') }}?v=2.6.2">
 </head>
 {# Sign-in pages set standalone: no nav, no live refresh - there's nothing to refresh. #}
 <body{% if standalone %} data-live="off"{% endif %}>
@@ -13,7 +13,11 @@
   <div class="topbar-inner">
     <a class="brand" href="{{ url_for('overview') }}">
       <span class="brand-mark" aria-hidden="true">
-        <svg viewBox="0 0 24 24"><path d="M12 2l8 4v6c0 5-3.5 8.5-8 10-4.5-1.5-8-5-8-10V6z"/></svg>
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor">
+          <path d="M12 2.5L20.5 7.4V16.6L12 21.5L3.5 16.6V7.4L12 2.5Z" stroke-width="2" stroke-linejoin="round"/>
+          <path d="M12 2.5V12M20.5 7.4L12 12M3.5 7.4L12 12" stroke-width="1.75" stroke-linejoin="round" opacity="0.65"/>
+          <path d="M12 15.5V9M9.5 11.5L12 9L14.5 11.5" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/>
+        </svg>
       </span>
       Spaceshift
     </a>
