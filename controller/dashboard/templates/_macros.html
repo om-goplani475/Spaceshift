@@ -32,7 +32,7 @@
 
 {% macro scan_decision(decision) %}
 {% if decision %}
-<span class="badge {{ decision_badge(decision) }}">{{ decision }}</span>
+<span class="badge {{ decision_badge(decision) }}" title="{{ decision_hint(decision) }}">{{ decision }}</span>
 {% else %}
 <span class="muted-note">not yet scanned</span>
 {% endif %}

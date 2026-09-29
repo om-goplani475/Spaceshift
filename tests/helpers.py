@@ -207,6 +207,7 @@ class InMemoryStateBackend(StateBackend):
         region: str,
         size_gb: int,
         device_name: str | None,
+        name: str | None = None,
     ) -> None:
         with self._lock:
             existing = self._volumes.get(volume_id)
@@ -221,6 +222,7 @@ class InMemoryStateBackend(StateBackend):
                 threshold_percent=existing.threshold_percent if existing else None,
                 last_seen_at=datetime.now(UTC),
                 is_stale=False,
+                name=name,
             )
 
     def mark_stale(

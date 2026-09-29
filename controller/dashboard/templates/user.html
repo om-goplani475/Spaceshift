@@ -9,7 +9,6 @@
   {% else %}<span class="badge badge-green">active</span>{% endif %}
   · created <span class="ts" data-ts="{{ user.created_at.isoformat() }}"></span>
   {% if user.last_login_at %}· last sign-in <span class="ts" data-ts="{{ user.last_login_at.isoformat() }}"></span>{% endif %}
-  · <a href="{{ url_for('users.list_users') }}">all users</a>
 </p>
 {% endblock %}
 
@@ -46,8 +45,8 @@
     {% endfor %}
     <div class="settings-actions">
       <button type="submit" class="btn btn-primary">Save roles</button>
-      {% if last_admin %}<span class="config-status">Last active admin - can't be demoted or deactivated.</span>{% endif %}
     </div>
+    {% if last_admin %}<p class="muted-note settings-note">Last active admin - can't be demoted or deactivated.</p>{% endif %}
   </form>
 </section>
 

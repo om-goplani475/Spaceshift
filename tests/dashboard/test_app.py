@@ -26,7 +26,7 @@ def test_pages_render_empty_states(state, client):
 
 def test_nav_marks_current_page(state, client):
 
-    pages = [("/", "Overview"), ("/instances", "Instances"), ("/volumes", "Volumes"), ("/settings", "Settings")]
+    pages = [("/", "Dashboard"), ("/instances", "Instances"), ("/volumes", "Volumes"), ("/settings", "Settings")]
     for path, label in pages:
         html = client.get(path).data.decode()
         # The current nav link carries aria-current and, somewhere inside
@@ -35,6 +35,12 @@ def test_nav_marks_current_page(state, client):
         assert re.search(rf'aria-current="page"[^>]*>.*?{re.escape(label)}</span></a>', html)
         # exactly one link is current
         assert html.count('aria-current="page"') == 1
+
+
+def test_live_indicator_has_no_ticking_age_text(client):
+    html = client.get("/").data.decode()
+    assert 'id="live-label"' in html
+    assert 'id="live-age"' not in html
 
 
 def test_instances_page_shows_the_name_tag_or_a_dash(state, client):
@@ -46,6 +52,31 @@ def test_instances_page_shows_the_name_tag_or_a_dash(state, client):
     assert "web-1" in html
     row = html.split('data-instance="i-unnamed"')[1].split("</tr>")[0]
     assert "–" in row  # en dash placeholder for an instance with no Name tag
+
+
+def test_volumes_page_shows_the_volumes_own_and_its_instances_name_tag(state, client):
+    state.upsert_instance("default", "i-1", "us-east-1", "t3.micro", "running", name="web-1")
+    state.upsert_volume("default", "vol-1", "i-1", "us-east-1", 100, "/dev/xvdf", name="data-1")
+
+    html = client.get("/volumes").data.decode()
+    row = html.split('data-volume="vol-1"')[1].split("</tr>")[0]
+
+    assert "data-1" in row  # the volume's own Name tag
+    assert "web-1" in row  # its attached instance's Name tag
+
+
+def test_watched_toggle_carries_the_instance_autoresize_flag_for_optimistic_ui_updates(state, client):
+    # instances.html has no Watched column to update optimistically, but
+    # volumes.html does - the row needs to tell dashboard.js whether the
+    # attached instance's own autoresize is on, since turning the volume's
+    # own toggle off still leaves it watched "via instance" when it is.
+    state.upsert_instance("default", "i-1", "us-east-1", "t3.micro", "running")
+    state.set_instance_autoresize("i-1", True)
+    state.upsert_volume("default", "vol-1", "i-1", "us-east-1", 100, "/dev/xvdf")
+
+    html = client.get("/volumes").data.decode()
+
+    assert 'data-instance-autoresize="true"' in html
 
 
 def test_index_renders_records(state, client):
@@ -76,6 +107,30 @@ def test_index_renders_scan_history(state, client):
     assert response.status_code == 200
     assert b"vol-9" in response.data
     assert b"below_threshold" in response.data
+    # A hover tooltip on the decision badge, so "below_threshold" reads as
+    # more than an internal code name.
+    assert b"Usage is under the threshold" in response.data
+
+
+def test_scan_history_shows_the_name_tag_instead_of_the_id_when_one_exists(state, client):
+    state.upsert_instance("default", "i-9", "us-east-1", "t3.micro", "running", name="db-1")
+    state.upsert_volume("default", "vol-9", "i-9", "us-east-1", 100, "/dev/xvdf", name="data-9")
+    state.record_scan("default", "us-east-1", "vol-9", "i-9", 100, 80, 42.0, "below_threshold")
+
+    html = client.get("/").data.decode()
+    row = html.split('data-volume="vol-9"')[1].split("</tr>")[0]
+
+    assert "data-9" in row and "db-1" in row
+    assert 'data-id="vol-9"' in row  # the real id stays available for the drawer/CLI command
+
+
+def test_scan_history_falls_back_to_the_id_when_untagged(state, client):
+    state.record_scan("default", "us-east-1", "vol-9", "i-9", 100, 80, 42.0, "below_threshold")
+
+    html = client.get("/").data.decode()
+    row = html.split('data-volume="vol-9"')[1].split("</tr>")[0]
+
+    assert "vol-9" in row and "i-9" in row
 
 
 def test_api_scans_returns_json_newest_first(state, client):

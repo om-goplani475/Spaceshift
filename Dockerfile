@@ -6,6 +6,9 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 COPY controller/ controller/
+# Just the two policy templates, not the rest of docs/ (guides, screenshots) -
+# the setup guide page reads these live so they can't drift from what's in git.
+COPY docs/iam-policy.json docs/iam-policy-tag-scoped.json docs/
 
 # Non-root by default. State lives in the separate postgres container/volume
 # (see docker-compose.yml), not on disk here, so there's nothing else to chown.

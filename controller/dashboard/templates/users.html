@@ -10,7 +10,7 @@
 {% block content %}
 <form class="filters" method="post" action="{{ url_for('users.create_user') }}">
   <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-  <input type="text" name="username" placeholder="new username" aria-label="New username" autocapitalize="none"
+  <input type="text" name="username" placeholder="New Username" aria-label="New username" autocapitalize="none"
          spellcheck="false" required pattern="[a-z0-9._\-]{3,32}" title="3-32 characters: a-z 0-9 . _ -">
   <button type="submit" class="btn btn-primary">Create user</button>
   <span class="count">A temporary password is generated and shown once; they must change it on first sign-in.</span>

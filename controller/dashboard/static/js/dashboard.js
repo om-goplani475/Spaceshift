@@ -118,7 +118,11 @@ function wireFilters(tableId, searchId, selectIds, countId, pagerId) {
         prev.disabled = page <= 1;
         prev.onclick = function () { page--; apply(); };
         const label = document.createElement("span");
-        label.textContent = "Page " + page + " of " + totalPages;
+        // Same "shown–shownEnd of total" wording as the count above the
+        // table, not "Page N of M" - a row range is what tells you where
+        // you are relative to what you're looking for; the page number
+        // doesn't.
+        label.textContent = (start + 1) + "–" + Math.min(start + PAGE_SIZE, matched.length) + " of " + matched.length;
         const next = document.createElement("button");
         next.type = "button";
         next.className = "btn";
@@ -162,19 +166,27 @@ wireFilters(
 // Generic: any table listed here shows a right-hand drawer with every
 // column of the clicked row, keyed off the table's own <thead> - no
 // per-table drawer markup or extra backend fields needed. The first
-// column is always an id (volume/instance) and becomes the drawer title;
-// clicks on an interactive cell (the autoresize switch, a link) pass
-// through instead of opening the drawer. Plain DOM, not a framework
-// component - the dashboard's CSP has no script-src 'unsafe-eval', which
-// rules out Alpine.js (and anything else that compiles expressions via
-// `new Function` at runtime).
+// column is always the row's real identifier (volume/instance id) and
+// drives the Identifier section and the generated AWS CLI command; a
+// "Name" column, when the table has one, becomes the drawer's big title
+// instead (falling back to the id for tables with no Name column) so the
+// drawer reads the way the AWS console does - human name up top, id
+// underneath. Clicks on an interactive cell (the autoresize switch, a
+// link) pass through instead of opening the drawer. Plain DOM, not a
+// framework component - the dashboard's CSP has no script-src
+// 'unsafe-eval', which rules out Alpine.js (and anything else that
+// compiles expressions via `new Function` at runtime).
 const DRAWER_TABLES = ["resize-table", "scan-table", "instances-table", "volumes-table"];
 
-function openDrawer(title, fields) {
+function openDrawer(id, title, fields) {
   const root = document.getElementById("drawer-root");
   if (!root) return;
   document.getElementById("drawer-title").textContent = title;
-  document.getElementById("drawer-id").textContent = title;
+  const isNamed = title !== id;
+  const subtitle = document.getElementById("drawer-subtitle");
+  subtitle.textContent = isNamed ? id : "Details from this row";
+  subtitle.classList.toggle("mono", isNamed);
+  document.getElementById("drawer-id").textContent = id;
   const fieldsEl = document.getElementById("drawer-fields");
   fieldsEl.innerHTML = "";
   fields.forEach(function (f) {
@@ -190,10 +202,10 @@ function openDrawer(title, fields) {
     fieldsEl.appendChild(row);
   });
 
-  const cliMatch = /^(vol|i)-[0-9a-f]+$/.exec(title);
+  const cliMatch = /^(vol|i)-[0-9a-f]+$/.exec(id);
   const cliSection = document.getElementById("drawer-cli-section");
   if (cliMatch) {
-    const cmd = (title.startsWith("vol-") ? "aws ec2 describe-volumes --volume-ids " : "aws ec2 describe-instances --instance-ids ") + title;
+    const cmd = (id.startsWith("vol-") ? "aws ec2 describe-volumes --volume-ids " : "aws ec2 describe-instances --instance-ids ") + id;
     document.getElementById("drawer-cli-cmd").textContent = cmd;
     cliSection.classList.remove("is-hidden");
   } else {
@@ -252,6 +264,16 @@ function wireDrawerChrome() {
   if (copyCli) copyCli.addEventListener("click", function () { copyToClipboard(document.getElementById("drawer-cli-cmd").textContent, copyCli); });
 }
 
+// A handful of cells aren't plain text (the autoresize switch has none at
+// all) - read those from the row's own data-* attributes instead of the
+// cell's rendered text, which is what a generic "read every <td>" pass
+// would otherwise show as a blank "–".
+function _drawerCellValue(header, cell, row) {
+  if (header === "Autoresize") return row.dataset.autoresize === "true" ? "On" : "Off";
+  const text = cell && cell.textContent.trim();
+  return text || "–";
+}
+
 function wireRowDrawer(tableId) {
   const table = document.getElementById(tableId);
   if (!table || table.dataset.drawerWired) return;
@@ -262,10 +284,51 @@ function wireRowDrawer(tableId) {
     if (!row || !table.contains(row) || row.classList.contains("empty-row")) return;
     const headers = Array.from(table.tHead.rows[0].cells).map(th => th.textContent.trim());
     const cells = Array.from(row.cells);
-    const title = cells[0] && cells[0].textContent.trim();
-    if (!title) return;
-    const fields = headers.slice(1).map((k, i) => ({ k: k, v: (cells[i + 1] && cells[i + 1].textContent.trim()) || "–" }));
-    openDrawer(title, fields);
+    const idCell = cells[0];
+    // Usually the id is just cells[0]'s own text (Volumes/Instances
+    // pages) - but the Scan history table shows the AWS Name tag there
+    // instead (per row["v"]/instance_names in app.py), with the real id
+    // stashed in data-id so the Identifier section and the AWS CLI command
+    // still work from the actual id, not the display name.
+    const id = (idCell && idCell.dataset.id) || (idCell && idCell.textContent.trim());
+    if (!id) return;
+    const fields = headers
+      .slice(1)
+      .map((k, i) => ({ k: k, v: _drawerCellValue(k, cells[i + 1], row) }))
+      .filter((f) => f.k !== "Name");
+    const nameIndex = headers.indexOf("Name");
+    let title = id;
+    if (nameIndex > 0 && cells[nameIndex]) {
+      const n = cells[nameIndex].textContent.trim();
+      if (n && n !== "–") title = n;
+    } else if (idCell && idCell.dataset.id && idCell.textContent.trim() !== id) {
+      title = idCell.textContent.trim();
+    }
+    openDrawer(id, title, fields);
+  });
+}
+
+// The setup guide's "Copy" buttons next to a policy snippet - separate from
+// copyToClipboard's icon-button callers above since these are text buttons
+// that swap their own label rather than just a color, to confirm the click
+// landed without the reader having to notice a subtle color change.
+function wireCodeCopyButtons(root) {
+  root.querySelectorAll(".code-copy-btn").forEach(function (btn) {
+    if (btn.dataset.copyWired) return;
+    btn.dataset.copyWired = "1";
+    const original = btn.textContent;
+    btn.addEventListener("click", function () {
+      const target = document.getElementById(btn.dataset.copyTarget);
+      if (!target || !navigator.clipboard) return;
+      navigator.clipboard.writeText(target.textContent).then(function () {
+        btn.textContent = "Copied";
+        btn.classList.add("is-copied");
+        setTimeout(function () {
+          btn.textContent = original;
+          btn.classList.remove("is-copied");
+        }, 1400);
+      });
+    });
   });
 }
 
@@ -294,7 +357,24 @@ function wireAutoresizeToggles(root) {
           return resp.json();
         })
         .then(function () {
-          toggle.closest("tr").dataset.autoresize = String(desired);
+          const row = toggle.closest("tr");
+          row.dataset.autoresize = String(desired);
+          // The real "is it watched" resolution (including threshold
+          // fallback) lives server-side and settles within one live-poll
+          // cycle (10s) - but the Watched badge only needs the same two
+          // facts the toggle itself just changed, so update it now rather
+          // than leaving it stale until the next poll.
+          if (kind === "volumes" && row.dataset.watchedReason !== "unattached") {
+            const viaInstance = !desired && row.dataset.instanceAutoresize === "true";
+            const watched = desired || viaInstance;
+            const cell = row.querySelector(".watched-cell");
+            if (cell) {
+              cell.innerHTML = watched
+                ? '<span class="badge badge-green">Yes' + (viaInstance ? " · via instance" : "") + "</span>"
+                : '<span class="badge badge-muted">No</span>';
+            }
+            row.dataset.watchedReason = watched ? (viaInstance ? "instance" : "own") : "off";
+          }
         })
         .catch(function () {
           toggle.checked = !desired;
@@ -465,6 +545,7 @@ wireConfigDirtyTracking(document);
 wireSettingsUpdateButton();
 wireNotificationTestButton();
 wireAllDrawers();
+wireCodeCopyButtons(document);
 markClickableRows();
 initThemeToggle();
 initKeyboardShortcuts();
@@ -482,16 +563,9 @@ const SWAP_IDS = [
   "accounts-tbody", "account-status",
 ];
 let refreshInFlight = false;
-let lastRefreshedAt = Date.now();
 
 const liveIndicator = document.getElementById("live-indicator");
-const liveAge = document.getElementById("live-age");
-
-function renderLiveAge() {
-  if (!liveAge) return;
-  const seconds = Math.round((Date.now() - lastRefreshedAt) / 1000);
-  liveAge.textContent = seconds < 5 ? "just now" : seconds + "s ago";
-}
+const liveLabel = document.getElementById("live-label");
 
 async function refreshLiveData() {
   if (document.hidden || refreshInFlight) return;
@@ -536,21 +610,22 @@ async function refreshLiveData() {
     wireConfigDirtyTracking(document);
     markClickableRows();
     Object.values(tableControllers).forEach(function (c) { c.apply(); });
-    lastRefreshedAt = Date.now();
     if (liveIndicator) liveIndicator.dataset.state = "idle";
+    if (liveLabel) liveLabel.textContent = "Live";
   } catch (e) {
-    // Network hiccup or similar - show it, and try again next tick.
+    // Network hiccup or similar - show it, and try again next tick. No
+    // countdown/age text on this indicator (just "is it live right now",
+    // not "how many seconds ago") - only the error state needs to say
+    // anything at all.
     if (liveIndicator) liveIndicator.dataset.state = "error";
+    if (liveLabel) liveLabel.textContent = "Error";
   } finally {
     refreshInFlight = false;
-    renderLiveAge();
   }
 }
 
 if (document.body.dataset.live !== "off") {
   setInterval(refreshLiveData, POLL_INTERVAL_MS);
-  setInterval(renderLiveAge, 1000);
-  renderLiveAge();
   document.addEventListener("visibilitychange", function () {
     if (!document.hidden) refreshLiveData();
   });

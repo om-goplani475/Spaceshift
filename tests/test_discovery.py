@@ -51,6 +51,17 @@ def test_sync_leaves_name_none_for_an_untagged_instance(aws, state, config):
     assert instance.name is None
 
 
+def test_sync_captures_the_volume_name_tag(aws, state, config):
+    ec2 = boto3.client("ec2", region_name=_REGION)
+    volume_id = ec2.create_volume(AvailabilityZone="us-east-1a", Size=100)["VolumeId"]
+    ec2.create_tags(Resources=[volume_id], Tags=[{"Key": "Name", "Value": "data-1"}])
+
+    discover_eligible_volumes(ec2, state, _ACCOUNT, _REGION, config)
+
+    volume = next(v for v in state.list_volumes(region=_REGION) if v.volume_id == volume_id)
+    assert volume.name == "data-1"
+
+
 def test_volume_level_autoresize_makes_it_eligible(aws, state, config):
     ec2 = boto3.client("ec2", region_name=_REGION)
     instance_id = _new_instance(ec2)

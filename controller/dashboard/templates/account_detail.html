@@ -4,10 +4,7 @@
 {% block heading %}{{ account.name }}{% endblock %}
 {% block lede %}
 <p class="lede">
-  {% if not account.enabled %}<span class="badge badge-muted">disabled</span>
-  {% elif account.last_error_at and (not account.last_ok_at or account.last_error_at > account.last_ok_at) %}<span class="badge badge-red">error</span>
-  {% elif account.last_ok_at %}<span class="badge badge-green">ok</span>
-  {% else %}<span class="badge badge-muted">not checked yet</span>{% endif %}
+  {% set label, cls = account_status(account) %}<span class="badge {{ cls }}">{{ label }}</span>
   · added <span class="ts" data-ts="{{ account.created_at.isoformat() }}"></span>
   · <a href="{{ url_for('accounts.list_accounts') }}">all accounts</a>
 </p>
@@ -43,10 +40,9 @@
       <span class="setting-label">By region</span>
       <p class="setting-description">
         {% for r in region_status %}
+        {% set label, cls = health_status(r.last_ok_at, r.last_error_at) %}
         <span class="mono">{{ r.region }}</span>:
-        {% if r.last_error and (not r.last_ok_at or r.last_error_at > r.last_ok_at) %}<span class="badge badge-red">error</span> {{ r.last_error }}
-        {% elif r.last_ok_at %}<span class="badge badge-green">ok</span>
-        {% else %}<span class="badge badge-muted">not checked yet</span>{% endif %}
+        <span class="badge {{ cls }}">{{ label }}</span>{% if label == "error" %} {{ r.last_error }}{% endif %}
         {% if not loop.last %}<br>{% endif %}
         {% endfor %}
       </p>

@@ -156,7 +156,7 @@ def test_verify_now_sets_the_request_and_page_shows_status(client, state):
     listing = client.get("/accounts").data.decode()
     assert ">error<" in listing
     state.record_account_check("prod", None)
-    assert ">ok<" in client.get("/accounts").data.decode()
+    assert ">healthy<" in client.get("/accounts").data.decode()
     data = client.get("/api/accounts").get_json()
     assert data[0]["name"] == "prod" and data[0]["last_ok_at"] is not None
 

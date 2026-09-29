@@ -7,6 +7,7 @@ from __future__ import annotations
 
 from dataclasses import asdict, replace
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 
 from flask import Flask, Response, g, jsonify, render_template, request, stream_with_context, url_for
 from markupsafe import Markup
@@ -29,6 +30,19 @@ _AUDIT_API_MAX_LIMIT = 1000
 # validated against before being persisted. See docs/SETUP.md section 5 for
 # why config.yaml itself no longer carries these fields.
 _DEFAULT_CONFIG_DICT = asdict(Config.from_dict({}))
+
+
+_DOCS_DIR = Path(__file__).resolve().parents[2] / "docs"
+
+
+def _read_doc(name: str) -> str:
+    """The setup guide reads these off disk rather than embedding a second
+    copy in Python, so the policy shown on the page can never drift from
+    docs/*.json - see the Dockerfile for what actually ships into the image."""
+    try:
+        return (_DOCS_DIR / name).read_text().strip()
+    except OSError:
+        return ""
 
 
 def _default_config_value(key: str) -> str:
@@ -154,20 +168,101 @@ _DECISION_BADGES = {
     "resize_failed": "badge-red",
 }
 
+# What each scan_log.decision value means in plain English - shown as a
+# tooltip on the badge, since the raw value (e.g. "ssm_not_ready") reads as
+# an internal code name to anyone who hasn't read scheduler.py.
+_DECISION_HINTS: dict[str, str] = {
+    "ssm_not_ready": "The SSM Agent on this instance isn't reporting Online yet, so disk usage can't be checked.",
+    "below_threshold": "Usage is under the threshold - no action needed.",
+    "would_resize": "Usage crossed the threshold, but dry run is on - nothing was actually resized.",
+    "resize_triggered": "Usage crossed the threshold - a real AWS resize and filesystem extend were triggered.",
+    "resize_skipped": "Eligible for a resize but skipped this cycle (e.g. one is already in progress).",
+    "resize_failed": "The AWS-side volume resize call itself failed - see the Resize activity table for detail.",
+    "needs_attention": "The filesystem extend failed too many times and needs manual review.",
+    "extend_retry_waiting": "The AWS resize succeeded; waiting out the backoff before the next extend retry.",
+    "extend_retry_attempted": "Retried the OS-side filesystem extend after an earlier AWS resize.",
+}
+
+
+_AUDIT_LABELS = {
+    AuditAction.INSTANCE_AUTORESIZE: "Autoresize toggled (instance)",
+    AuditAction.VOLUME_AUTORESIZE: "Autoresize toggled (volume)",
+    AuditAction.CONFIG_SET: "Setting changed",
+    AuditAction.USER_SETUP: "First admin set up",
+    AuditAction.USER_CREATE: "User created",
+    AuditAction.USER_PASSWORD_RESET: "Password reset",
+    AuditAction.USER_UNLOCK: "Account unlocked",
+    AuditAction.USER_DEACTIVATE: "User deactivated",
+    AuditAction.USER_REACTIVATE: "User reactivated",
+    AuditAction.USER_PASSWORD_CHANGE: "Password changed",
+    AuditAction.USER_ROLE_SET: "Role granted",
+    AuditAction.USER_ROLE_REVOKED: "Role revoked",
+    AuditAction.ACCESS_DENIED: "Access denied",
+    AuditAction.ACCOUNT_CREATE: "AWS account added",
+    AuditAction.ACCOUNT_UPDATE: "AWS account updated",
+    AuditAction.ACCOUNT_DISABLE: "AWS account disabled",
+    AuditAction.ACCOUNT_ENABLE: "AWS account enabled",
+    AuditAction.ACCOUNT_VERIFY_REQUESTED: "Verify requested",
+    AuditAction.NOTIFICATION_TEST: "Test notification sent",
+    AuditAction.AUTH_LOGIN: "Signed in",
+    AuditAction.AUTH_LOGIN_FAILED: "Sign-in failed",
+    AuditAction.AUTH_LOCKOUT: "Locked out",
+    AuditAction.AUTH_SETUP_TOKEN_REJECTED: "Setup token rejected",
+    AuditAction.AUTH_PASSWORD_CHANGE_FAILED: "Password change failed",
+    AuditAction.AUTH_LOGOUT: "Signed out",
+    AuditAction.AUDIT_PRUNE: "Old audit rows pruned",
+}
+
+_ACTOR_LABELS = {"cli": "CLI", "system": "System", "anonymous": "Anonymous"}
+
 
 _AUDIT_BADGES = {
-    AuditAction.AUTH_LOGIN_FAILED: "badge-amber",
+    # Red: the actor was blocked or something failed outright.
     AuditAction.AUTH_LOCKOUT: "badge-red",
     AuditAction.AUTH_SETUP_TOKEN_REJECTED: "badge-red",
+    AuditAction.AUTH_PASSWORD_CHANGE_FAILED: "badge-red",
+    AuditAction.ACCESS_DENIED: "badge-red",
+    # Amber: worth a second look, but not a failure.
+    AuditAction.AUTH_LOGIN_FAILED: "badge-amber",
     AuditAction.USER_DEACTIVATE: "badge-amber",
-    AuditAction.CONFIG_SET: "badge-blue",
-    AuditAction.INSTANCE_AUTORESIZE: "badge-blue",
-    AuditAction.VOLUME_AUTORESIZE: "badge-blue",
+    AuditAction.USER_ROLE_REVOKED: "badge-amber",
+    AuditAction.ACCOUNT_DISABLE: "badge-amber",
+    # Muted: routine, self-service, or system housekeeping.
+    AuditAction.USER_PASSWORD_CHANGE: "badge-muted",
+    AuditAction.AUTH_LOGOUT: "badge-muted",
+    AuditAction.AUDIT_PRUNE: "badge-muted",
+    # Everything else - normal changes an admin made on purpose - is blue.
 }
 
 
 def _audit_badge(action: str) -> str:
-    return _AUDIT_BADGES.get(action, "badge-muted")
+    return _AUDIT_BADGES.get(action, "badge-blue")
+
+
+def _audit_label(action: str) -> str:
+    return _AUDIT_LABELS.get(action, action)
+
+
+def _actor_label(actor_type: str) -> str:
+    return _ACTOR_LABELS.get(actor_type, actor_type)
+
+
+def _health_status(last_ok_at, last_error_at) -> tuple[str, str]:
+    """(label, badge class) from a pair of last-ok/last-error timestamps -
+    shared by an account's own status and each of its per-region rows."""
+    if last_error_at and (not last_ok_at or last_error_at > last_ok_at):
+        return "error", "badge-red"
+    if last_ok_at:
+        return "healthy", "badge-green"
+    return "not checked yet", "badge-muted"
+
+
+def _account_status(account) -> tuple[str, str]:
+    if not account.enabled:
+        return "disabled", "badge-muted"
+    if not account.regions:
+        return "no regions", "badge-amber"
+    return _health_status(account.last_ok_at, account.last_error_at)
 
 
 def _status_badge(status: ResizeStatus) -> str:
@@ -176,6 +271,10 @@ def _status_badge(status: ResizeStatus) -> str:
 
 def _decision_badge(decision: str) -> str:
     return _DECISION_BADGES.get(decision, "badge-muted")
+
+
+def _decision_hint(decision: str) -> str:
+    return _DECISION_HINTS.get(decision, "")
 
 
 def _latest_decision_by(scans, key) -> dict[str, str]:
@@ -285,9 +384,18 @@ def _resolve_volume_row(volume, instances_by_id: dict, default_threshold: int) -
     so this has to match it exactly or the two would quietly disagree.
     """
     instance = instances_by_id.get(volume.instance_id) if volume.instance_id else None
+    instance_name = instance.name if instance is not None else None
+    instance_autoresize = instance.autoresize if instance is not None else False
 
     if volume.instance_id is None or volume.device_name is None:
-        return {"watched": False, "watched_reason": "unattached", "threshold": None, "threshold_source": None}
+        return {
+            "watched": False,
+            "watched_reason": "unattached",
+            "threshold": None,
+            "threshold_source": None,
+            "instance_name": instance_name,
+            "instance_autoresize": instance_autoresize,
+        }
 
     if volume.autoresize:
         watched, watched_reason = True, "own"
@@ -308,6 +416,8 @@ def _resolve_volume_row(volume, instances_by_id: dict, default_threshold: int) -
         "watched_reason": watched_reason,
         "threshold": threshold,
         "threshold_source": threshold_source,
+        "instance_name": instance_name,
+        "instance_autoresize": instance_autoresize,
     }
 
 
@@ -334,7 +444,7 @@ def _group_settings(settings: list[dict]) -> list[dict]:
 # (endpoint, nav label) in display order - base.html renders these and
 # marks the current one via request.endpoint.
 _NAV_ITEMS = [
-    ("overview", "Overview"),
+    ("overview", "Dashboard"),
     ("instances", "Instances"),
     ("volumes", "Volumes"),
     ("audit", "Audit log"),
@@ -478,16 +588,52 @@ def create_app(state: StateBackend, auth: AuthSettings) -> Flask:
             "no_accounts": no_accounts,
             "status_badge": _status_badge,
             "decision_badge": _decision_badge,
+            "decision_hint": _decision_hint,
             "audit_badge": _audit_badge,
+            "audit_label": _audit_label,
+            "actor_label": _actor_label,
+            "account_status": _account_status,
+            "health_status": _health_status,
             "nav_icon": _nav_icon,
             "role_label": _role_label(scope),
         }
+
+    @app.get("/setup-guide")
+    def setup_guide():
+        require_admin()
+        accounts = [a for a in state.list_accounts() if a.enabled and a.regions]
+        healthy_accounts = [a for a in accounts if _account_status(a)[0] == "healthy"]
+        error_accounts = [a for a in accounts if _account_status(a)[0] == "error"]
+        autoresize_on = any(i.autoresize for i in state.list_instances(account_names=_readable())) or any(
+            v.autoresize for v in state.list_volumes(account_names=_readable())
+        )
+        try:
+            config = Config.from_dict(apply_db_overrides(_DEFAULT_CONFIG_DICT, state.list_config()))
+            notifications_on = config.notifications.method != "none"
+        except (ValueError, TypeError):
+            notifications_on = False
+        return render_template(
+            "setup_guide.html",
+            accounts_ready=bool(accounts),
+            any_healthy=bool(healthy_accounts),
+            error_accounts=error_accounts,
+            autoresize_on=autoresize_on,
+            notifications_on=notifications_on,
+            iam_policy_json=_read_doc("iam-policy.json"),
+        )
 
     @app.get("/")
     def overview():
         records = state.list_all(account_names=_readable())
         scans = state.list_scans(limit=_SCAN_LIST_LIMIT, account_names=_readable())
         volume_rows = _build_volume_rows(state, state.list_volumes(account_names=_readable()))
+        # Scan/resize rows only ever store the volume/instance id - these
+        # let the Scan history table show the AWS Name tag instead (the id
+        # is still what search/filter and the drawer's Identifier section
+        # use, from the row's own data-volume/data-instance attribute).
+        # Skips untagged resources so .get(id, id) falls back to the id.
+        volume_names = {row["v"].volume_id: row["v"].name for row in volume_rows if row["v"].name}
+        instance_names = {i.instance_id: i.name for i in state.list_instances(account_names=_readable()) if i.name}
         return render_template(
             "overview.html",
             records=records,
@@ -502,6 +648,8 @@ def create_app(state: StateBackend, auth: AuthSettings) -> Flask:
             dry_run=_effective_dry_run(state),
             storage_breakdown=_storage_breakdown(scans),
             resize_activity=_resize_activity(records),
+            volume_names=volume_names,
+            instance_names=instance_names,
         )
 
     @app.get("/instances")
@@ -519,6 +667,7 @@ def create_app(state: StateBackend, auth: AuthSettings) -> Flask:
             latest_instance_decisions=_latest_decision_by(scans, lambda s: s.instance_id),
             instance_accounts=sorted({i.account_name for i in instances}),
             instance_regions=sorted({i.region for i in instances}),
+            default_threshold=_effective_default_threshold(state),
         )
 
     @app.get("/volumes")

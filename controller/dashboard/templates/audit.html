@@ -4,7 +4,7 @@
 {% block title %}Audit log{% endblock %}
 {% block heading %}Audit log{% endblock %}
 {% block lede %}
-<p class="lede">Who changed what, when, and from where. Sign-ins, setting changes, autoresize toggles, and user administration - the controller's own resizes are on the <a href="{{ url_for('overview') }}">Overview</a>.</p>
+<p class="lede">Who changed what, when, and from where. Sign-ins, setting changes, autoresize toggles, and user administration - the controller's own resizes are on the <a href="{{ url_for('overview') }}">Dashboard</a>.</p>
 {% endblock %}
 
 {% block content %}
@@ -13,13 +13,14 @@
          autocapitalize="none" spellcheck="false">
   <select name="action" aria-label="Filter by action">
     <option value="">All actions</option>
-    {% for a in actions %}<option value="{{ a.value }}" {{ "selected" if args.get('action') == a.value }}>{{ a.value }}</option>{% endfor %}
+    {% for a in actions %}<option value="{{ a.value }}" {{ "selected" if args.get('action') == a.value }}>{{ audit_label(a.value) }}</option>{% endfor %}
   </select>
   <input type="search" name="target" value="{{ args.get('target', '') }}" placeholder="Target (vol-…, i-…, key)" aria-label="Filter by target">
   <input type="date" name="since" value="{{ args.get('since', '') }}" aria-label="From date">
   <input type="date" name="until" value="{{ args.get('until', '') }}" aria-label="To date">
   <button type="submit" class="btn">Filter</button>
   {% if filtered %}<a class="btn btn-quiet" href="{{ url_for('audit') }}">Clear</a>{% endif %}
+  <span class="count">{{ rows|length }} shown</span>
   <a class="btn btn-quiet audit-export" href="{{ export_url }}" title="Download every matching row as CSV">Export CSV</a>
 </form>
 {% if error %}<p class="form-error" role="alert">{{ error }}</p>{% endif %}
@@ -36,9 +37,9 @@
       <td>
         {# Only a signed-in user is a "who". A failed login's typed name is its target, not its actor. #}
         {% if r.actor_type == "user" %}<span class="mono">{{ r.actor_username }}</span>
-        {% else %}<span class="muted-note">{{ r.actor_type }}</span>{% endif %}
+        {% else %}<span class="muted-note">{{ actor_label(r.actor_type) }}</span>{% endif %}
       </td>
-      <td><span class="badge {{ audit_badge(r.action) }}">{{ r.action }}</span></td>
+      <td><span class="badge {{ audit_badge(r.action) }}" title="{{ r.action }}">{{ audit_label(r.action) }}</span></td>
       <td class="mono">{{ r.target_id or "" }}</td>
       <td>{{ r.account_name or "" }}</td>
       <td>

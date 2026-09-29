@@ -27,8 +27,7 @@
     </nav>
     <div class="live" id="live-indicator" data-state="idle" title="This page refreshes itself every 10 seconds while visible">
       <span class="live-dot" aria-hidden="true"></span>
-      <span class="live-label">Live</span>
-      <span class="live-age" id="live-age"></span>
+      <span class="live-label" id="live-label">Live</span>
     </div>
     <button type="button" class="theme-toggle" id="theme-toggle" title="Toggle dark/light theme" aria-label="Toggle theme">
       <svg class="icon theme-icon-dark" viewBox="0 0 24 24"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
@@ -56,9 +55,9 @@
 </header>
 
 <main class="page{% if standalone %} page-narrow{% endif %}">
-  {% if no_accounts and request.endpoint != "accounts.list_accounts" %}
+  {% if no_accounts and request.endpoint != "setup_guide" %}
   <div class="flashes" role="status">
-    <p class="flash flash-info">No AWS account with a region is enabled - the controller is idle. <a href="{{ url_for('accounts.list_accounts') }}">Set one up on the Accounts page</a>.</p>
+    <p class="flash flash-info">No AWS account with a region is enabled - the controller is idle. <a href="{{ url_for('setup_guide') }}">Follow the setup guide</a> to get it watching your instances.</p>
   </div>
   {% endif %}
   {% if scope and not scope.has_any_access %}
@@ -89,7 +88,7 @@
     <div class="drawer-header">
       <div>
         <div class="drawer-title" id="drawer-title"></div>
-        <div class="drawer-subtitle">Details from this row</div>
+        <div class="drawer-subtitle" id="drawer-subtitle"></div>
       </div>
       <button type="button" class="drawer-close" id="drawer-close" aria-label="Close">
         <svg class="icon" viewBox="0 0 24 24"><path d="M18 6 6 18M6 6l12 12"/></svg>
@@ -114,10 +113,7 @@
           </button>
         </div>
       </div>
-      <div>
-        <div class="drawer-section-title">Fields</div>
-        <div id="drawer-fields"></div>
-      </div>
+      <div id="drawer-fields"></div>
     </div>
   </aside>
 </div>

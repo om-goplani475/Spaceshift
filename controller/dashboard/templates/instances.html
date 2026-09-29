@@ -31,7 +31,12 @@
       <td>{{ i.region }}</td>
       <td>{{ i.instance_type }}</td>
       <td>{{ i.state }}</td>
-      <td class="num">{{ (i.threshold_percent ~ "%") if i.threshold_percent is not none else "default" }}</td>
+      <td class="num">
+        {{ i.threshold_percent if i.threshold_percent is not none else default_threshold }}%
+        {%- if i.threshold_percent is none %}
+        <span class="eligibility-note">(default)</span>
+        {%- endif %}
+      </td>
       <td>{{ autoresize_switch("instances", i.instance_id, i.autoresize) }}</td>
       <td>{{ scan_decision(latest_instance_decisions.get(i.instance_id)) }}</td>
       <td class="ts" data-ts="{{ i.last_seen_at.isoformat() }}"></td>

@@ -130,5 +130,6 @@ def _sync_volumes(ec2_client, state: StateBackend, account_name: str, region: st
                 region=region,
                 size_gb=volume["Size"],
                 device_name=attachment["Device"] if attachment else None,
+                name=_name_tag(volume.get("Tags", [])),
             )
     return seen_ids

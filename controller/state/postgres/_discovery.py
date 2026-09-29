@@ -83,23 +83,25 @@ class PostgresDiscoveryMixin(DiscoveryStateContract):
         region: str,
         size_gb: int,
         device_name: str | None,
+        name: str | None = None,
     ) -> None:
         with self._cursor(commit=True) as cur:
             cur.execute(
                 """
                 INSERT INTO volumes
-                    (volume_id, instance_id, account_name, region, size_gb, device_name, last_seen_at, is_stale)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, FALSE)
+                    (volume_id, instance_id, account_name, region, size_gb, device_name, name, last_seen_at, is_stale)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, FALSE)
                 ON CONFLICT (volume_id) DO UPDATE SET
                     instance_id  = EXCLUDED.instance_id,
                     account_name = EXCLUDED.account_name,
                     region       = EXCLUDED.region,
                     size_gb      = EXCLUDED.size_gb,
                     device_name  = EXCLUDED.device_name,
+                    name         = EXCLUDED.name,
                     last_seen_at = EXCLUDED.last_seen_at,
                     is_stale     = FALSE
                 """,
-                (volume_id, instance_id, account_name, region, size_gb, device_name, datetime.now(UTC)),
+                (volume_id, instance_id, account_name, region, size_gb, device_name, name, datetime.now(UTC)),
             )
 
     def mark_stale(

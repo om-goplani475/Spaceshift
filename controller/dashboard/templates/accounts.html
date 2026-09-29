@@ -4,7 +4,7 @@
 {% block title %}Accounts{% endblock %}
 {% block heading %}AWS accounts{% endblock %}
 {% block lede %}
-<p class="lede">Which AWS accounts the controller watches, through which role, in which regions. The controller re-reads this list every cycle. Secrets never live here: the base identity is the host's instance role or <code>AWS_ACCESS_KEY_ID</code>/<code>AWS_SECRET_ACCESS_KEY</code> in <code>.env</code>.</p>
+<p class="lede">Which AWS accounts the controller watches, through which role, in which regions. The controller re-reads this list every cycle. Secrets never live here: the base identity is the host's instance role or <code>AWS_ACCESS_KEY_ID</code>/<code>AWS_SECRET_ACCESS_KEY</code> in <code>.env</code>. Adding a second AWS account? The <a href="{{ url_for('setup_guide') }}">setup guide</a> has the trust-policy steps.</p>
 {% endblock %}
 
 {% block content %}
@@ -42,13 +42,8 @@
     {% for a in accounts %}
     <tr>
       <td class="mono"><a href="{{ url_for('accounts.show_account', name=a.name) }}">{{ a.name }}</a></td>
-      <td>
-        {% if not a.enabled %}<span class="badge badge-muted">disabled</span>
-        {% elif not a.regions %}<span class="badge badge-amber">no regions</span>
-        {% elif a.last_error_at and (not a.last_ok_at or a.last_error_at > a.last_ok_at) %}<span class="badge badge-red">error</span>
-        {% elif a.last_ok_at %}<span class="badge badge-green">ok</span>
-        {% else %}<span class="badge badge-muted">not checked yet</span>{% endif %}
-      </td>
+      {% set label, cls = account_status(a) %}
+      <td><span class="badge {{ cls }}">{{ label }}</span></td>
       <td class="mono">{{ a.regions | join(" ") }}</td>
       <td class="mono">{{ a.assume_role_arn or "base identity" }}</td>
       <td>{% if a.last_ok_at %}<span class="ts" data-ts="{{ a.last_ok_at.isoformat() }}"></span>{% else %}<span class="muted-note">never</span>{% endif %}</td>
