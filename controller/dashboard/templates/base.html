@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="csrf-token" content="{{ csrf_token() }}">
 <title>{% block title %}{% endblock %} · Spaceshift</title>
-<link rel="stylesheet" href="{{ url_for('static', filename='css/dashboard.css') }}">
+<link rel="stylesheet" href="{{ url_for('static', filename='css/dashboard.css') }}?v=2.5.0">
 </head>
 {# Sign-in pages set standalone: no nav, no live refresh - there's nothing to refresh. #}
 <body{% if standalone %} data-live="off"{% endif %}>
@@ -165,7 +165,7 @@
 
 <div id="toast-container" class="toast-container" aria-live="polite"></div>
 
-<script src="{{ url_for('static', filename='js/dashboard.js') }}"></script>
+<script src="{{ url_for('static', filename='js/dashboard.js') }}?v=2.5.0"></script>
 {% block scripts %}{% endblock %}
 </body>
 </html>

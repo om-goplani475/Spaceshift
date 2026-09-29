@@ -661,30 +661,95 @@ td.empty {
 
 /* ---- Settings ------------------------------------------------------------ */
 
+.settings-nav-tabs {
+  display: inline-flex;
+  gap: 4px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  padding: 4px;
+  border-radius: var(--radius-lg);
+  margin-bottom: var(--sp-5);
+  position: sticky;
+  top: 64px;
+  z-index: 10;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.25);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+}
+.settings-tab-btn {
+  background: transparent;
+  border: none;
+  color: var(--text-2);
+  font-size: var(--text-sm);
+  font-weight: 500;
+  padding: 6px 14px;
+  border-radius: var(--radius);
+  cursor: pointer;
+  transition: all var(--ease);
+}
+.settings-tab-btn:hover {
+  color: var(--text);
+  background: var(--surface-2);
+}
+.settings-tab-btn.is-active {
+  color: #ffffff;
+  background: var(--accent);
+  font-weight: 600;
+  box-shadow: 0 2px 8px color-mix(in srgb, var(--accent) 40%, transparent);
+}
+
+.setting-modified-badge {
+  display: inline-flex;
+  align-items: center;
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  background: rgba(240, 185, 58, 0.15);
+  color: var(--amber);
+  border: 1px solid rgba(240, 185, 58, 0.35);
+  border-radius: 4px;
+  padding: 1px 6px;
+  margin-left: 8px;
+  vertical-align: middle;
+}
+
 .settings-group {
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: var(--radius-lg);
-  box-shadow: var(--shadow-sm);
-  margin-bottom: var(--sp-4);
+  box-shadow: var(--shadow);
+  margin-bottom: var(--sp-5);
+  overflow: hidden;
+  transition: border-color var(--ease);
+}
+.settings-group:hover {
+  border-color: var(--border-strong);
 }
 .settings-group h2 {
   font-size: var(--text-md);
-  padding: var(--sp-3) var(--sp-4);
+  font-weight: 600;
+  padding: var(--sp-3) var(--sp-5);
+  background: var(--surface-2);
   border-bottom: 1px solid var(--border);
+  color: var(--text);
 }
 
 .setting {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
   gap: var(--sp-6);
-  align-items: start;
-  padding: var(--sp-4);
+  align-items: center;
+  padding: var(--sp-4) var(--sp-5);
   border-bottom: 1px solid var(--border);
+  transition: background var(--ease);
+}
+.setting:hover {
+  background: color-mix(in srgb, var(--surface-2) 40%, transparent);
 }
 .setting:last-child { border-bottom: none; }
 
-.setting-label { font-weight: 600; }
+.setting-label { font-weight: 600; font-size: var(--text-md); }
 .setting-description {
   margin-top: 2px;
   font-size: var(--text-sm);
@@ -697,9 +762,27 @@ td.empty {
   flex-direction: column;
   align-items: flex-end;
   gap: var(--sp-1);
-  min-width: 9rem;
+  min-width: 10rem;
 }
-.config-value-input { width: 9rem; text-align: right; font-variant-numeric: tabular-nums; }
+.config-value-input {
+  width: 10rem;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  background: var(--surface-2);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  padding: 8px 12px;
+  color: var(--text);
+  font-size: var(--text-sm);
+  font-weight: 500;
+  box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.2);
+  transition: border-color var(--ease), box-shadow var(--ease);
+}
+.config-value-input:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 20%, transparent);
+}
 .config-value-input::placeholder { color: var(--text-3); }
 
 .config-status { font-size: var(--text-xs); color: var(--text-3); min-height: 1em; }
@@ -1407,38 +1490,6 @@ th.sort-desc::after {
   color: var(--text);
   line-height: 1.5;
   max-height: 280px;
-}
-
-/* ---- Settings & Setup Polish --------------------------------------------- */
-.settings-nav-tabs {
-  display: flex;
-  gap: var(--sp-2);
-  border-bottom: 1px solid var(--border);
-  margin-bottom: var(--sp-4);
-  position: sticky;
-  top: 60px;
-  background: var(--bg);
-  z-index: 10;
-  padding: var(--sp-2) 0;
-}
-.settings-tab-btn {
-  background: none;
-  border: none;
-  color: var(--text-2);
-  font-size: var(--text-sm);
-  font-weight: 500;
-  padding: 6px 12px;
-  border-radius: var(--radius);
-  cursor: pointer;
-}
-.settings-tab-btn:hover {
-  color: var(--text);
-  background: var(--surface);
-}
-.settings-tab-btn.is-active {
-  color: var(--accent);
-  background: var(--surface-2);
-  font-weight: 600;
 }
 
 .setup-progress-card {

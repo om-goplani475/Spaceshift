@@ -388,11 +388,9 @@ def test_settings_page_has_single_update_button_not_per_row_save(state, client):
 def test_page_links_its_static_assets(state, client):
     # The stylesheet and script live in static/ now - if either link breaks
     # (renamed file, wrong url_for), the page still renders 200 but unstyled
-    # and inert, which nothing else would catch.
     html = client.get("/").data.decode()
-
-    assert '<link rel="stylesheet" href="/static/css/dashboard.css">' in html
-    assert '<script src="/static/js/dashboard.js"></script>' in html
+    assert re.search(r'<link rel="stylesheet" href="/static/css/dashboard\.css(\?[^"]*)?">', html)
+    assert re.search(r'<script src="/static/js/dashboard\.js(\?[^"]*)?"></script>', html)
     assert client.get("/static/css/dashboard.css").status_code == 200
     assert client.get("/static/js/dashboard.js").status_code == 200
 
