@@ -211,10 +211,26 @@ function closeDrawer() {
   if (drawer) drawer.classList.remove("is-open");
 }
 
+// ---- Toast Notifications ---------------------------------------------------
+
+function showToast(message, type) {
+  const container = document.getElementById("toast-container");
+  if (!container) return;
+  const toast = document.createElement("div");
+  toast.className = "toast" + (type ? " toast-" + type : "");
+  toast.textContent = message;
+  container.appendChild(toast);
+  setTimeout(function () {
+    toast.classList.add("toast-out");
+    setTimeout(function () { toast.remove(); }, 160);
+  }, 2400);
+}
+
 function copyToClipboard(text, btn) {
   if (!navigator.clipboard) return;
   navigator.clipboard.writeText(text).then(function () {
     btn.classList.add("is-copied");
+    showToast("Copied to clipboard", "success");
     setTimeout(function () { btn.classList.remove("is-copied"); }, 1400);
   });
 }
@@ -406,6 +422,42 @@ function markClickableRows() {
   });
 }
 
+function initThemeToggle() {
+  const toggleBtn = document.getElementById("theme-toggle");
+  if (!toggleBtn) return;
+  const savedTheme = localStorage.getItem("spaceshift-theme");
+  if (savedTheme) {
+    document.documentElement.setAttribute("data-theme", savedTheme);
+  }
+  toggleBtn.addEventListener("click", function () {
+    const current = document.documentElement.getAttribute("data-theme");
+    let next;
+    if (current === "light") {
+      next = "dark";
+    } else if (current === "dark") {
+      next = "light";
+    } else {
+      next = window.matchMedia("(prefers-color-scheme: dark)").matches ? "light" : "dark";
+    }
+    document.documentElement.setAttribute("data-theme", next);
+    localStorage.setItem("spaceshift-theme", next);
+    showToast("Theme set to " + next, "info");
+  });
+}
+
+function initKeyboardShortcuts() {
+  document.addEventListener("keydown", function (e) {
+    if (e.key === "/" && !["INPUT", "TEXTAREA", "SELECT"].includes(document.activeElement.tagName) && !document.activeElement.isContentEditable) {
+      const searchBox = document.querySelector("input[type='search']");
+      if (searchBox) {
+        e.preventDefault();
+        searchBox.focus();
+        searchBox.select();
+      }
+    }
+  });
+}
+
 formatTimestamps(document);
 renderMeters(document);
 wireAutoresizeToggles(document);
@@ -414,6 +466,8 @@ wireSettingsUpdateButton();
 wireNotificationTestButton();
 wireAllDrawers();
 markClickableRows();
+initThemeToggle();
+initKeyboardShortcuts();
 
 // ---- Live refresh ------------------------------------------------------------
 
