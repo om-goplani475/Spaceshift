@@ -178,11 +178,11 @@ svg.icon { width: 16px; height: 16px; stroke: currentColor; fill: none; stroke-w
 .topbar-inner {
   max-width: var(--page-max);
   margin: 0 auto;
-  padding: 0 var(--sp-8);
+  padding: 0 var(--sp-6);
   height: 56px;
   display: flex;
   align-items: stretch;
-  gap: var(--sp-8);
+  gap: var(--sp-4);
 }
 
 .brand {
@@ -220,18 +220,21 @@ svg.icon { width: 16px; height: 16px; stroke: currentColor; fill: none; stroke-w
 
 .nav {
   display: flex;
-  gap: var(--sp-1);
+  gap: 2px;
   flex: 1;
+  min-width: 0;
 }
 
 .nav-link {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  padding: 0 var(--sp-3);
+  padding: 0 10px;
   font-size: var(--text-sm);
   font-weight: 500;
   color: var(--text-2);
+  white-space: nowrap;
+  flex-shrink: 0;
   border-bottom: 2px solid transparent;
   margin-bottom: -1px;
   transition: color var(--ease), border-color var(--ease);

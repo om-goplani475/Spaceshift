@@ -447,11 +447,11 @@ _NAV_ITEMS = [
     ("overview", "Dashboard"),
     ("instances", "Instances"),
     ("volumes", "Volumes"),
-    ("audit", "Audit log"),
+    ("audit", "Audit"),
     ("accounts.list_accounts", "Accounts"),
     ("settings", "Settings"),
     ("users.list_users", "Users"),
-    ("setup_guide", "Setup guide"),
+    ("setup_guide", "Setup Guide"),
 ]
 _ADMIN_NAV_ENDPOINTS = frozenset({"accounts.list_accounts", "settings", "users.list_users", "setup_guide"})
 
