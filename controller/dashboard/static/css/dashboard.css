@@ -1075,6 +1075,9 @@ th.sort-desc::after {
   justify-content: center;
   padding: var(--sp-4);
 }
+.modal-root.is-hidden {
+  display: none !important;
+}
 .modal-overlay {
   position: absolute;
   inset: 0;
