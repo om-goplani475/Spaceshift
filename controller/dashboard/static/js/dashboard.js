@@ -56,17 +56,100 @@ function wireFilters(tableId, searchId, selectIds, countId, pagerId) {
   const table = document.getElementById(tableId);
   if (!table) return;
   function getRows() {
-    return Array.from(table.tBodies[0].rows).filter(r => r.dataset.volume !== undefined);
+    return Array.from(table.tBodies[0].rows).filter(r => r.dataset.volume !== undefined || r.dataset.instance !== undefined);
   }
   const search = document.getElementById(searchId);
   const selects = selectIds.map(id => document.getElementById(id)).filter(Boolean);
   const countEl = document.getElementById(countId);
   const pagerEl = document.getElementById(pagerId);
+  const prefix = tableId.replace("-table", "");
+  const activeFiltersBar = document.getElementById(prefix + "-active-filters");
+  const searchWrapper = search ? search.closest(".search-wrapper") : null;
+  const clearSearchBtn = searchWrapper ? searchWrapper.querySelector(".search-clear-btn") : null;
   let page = 1;
+
+  if (clearSearchBtn && search) {
+    clearSearchBtn.addEventListener("click", function () {
+      search.value = "";
+      searchWrapper.classList.remove("has-val");
+      applyFromStart();
+      search.focus();
+    });
+  }
+
+  function renderActiveChips() {
+    if (!activeFiltersBar) return;
+    const chips = [];
+    const q = (search && search.value || "").trim();
+    if (q) {
+      chips.push({
+        label: 'Search: "' + q + '"',
+        clear: function () {
+          search.value = "";
+          if (searchWrapper) searchWrapper.classList.remove("has-val");
+          applyFromStart();
+        }
+      });
+    }
+
+    selects.forEach(function (sel) {
+      if (sel.value) {
+        const optionText = sel.options[sel.selectedIndex] ? sel.options[sel.selectedIndex].text : sel.value;
+        const fieldName = sel.dataset.field || "Filter";
+        chips.push({
+          label: fieldName.charAt(0).toUpperCase() + fieldName.slice(1) + ": " + optionText,
+          clear: function () {
+            sel.value = "";
+            applyFromStart();
+          }
+        });
+      }
+    });
+
+    if (chips.length > 0) {
+      activeFiltersBar.innerHTML = "";
+      chips.forEach(function (c) {
+        const chip = document.createElement("span");
+        chip.className = "filter-chip";
+        chip.textContent = c.label + " ";
+        const rm = document.createElement("button");
+        rm.type = "button";
+        rm.className = "filter-chip-remove";
+        rm.textContent = "✕";
+        rm.setAttribute("aria-label", "Remove filter");
+        rm.onclick = c.clear;
+        chip.appendChild(rm);
+        activeFiltersBar.appendChild(chip);
+      });
+
+      const clearAll = document.createElement("button");
+      clearAll.type = "button";
+      clearAll.className = "filter-clear-all";
+      clearAll.textContent = "Clear all filters";
+      clearAll.onclick = function () {
+        if (search) {
+          search.value = "";
+          if (searchWrapper) searchWrapper.classList.remove("has-val");
+        }
+        selects.forEach(s => s.value = "");
+        applyFromStart();
+      };
+      activeFiltersBar.appendChild(clearAll);
+      activeFiltersBar.classList.add("has-filters");
+    } else {
+      activeFiltersBar.innerHTML = "";
+      activeFiltersBar.classList.remove("has-filters");
+    }
+  }
 
   function matches(row) {
     const q = (search && search.value || "").trim().toLowerCase();
-    if (q && !(row.dataset.volume.includes(q) || row.dataset.instance.includes(q))) return false;
+    if (q) {
+      const volMatch = row.dataset.volume && row.dataset.volume.includes(q);
+      const instMatch = row.dataset.instance && row.dataset.instance.includes(q);
+      const rowTextMatch = row.textContent.toLowerCase().includes(q);
+      if (!volMatch && !instMatch && !rowTextMatch) return false;
+    }
     for (const sel of selects) {
       if (sel.value && row.dataset[sel.dataset.field] !== sel.value) return false;
     }
@@ -74,6 +157,10 @@ function wireFilters(tableId, searchId, selectIds, countId, pagerId) {
   }
 
   function apply() {
+    if (searchWrapper && search) {
+      searchWrapper.classList.toggle("has-val", Boolean(search.value.trim()));
+    }
+    renderActiveChips();
     const rows = getRows();
     const matched = rows.filter(matches);
     const totalPages = Math.max(1, Math.ceil(matched.length / PAGE_SIZE));
@@ -84,8 +171,7 @@ function wireFilters(tableId, searchId, selectIds, countId, pagerId) {
     for (const row of rows) {
       row.classList.toggle("is-hidden", !pageRows.has(row));
     }
-    // The server-rendered empty row only exists when there's no data at
-    // all; a filter that matches nothing needs its own message.
+
     let noMatch = table.querySelector(".no-match-row");
     if (rows.length > 0 && matched.length === 0) {
       if (!noMatch) {
@@ -118,10 +204,6 @@ function wireFilters(tableId, searchId, selectIds, countId, pagerId) {
         prev.disabled = page <= 1;
         prev.onclick = function () { page--; apply(); };
         const label = document.createElement("span");
-        // Same "shown–shownEnd of total" wording as the count above the
-        // table, not "Page N of M" - a row range is what tells you where
-        // you are relative to what you're looking for; the page number
-        // doesn't.
         label.textContent = (start + 1) + "–" + Math.min(start + PAGE_SIZE, matched.length) + " of " + matched.length;
         const next = document.createElement("button");
         next.type = "button";
@@ -142,8 +224,6 @@ function wireFilters(tableId, searchId, selectIds, countId, pagerId) {
   tableControllers[tableId] = { apply };
 }
 
-// Each page has a subset of these tables; wireFilters() is a no-op for the
-// ones that aren't present. Each <select> carries its own data-field.
 wireFilters("resize-table", "resize-search", ["resize-status-filter"], "resize-count", "resize-pager");
 wireFilters(
   "scan-table", "scan-search",
@@ -274,32 +354,245 @@ function _drawerCellValue(header, cell, row) {
   return text || "–";
 }
 
+function wireInlineCopyButtons(root) {
+  root.querySelectorAll(".btn-inline-copy").forEach(function (btn) {
+    if (btn.dataset.wired) return;
+    btn.dataset.wired = "1";
+    btn.addEventListener("click", function (e) {
+      e.stopPropagation();
+      const text = btn.dataset.copy;
+      if (!text || !navigator.clipboard) return;
+      navigator.clipboard.writeText(text).then(function () {
+        btn.classList.add("is-copied");
+        showToast("Copied " + text, "success");
+        setTimeout(function () { btn.classList.remove("is-copied"); }, 1400);
+      });
+    });
+  });
+}
+
+function wireBatchActions() {
+  const batchBar = document.getElementById("batch-action-bar");
+  const countEl = document.getElementById("batch-bar-count");
+  const enableBtn = document.getElementById("batch-enable-btn");
+  const disableBtn = document.getElementById("batch-disable-btn");
+  const exportBtn = document.getElementById("batch-export-btn");
+  const cancelBtn = document.getElementById("batch-cancel-btn");
+
+  function getSelectedCheckboxes() {
+    return Array.from(document.querySelectorAll(".row-checkbox:checked"));
+  }
+
+  function updateBatchBar() {
+    if (!batchBar) return;
+    const selected = getSelectedCheckboxes();
+    if (selected.length > 0) {
+      const kind = selected[0].dataset.kind || "items";
+      if (countEl) countEl.textContent = selected.length + " " + (selected.length === 1 ? (kind === "volumes" ? "volume" : "instance") : (kind === "volumes" ? "volumes" : "instances")) + " selected";
+      batchBar.classList.add("is-visible");
+    } else {
+      batchBar.classList.remove("is-visible");
+    }
+  }
+
+  document.addEventListener("change", function (e) {
+    if (e.target.classList.contains("select-all-checkbox")) {
+      const table = document.getElementById(e.target.dataset.table);
+      if (!table) return;
+      const visibleRows = Array.from(table.tBodies[0].rows).filter(r => !r.classList.contains("is-hidden") && !r.classList.contains("empty-row"));
+      visibleRows.forEach(function (r) {
+        const cb = r.querySelector(".row-checkbox");
+        if (cb) cb.checked = e.target.checked;
+      });
+      updateBatchBar();
+    } else if (e.target.classList.contains("row-checkbox")) {
+      updateBatchBar();
+    }
+  });
+
+  if (cancelBtn) {
+    cancelBtn.addEventListener("click", function () {
+      document.querySelectorAll(".row-checkbox, .select-all-checkbox").forEach(cb => cb.checked = false);
+      updateBatchBar();
+    });
+  }
+
+  async function setBatchAutoresize(desired) {
+    const selected = getSelectedCheckboxes();
+    if (!selected.length) return;
+    enableBtn.disabled = true;
+    disableBtn.disabled = true;
+
+    let succeeded = 0;
+    let failed = 0;
+
+    const promises = selected.map(async function (cb) {
+      const kind = cb.dataset.kind;
+      const id = cb.dataset.id;
+      const row = cb.closest("tr");
+      try {
+        const resp = await postJSON("/api/" + kind + "/" + encodeURIComponent(id) + "/autoresize", { autoresize: desired });
+        if (!resp.ok) throw new Error();
+        succeeded++;
+        if (row) {
+          row.dataset.autoresize = String(desired);
+          const toggle = row.querySelector(".autoresize-toggle");
+          if (toggle) toggle.checked = desired;
+          if (kind === "volumes" && row.dataset.watchedReason !== "unattached") {
+            const viaInstance = !desired && row.dataset.instanceAutoresize === "true";
+            const watched = desired || viaInstance;
+            const cell = row.querySelector(".watched-cell");
+            if (cell) {
+              cell.innerHTML = watched
+                ? '<span class="badge badge-green">Yes' + (viaInstance ? " · via instance" : "") + "</span>"
+                : '<span class="badge badge-muted">No</span>';
+            }
+            row.dataset.watchedReason = watched ? (viaInstance ? "instance" : "own") : "off";
+          }
+        }
+      } catch (err) {
+        failed++;
+      }
+    });
+
+    await Promise.all(promises);
+    enableBtn.disabled = false;
+    disableBtn.disabled = false;
+
+    updateVolumesKPI();
+    updateInstancesKPI();
+    showToast((desired ? "Enabled" : "Disabled") + " autoresize on " + succeeded + " items" + (failed ? " (" + failed + " failed)" : ""), failed ? "error" : "success");
+    document.querySelectorAll(".row-checkbox, .select-all-checkbox").forEach(cb => cb.checked = false);
+    updateBatchBar();
+  }
+
+  if (enableBtn) enableBtn.addEventListener("click", () => setBatchAutoresize(true));
+  if (disableBtn) disableBtn.addEventListener("click", () => setBatchAutoresize(false));
+  if (exportBtn) {
+    exportBtn.addEventListener("click", function () {
+      const selected = getSelectedCheckboxes();
+      if (!selected.length) return;
+      const table = selected[0].closest("table");
+      if (!table) return;
+      const headerCells = Array.from(table.tHead.rows[0].cells).filter(c => !c.classList.contains("select-col"));
+      const headers = headerCells.map(th => th.textContent.trim()).filter(h => h.toLowerCase() !== "autoresize");
+
+      const rowsData = selected.map(function (cb) {
+        const row = cb.closest("tr");
+        const dataCells = Array.from(row.cells).filter(c => !c.classList.contains("select-col"));
+        return headers.map((h, i) => '"' + (dataCells[i] ? dataCells[i].textContent.trim().replace(/"/g, '""') : "") + '"');
+      });
+
+      const csvContent = [headers.map(h => '"' + h + '"').join(","), ...rowsData.map(r => r.join(","))].join("\n");
+      const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = "spaceshift-selected.csv";
+      a.click();
+      URL.revokeObjectURL(url);
+      showToast("Exported " + selected.length + " rows to CSV", "success");
+    });
+  }
+}
+
+function wireAuditPresets() {
+  const form = document.getElementById("audit-filters-form");
+  const sinceInput = document.getElementById("audit-since");
+  const untilInput = document.getElementById("audit-until");
+  if (!form || !sinceInput || !untilInput) return;
+
+  function setDateRange(daysAgo) {
+    const now = new Date();
+    const untilStr = now.toISOString().slice(0, 10);
+    let sinceStr = "";
+    if (daysAgo !== null) {
+      const past = new Date(now.getTime() - daysAgo * 24 * 60 * 60 * 1000);
+      sinceStr = past.toISOString().slice(0, 10);
+    }
+    sinceInput.value = sinceStr;
+    untilInput.value = daysAgo !== null ? untilStr : "";
+    form.submit();
+  }
+
+  document.querySelectorAll(".btn-preset").forEach(function (btn) {
+    btn.addEventListener("click", function () {
+      const range = btn.dataset.range;
+      if (range === "today") setDateRange(0);
+      else if (range === "24h") setDateRange(1);
+      else if (range === "7d") setDateRange(7);
+      else if (range === "30d") setDateRange(30);
+      else if (range === "all") setDateRange(null);
+    });
+  });
+}
+
+function wireAuditDetailModal() {
+  const modal = document.getElementById("detail-modal");
+  const overlay = document.getElementById("detail-modal-overlay");
+  const closeBtn = document.getElementById("detail-modal-close");
+  const metaEl = document.getElementById("detail-modal-meta");
+  const contentEl = document.getElementById("detail-modal-content");
+  if (!modal || !contentEl) return;
+
+  function closeModal() {
+    modal.classList.add("is-hidden");
+  }
+
+  if (overlay) overlay.addEventListener("click", closeModal);
+  if (closeBtn) closeBtn.addEventListener("click", closeModal);
+
+  document.addEventListener("click", function (e) {
+    const row = e.target.closest(".audit-row");
+    if (!row) return;
+    const detailRaw = row.dataset.detail;
+    if (!detailRaw) return;
+    try {
+      const detail = JSON.parse(detailRaw);
+      metaEl.textContent = "Actor: " + row.dataset.who + " | Action: " + row.dataset.action + " | " + row.dataset.ts;
+      contentEl.textContent = JSON.stringify(detail, null, 2);
+      modal.classList.remove("is-hidden");
+    } catch (_) {}
+  });
+}
+
+function wireSettingsTabs() {
+  const tabs = document.querySelectorAll(".settings-tab-btn");
+  if (!tabs.length) return;
+  tabs.forEach(function (tab) {
+    tab.addEventListener("click", function () {
+      tabs.forEach(t => t.classList.remove("is-active"));
+      tab.classList.add("is-active");
+      const target = document.getElementById(tab.dataset.target);
+      if (target) {
+        target.scrollIntoView({ behavior: "smooth", block: "start" });
+      }
+    });
+  });
+}
+
 function wireRowDrawer(tableId) {
   const table = document.getElementById(tableId);
   if (!table || table.dataset.drawerWired) return;
   table.dataset.drawerWired = "1";
   table.addEventListener("click", function (e) {
-    if (e.target.closest("input, select, button, a, label")) return;
+    if (e.target.closest("input, select, button, a, label, .btn-inline-copy")) return;
     const row = e.target.closest("tbody tr");
     if (!row || !table.contains(row) || row.classList.contains("empty-row")) return;
-    const headers = Array.from(table.tHead.rows[0].cells).map(th => th.textContent.trim());
-    const cells = Array.from(row.cells);
-    const idCell = cells[0];
-    // Usually the id is just cells[0]'s own text (Volumes/Instances
-    // pages) - but the Scan history table shows the AWS Name tag there
-    // instead (per row["v"]/instance_names in app.py), with the real id
-    // stashed in data-id so the Identifier section and the AWS CLI command
-    // still work from the actual id, not the display name.
+    const headerCells = Array.from(table.tHead.rows[0].cells).filter(c => !c.classList.contains("select-col"));
+    const dataCells = Array.from(row.cells).filter(c => !c.classList.contains("select-col"));
+    const headers = headerCells.map(th => th.textContent.trim());
+    const idCell = dataCells[0];
     const id = (idCell && idCell.dataset.id) || (idCell && idCell.textContent.trim());
     if (!id) return;
     const fields = headers
       .slice(1)
-      .map((k, i) => ({ k: k, v: _drawerCellValue(k, cells[i + 1], row) }))
+      .map((k, i) => ({ k: k, v: _drawerCellValue(k, dataCells[i + 1], row) }))
       .filter((f) => f.k !== "Name");
     const nameIndex = headers.indexOf("Name");
     let title = id;
-    if (nameIndex > 0 && cells[nameIndex]) {
-      const n = cells[nameIndex].textContent.trim();
+    if (nameIndex > 0 && dataCells[nameIndex]) {
+      const n = dataCells[nameIndex].textContent.trim();
       if (n && n !== "–") title = n;
     } else if (idCell && idCell.dataset.id && idCell.textContent.trim() !== id) {
       title = idCell.textContent.trim();
@@ -308,48 +601,15 @@ function wireRowDrawer(tableId) {
   });
 }
 
-// The setup guide's "Copy" buttons next to a policy snippet - separate from
-// copyToClipboard's icon-button callers above since these are text buttons
-// that swap their own label rather than just a color, to confirm the click
-// landed without the reader having to notice a subtle color change.
-function wireCodeCopyButtons(root) {
-  root.querySelectorAll(".code-copy-btn").forEach(function (btn) {
-    if (btn.dataset.copyWired) return;
-    btn.dataset.copyWired = "1";
-    const original = btn.textContent;
-    btn.addEventListener("click", function () {
-      const target = document.getElementById(btn.dataset.copyTarget);
-      if (!target || !navigator.clipboard) return;
-      navigator.clipboard.writeText(target.textContent).then(function () {
-        btn.textContent = "Copied";
-        btn.classList.add("is-copied");
-        setTimeout(function () {
-          btn.textContent = original;
-          btn.classList.remove("is-copied");
-        }, 1400);
-      });
-    });
-  });
-}
-
-function wireAllDrawers() {
-  wireDrawerChrome();
-  DRAWER_TABLES.forEach(wireRowDrawer);
-}
-
-// ---- Autoresize toggles ----------------------------------------------------
-
-// Each of these wiring functions re-queries root (default: the whole
-// document) every time it's called, so calling it again after
-// refreshLiveData() swaps in fresh table rows picks up the new elements -
 function updateVolumesKPI() {
   const summary = document.getElementById("volumes-summary");
   if (!summary) return;
   const rows = Array.from(document.querySelectorAll("#volumes-tbody tr[data-volume]"));
   if (!rows.length) return;
-  const watchedCount = rows.filter(function (r) {
+  const watchedRows = rows.filter(function (r) {
     return r.dataset.watchedReason === "own" || r.dataset.watchedReason === "instance";
-  }).length;
+  });
+  const watchedCount = watchedRows.length;
   const unwatchedCount = rows.length - watchedCount;
 
   const watchedEl = document.getElementById("kpi-vol-watched");
@@ -358,6 +618,36 @@ function updateVolumesKPI() {
   if (unwatchedEl) unwatchedEl.textContent = String(unwatchedCount);
   const totalEl = document.getElementById("kpi-vol-total");
   if (totalEl) totalEl.textContent = String(rows.length);
+
+  const distCard = document.getElementById("volumes-dist-card");
+  if (distCard) {
+    let totalGb = 0;
+    let watchedGb = 0;
+    rows.forEach(function (r) {
+      const sizeCell = r.querySelector(".num");
+      const sizeGb = sizeCell ? (parseInt(sizeCell.textContent.replace(/[^0-9]/g, ""), 10) || 0) : 0;
+      totalGb += sizeGb;
+      if (r.dataset.watchedReason === "own" || r.dataset.watchedReason === "instance") {
+        watchedGb += sizeGb;
+      }
+    });
+    const unwatchedGb = totalGb - watchedGb;
+    const watchedPct = totalGb > 0 ? Math.round((watchedGb / totalGb) * 100) : 0;
+    const unwatchedPct = 100 - watchedPct;
+
+    const barWatched = distCard.querySelector(".dist-segment.watched");
+    const barUnwatched = distCard.querySelector(".dist-segment.unwatched");
+    const headerPct = distCard.querySelector(".storage-dist-header span");
+    const legend = distCard.querySelector(".storage-dist-legend");
+
+    if (barWatched) barWatched.style.width = watchedPct + "%";
+    if (barUnwatched) barUnwatched.style.width = unwatchedPct + "%";
+    if (headerPct) headerPct.textContent = watchedPct + "% Watched";
+    if (legend) {
+      legend.innerHTML = '<span><span class="dot-green"></span> Watched: <strong>' + watchedGb + ' GB</strong> (' + watchedPct + '%)</span>' +
+        '<span><span class="dot-gray"></span> Excluded / Unwatched: <strong>' + unwatchedGb + ' GB</strong> (' + unwatchedPct + '%)</span>';
+    }
+  }
 }
 
 function updateInstancesKPI() {
@@ -390,11 +680,6 @@ function wireAutoresizeToggles(root) {
         .then(function () {
           const row = toggle.closest("tr");
           row.dataset.autoresize = String(desired);
-          // The real "is it watched" resolution (including threshold
-          // fallback) lives server-side and settles within one live-poll
-          // cycle (10s) - but the Watched badge only needs the same two
-          // facts the toggle itself just changed, so update it now rather
-          // than leaving it stale until the next poll.
           if (kind === "volumes" && row.dataset.watchedReason !== "unattached") {
             const viaInstance = !desired && row.dataset.instanceAutoresize === "true";
             const watched = desired || viaInstance;
@@ -413,6 +698,16 @@ function wireAutoresizeToggles(root) {
             showToast((kind === "volumes" ? "Volume " : "Instance ") + id + " autoresize " + (desired ? "enabled" : "disabled"), "success");
           }
         })
+        .catch(function () {
+          toggle.checked = !desired;
+          alert("Couldn't update autoresize for " + id + ". Please try again.");
+        })
+        .finally(function () {
+          toggle.disabled = false;
+        });
+    });
+  });
+}
         .catch(function () {
           toggle.checked = !desired;
           alert("Couldn't update autoresize for " + id + ". Please try again.");
@@ -704,12 +999,19 @@ wireSettingsUpdateButton();
 wireNotificationTestButton();
 wireAllDrawers();
 wireCodeCopyButtons(document);
+wireInlineCopyButtons(document);
+wireBatchActions();
+wireAuditPresets();
+wireAuditDetailModal();
+wireSettingsTabs();
 markClickableRows();
 initThemeToggle();
 initKeyboardShortcuts();
 wireTableSorting();
 wireExportCSVButtons();
 wireShortcutsModal();
+updateVolumesKPI();
+updateInstancesKPI();
 
 // ---- Live refresh ------------------------------------------------------------
 
@@ -720,7 +1022,7 @@ wireShortcutsModal();
 // outside the swapped elements, so they're untouched.
 const POLL_INTERVAL_MS = 10000;
 const SWAP_IDS = [
-  "dashboard-stats", "volumes-summary", "instances-summary", "instances-tbody", "volumes-tbody", "resize-tbody", "scan-tbody", "audit-tbody",
+  "dashboard-stats", "volumes-summary", "instances-summary", "volumes-dist-card", "instances-tbody", "volumes-tbody", "resize-tbody", "scan-tbody", "audit-tbody",
   "accounts-tbody", "account-status",
 ];
 let refreshInFlight = false;
@@ -769,7 +1071,10 @@ async function refreshLiveData() {
     renderMeters(document);
     wireAutoresizeToggles(document);
     wireConfigDirtyTracking(document);
+    wireInlineCopyButtons(document);
     markClickableRows();
+    updateVolumesKPI();
+    updateInstancesKPI();
     Object.values(tableControllers).forEach(function (c) { c.apply(); });
     if (liveIndicator) liveIndicator.dataset.state = "idle";
     if (liveLabel) liveLabel.textContent = "Live";

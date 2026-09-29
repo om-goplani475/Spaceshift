@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% from "_macros.html" import filter_select, pager, empty_row, usage_meter with context %}
+{% from "_macros.html" import filter_select, pager, empty_row, usage_meter, copy_button, search_input with context %}
 
 {% block title %}Dashboard{% endblock %}
 {% block heading %}Dashboard{% endblock %}
@@ -88,7 +88,7 @@
     <p class="section-note">Every resize the controller has started, and where it got to. Click a row for details.</p>
   </div>
   <div class="filters">
-    <input type="search" id="resize-search" placeholder="Search volume or instance…" aria-label="Search resizes">
+    {{ search_input("resize-search", "Search volume or instance ID…") }}
     {{ filter_select("resize-status-filter", "status", "All statuses", resize_statuses) }}
     <span class="count" id="resize-count"></span>
     <button type="button" class="btn btn-quiet export-csv-btn" data-table="resize-table" data-filename="spaceshift-resizes.csv" title="Export resizes to CSV">
@@ -96,6 +96,7 @@
       Export CSV
     </button>
   </div>
+  <div class="active-filters-bar" id="resize-active-filters"></div>
   <div class="panel">
     <table id="resize-table">
       <thead><tr>
@@ -105,8 +106,8 @@
       <tbody id="resize-tbody">
       {% for r in records %}
       <tr data-volume="{{ r.volume_id|lower }}" data-instance="{{ r.instance_id|lower }}" data-status="{{ r.status.value }}">
-        <td class="mono">{{ r.volume_id }}</td>
-        <td class="mono">{{ r.instance_id }}</td>
+        <td class="mono"><span class="copyable-cell"><span>{{ r.volume_id }}</span>{{ copy_button(r.volume_id) }}</span></td>
+        <td class="mono"><span class="copyable-cell"><span>{{ r.instance_id }}</span>{{ copy_button(r.instance_id) }}</span></td>
         <td><span class="badge {{ status_badge(r.status) }}">{{ r.status.value }}</span></td>
         <td class="num">{{ r.from_size_gb }} GB &rarr; {{ r.to_size_gb }} GB</td>
         <td class="num">{{ r.extend_attempts }}</td>
@@ -127,7 +128,7 @@
     <p class="section-note">The most recent {{ scan_limit }} disk checks, newest first. Click a row for details.</p>
   </div>
   <div class="filters">
-    <input type="search" id="scan-search" placeholder="Search volume or instance…" aria-label="Search scans">
+    {{ search_input("scan-search", "Search volume or instance…") }}
     {{ filter_select("scan-account-filter", "account", "All accounts", scan_accounts) }}
     {{ filter_select("scan-region-filter", "region", "All regions", scan_regions) }}
     {{ filter_select("scan-size-filter", "size", "All sizes", scan_sizes, suffix=" GB") }}
@@ -138,6 +139,7 @@
       Export CSV
     </button>
   </div>
+  <div class="active-filters-bar" id="scan-active-filters"></div>
   <div class="panel">
     <table id="scan-table">
       <thead><tr>

@@ -5,6 +5,21 @@
 {% block lede %}<p class="lede">From a fresh install to the controller actively managing volumes. Steps 1-2 happen outside this dashboard (AWS IAM, your instances); steps 3-6 you can do right here, and update live as you complete them.</p>{% endblock %}
 
 {% block content %}
+{% set completed_steps = (1 if accounts_ready else 0) + (1 if any_healthy else 0) + (1 if autoresize_on else 0) + (1 if notifications_on else 0) %}
+{% set total_steps = 4 %}
+{% set progress_pct = ((completed_steps / total_steps) * 100) | round | int %}
+{% set progress_p = ((progress_pct / 5) | round * 5) | int %}
+
+<div class="setup-progress-card">
+  <div class="setup-progress-header">
+    <div class="setup-progress-title">Onboarding Status: <strong>{{ completed_steps }} of {{ total_steps }}</strong> dashboard milestones ready</div>
+    <div class="setup-progress-percent">{{ progress_pct }}% Complete</div>
+  </div>
+  <div class="setup-progress-bar">
+    <div class="setup-progress-fill p{{ progress_p }}"></div>
+  </div>
+</div>
+
 <ol class="setup-steps">
 
   <li class="setup-step">

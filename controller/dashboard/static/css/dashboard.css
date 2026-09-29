@@ -455,16 +455,33 @@ svg.icon { width: 16px; height: 16px; stroke: currentColor; fill: none; stroke-w
 /* Discrete 5%-step width classes - JS sets one of these rather than an
    inline style="width:", which the dashboard's CSP (no style-src
    'unsafe-inline') blocks even for script-set el.style mutations. */
-.meter-fill.p0 { width: 0%; } .meter-fill.p5 { width: 5%; } .meter-fill.p10 { width: 10%; }
-.meter-fill.p15 { width: 15%; } .meter-fill.p20 { width: 20%; } .meter-fill.p25 { width: 25%; }
-.meter-fill.p30 { width: 30%; } .meter-fill.p35 { width: 35%; } .meter-fill.p40 { width: 40%; }
-.meter-fill.p45 { width: 45%; } .meter-fill.p50 { width: 50%; } .meter-fill.p55 { width: 55%; }
-.meter-fill.p60 { width: 60%; } .meter-fill.p65 { width: 65%; } .meter-fill.p70 { width: 70%; }
-.meter-fill.p75 { width: 75%; } .meter-fill.p80 { width: 80%; } .meter-fill.p85 { width: 85%; }
-.meter-fill.p90 { width: 90%; } .meter-fill.p95 { width: 95%; } .meter-fill.p100 { width: 100%; }
+.meter-fill.p0, .dist-segment.p0, .setup-progress-fill.p0 { width: 0%; }
+.meter-fill.p5, .dist-segment.p5, .setup-progress-fill.p5 { width: 5%; }
+.meter-fill.p10, .dist-segment.p10, .setup-progress-fill.p10 { width: 10%; }
+.meter-fill.p15, .dist-segment.p15, .setup-progress-fill.p15 { width: 15%; }
+.meter-fill.p20, .dist-segment.p20, .setup-progress-fill.p20 { width: 20%; }
+.meter-fill.p25, .dist-segment.p25, .setup-progress-fill.p25 { width: 25%; }
+.meter-fill.p30, .dist-segment.p30, .setup-progress-fill.p30 { width: 30%; }
+.meter-fill.p35, .dist-segment.p35, .setup-progress-fill.p35 { width: 35%; }
+.meter-fill.p40, .dist-segment.p40, .setup-progress-fill.p40 { width: 40%; }
+.meter-fill.p45, .dist-segment.p45, .setup-progress-fill.p45 { width: 45%; }
+.meter-fill.p50, .dist-segment.p50, .setup-progress-fill.p50 { width: 50%; }
+.meter-fill.p55, .dist-segment.p55, .setup-progress-fill.p55 { width: 55%; }
+.meter-fill.p60, .dist-segment.p60, .setup-progress-fill.p60 { width: 60%; }
+.meter-fill.p65, .dist-segment.p65, .setup-progress-fill.p65 { width: 65%; }
+.meter-fill.p70, .dist-segment.p70, .setup-progress-fill.p70 { width: 70%; }
+.meter-fill.p75, .dist-segment.p75, .setup-progress-fill.p75 { width: 75%; }
+.meter-fill.p80, .dist-segment.p80, .setup-progress-fill.p80 { width: 80%; }
+.meter-fill.p85, .dist-segment.p85, .setup-progress-fill.p85 { width: 85%; }
+.meter-fill.p90, .dist-segment.p90, .setup-progress-fill.p90 { width: 90%; }
+.meter-fill.p95, .dist-segment.p95, .setup-progress-fill.p95 { width: 95%; }
+.meter-fill.p100, .dist-segment.p100, .setup-progress-fill.p100 { width: 100%; }
 .meter[data-level="warning"] .meter-fill { background: var(--amber); }
 .meter[data-level="critical"] .meter-fill { background: var(--red); }
 .meter-value { font-variant-numeric: tabular-nums; font-size: var(--text-xs); color: var(--text-2); min-width: 2.5em; text-align: right; }
+.detail-modal-meta { font-size: var(--text-sm); color: var(--text-2); margin-bottom: var(--sp-2); }
+.time-presets-label { font-size: var(--text-xs); color: var(--text-3); margin-right: 4px; }
+.detail-link { cursor: pointer; text-decoration: underline dotted; }
 
 /* ---- Filters ---------------------------------------------------------- */
 
@@ -1134,4 +1151,326 @@ th.sort-desc::after {
   border-radius: 4px;
   padding: 2px 8px;
   box-shadow: 0 1px 0 var(--border-strong);
+}
+
+/* ---- Checkboxes & Batch Action Bar ---------------------------------------- */
+.select-col {
+  width: 36px !important;
+  text-align: center !important;
+  padding: var(--sp-2) !important;
+}
+.row-checkbox, .select-all-checkbox {
+  cursor: pointer;
+  width: 16px;
+  height: 16px;
+  accent-color: var(--accent);
+  vertical-align: middle;
+}
+.batch-bar {
+  position: fixed;
+  bottom: 24px;
+  left: 50%;
+  transform: translateX(-50%) translateY(100px);
+  z-index: 900;
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+  padding: 10px 18px;
+  background: var(--surface);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-lg);
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.4), var(--shadow);
+  opacity: 0;
+  pointer-events: none;
+  transition: transform 200ms cubic-bezier(0.16, 1, 0.3, 1), opacity 200ms ease;
+}
+.batch-bar.is-visible {
+  transform: translateX(-50%) translateY(0);
+  opacity: 1;
+  pointer-events: auto;
+}
+.batch-bar-count {
+  font-size: var(--text-sm);
+  font-weight: 600;
+  color: var(--text);
+  padding-right: var(--sp-3);
+  border-right: 1px solid var(--border);
+}
+.batch-bar-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+}
+
+/* ---- Inline Copy & Search Polish ----------------------------------------- */
+.copyable-cell {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.btn-inline-copy {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  border: none;
+  color: var(--text-3);
+  padding: 2px 4px;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: all 120ms ease;
+  line-height: 1;
+}
+.btn-inline-copy:hover {
+  color: var(--text);
+  background: var(--surface-2);
+}
+.btn-inline-copy.is-copied {
+  color: var(--green);
+}
+.btn-inline-copy svg {
+  width: 12px;
+  height: 12px;
+}
+
+.search-wrapper {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  flex: 1;
+  min-width: 200px;
+  max-width: 320px;
+}
+.search-wrapper input[type="search"] {
+  width: 100%;
+  padding-right: 48px;
+}
+.search-wrapper .search-clear-btn {
+  position: absolute;
+  right: 28px;
+  background: none;
+  border: none;
+  color: var(--text-3);
+  cursor: pointer;
+  padding: 2px 4px;
+  font-size: 13px;
+  display: none;
+}
+.search-wrapper .search-clear-btn:hover {
+  color: var(--text);
+}
+.search-wrapper.has-val .search-clear-btn {
+  display: block;
+}
+.search-wrapper .search-kbd-hint {
+  position: absolute;
+  right: 8px;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  padding: 1px 4px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  color: var(--text-3);
+  pointer-events: none;
+}
+
+/* Active filter chips */
+.active-filters-bar {
+  display: none;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--sp-2);
+  margin-bottom: var(--sp-3);
+  font-size: var(--text-xs);
+}
+.active-filters-bar.has-filters {
+  display: flex;
+}
+.filter-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 2px 8px;
+  color: var(--text-2);
+}
+.filter-chip-remove {
+  cursor: pointer;
+  color: var(--text-3);
+  font-size: 12px;
+  font-weight: bold;
+  border: none;
+  background: none;
+  padding: 0;
+}
+.filter-chip-remove:hover {
+  color: var(--red);
+}
+.filter-clear-all {
+  background: none;
+  border: none;
+  color: var(--accent);
+  cursor: pointer;
+  font-size: var(--text-xs);
+  padding: 2px 6px;
+}
+.filter-clear-all:hover {
+  text-decoration: underline;
+}
+.search-highlight {
+  background: rgba(234, 179, 8, 0.35);
+  color: inherit;
+  border-radius: 2px;
+  padding: 0 1px;
+}
+
+/* ---- Storage Distribution Bar -------------------------------------------- */
+.storage-dist-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  padding: var(--sp-3) var(--sp-4);
+  margin-bottom: var(--sp-4);
+}
+.storage-dist-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: var(--sp-2);
+  font-size: var(--text-xs);
+  color: var(--text-2);
+}
+.storage-dist-bar {
+  display: flex;
+  height: 8px;
+  background: var(--surface-2);
+  border-radius: 4px;
+  overflow: hidden;
+  margin-bottom: var(--sp-2);
+}
+.dist-segment {
+  height: 100%;
+  transition: width 300ms ease;
+}
+.dist-segment.watched {
+  background: var(--green);
+}
+.dist-segment.unwatched {
+  background: var(--border-strong);
+}
+.storage-dist-legend {
+  display: flex;
+  gap: var(--sp-4);
+  font-size: var(--text-xs);
+  color: var(--text-2);
+}
+.storage-dist-legend span {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+/* ---- Audit Presets & Detail Modal ---------------------------------------- */
+.time-presets {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-1);
+  margin-bottom: var(--sp-2);
+  overflow-x: auto;
+}
+.btn-preset {
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  color: var(--text-2);
+  font-size: var(--text-xs);
+  padding: 3px 8px;
+  border-radius: var(--radius);
+  cursor: pointer;
+  white-space: nowrap;
+}
+.btn-preset:hover, .btn-preset.is-active {
+  background: var(--surface);
+  color: var(--accent);
+  border-color: var(--accent);
+}
+.audit-detail-pre {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: var(--sp-3);
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  overflow-x: auto;
+  color: var(--text);
+  line-height: 1.5;
+  max-height: 280px;
+}
+
+/* ---- Settings & Setup Polish --------------------------------------------- */
+.settings-nav-tabs {
+  display: flex;
+  gap: var(--sp-2);
+  border-bottom: 1px solid var(--border);
+  margin-bottom: var(--sp-4);
+  position: sticky;
+  top: 60px;
+  background: var(--bg);
+  z-index: 10;
+  padding: var(--sp-2) 0;
+}
+.settings-tab-btn {
+  background: none;
+  border: none;
+  color: var(--text-2);
+  font-size: var(--text-sm);
+  font-weight: 500;
+  padding: 6px 12px;
+  border-radius: var(--radius);
+  cursor: pointer;
+}
+.settings-tab-btn:hover {
+  color: var(--text);
+  background: var(--surface);
+}
+.settings-tab-btn.is-active {
+  color: var(--accent);
+  background: var(--surface-2);
+  font-weight: 600;
+}
+
+.setup-progress-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  padding: var(--sp-4);
+  margin-bottom: var(--sp-5);
+}
+.setup-progress-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: var(--sp-2);
+}
+.setup-progress-title {
+  font-size: var(--text-base);
+  font-weight: 600;
+}
+.setup-progress-percent {
+  font-size: var(--text-sm);
+  font-weight: 600;
+  color: var(--accent);
+}
+.setup-progress-bar {
+  height: 6px;
+  background: var(--surface-2);
+  border-radius: 3px;
+  overflow: hidden;
+}
+.setup-progress-fill {
+  height: 100%;
+  background: var(--accent);
+  transition: width 400ms cubic-bezier(0.16, 1, 0.3, 1);
 }

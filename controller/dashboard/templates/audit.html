@@ -8,16 +8,25 @@
 {% endblock %}
 
 {% block content %}
-<form class="filters audit-filters" method="get" action="{{ url_for('audit') }}">
-  <input type="search" name="actor" value="{{ args.get('actor', '') }}" placeholder="Username" aria-label="Filter by username"
+<div class="time-presets" id="audit-presets">
+  <span class="time-presets-label">Quick range:</span>
+  <button type="button" class="btn-preset" data-range="today">Today</button>
+  <button type="button" class="btn-preset" data-range="24h">Last 24 Hours</button>
+  <button type="button" class="btn-preset" data-range="7d">Last 7 Days</button>
+  <button type="button" class="btn-preset" data-range="30d">Last 30 Days</button>
+  <button type="button" class="btn-preset" data-range="all">All Time</button>
+</div>
+
+<form class="filters audit-filters" id="audit-filters-form" method="get" action="{{ url_for('audit') }}">
+  <input type="search" name="actor" id="audit-actor" value="{{ args.get('actor', '') }}" placeholder="Username" aria-label="Filter by username"
          autocapitalize="none" spellcheck="false">
-  <select name="action" aria-label="Filter by action">
+  <select name="action" id="audit-action" aria-label="Filter by action">
     <option value="">All actions</option>
     {% for a in actions %}<option value="{{ a.value }}" {{ "selected" if args.get('action') == a.value }}>{{ audit_label(a.value) }}</option>{% endfor %}
   </select>
-  <input type="search" name="target" value="{{ args.get('target', '') }}" placeholder="Target (vol-…, i-…, key)" aria-label="Filter by target">
-  <input type="date" name="since" value="{{ args.get('since', '') }}" aria-label="From date">
-  <input type="date" name="until" value="{{ args.get('until', '') }}" aria-label="To date">
+  <input type="search" name="target" id="audit-target" value="{{ args.get('target', '') }}" placeholder="Target (vol-…, i-…, key)" aria-label="Filter by target">
+  <input type="date" name="since" id="audit-since" value="{{ args.get('since', '') }}" aria-label="From date">
+  <input type="date" name="until" id="audit-until" value="{{ args.get('until', '') }}" aria-label="To date">
   <button type="submit" class="btn">Filter</button>
   {% if filtered %}<a class="btn btn-quiet" href="{{ url_for('audit') }}">Clear</a>{% endif %}
   <span class="count">{{ rows|length }} shown</span>
@@ -32,7 +41,9 @@
     <tbody id="audit-tbody">
     {% for row in rows %}
     {% set r = row.r %}
-    <tr>
+    <tr class="audit-row" data-action="{{ r.action }}" data-who="{{ r.actor_username if r.actor_type == 'user' else actor_label(r.actor_type) }}"
+        data-target="{{ r.target_id or '' }}" data-account="{{ r.account_name or '' }}" data-from="{{ r.remote_addr or '' }}"
+        data-ts="{{ r.created_at.isoformat() }}" data-detail='{{ r.detail | tojson if r.detail else "" }}'>
       <td class="ts" data-ts="{{ r.created_at.isoformat() }}"></td>
       <td>
         {# Only a signed-in user is a "who". A failed login's typed name is its target, not its actor. #}
@@ -44,7 +55,7 @@
       <td>{{ r.account_name or "" }}</td>
       <td>
         {% if row.change %}<span class="change">{{ row.change }}</span>
-        {% elif r.detail %}<span class="muted-note">{% for k, v in r.detail.items() %}{{ k }}={{ v }}{{ ", " if not loop.last }}{% endfor %}</span>{% endif %}
+        {% elif r.detail %}<span class="muted-note detail-link">View detail payload</span>{% endif %}
       </td>
       <td class="mono">{{ r.remote_addr or "" }}</td>
     </tr>

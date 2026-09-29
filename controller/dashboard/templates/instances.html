@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% from "_macros.html" import filter_select, autoresize_select, pager, autoresize_switch, scan_decision, empty_row with context %}
+{% from "_macros.html" import filter_select, autoresize_select, pager, autoresize_switch, scan_decision, empty_row, copy_button, search_input with context %}
 
 {% block title %}Instances{% endblock %}
 {% block heading %}Instances{% endblock %}
@@ -28,7 +28,7 @@
 </div>
 
 <div class="filters">
-  <input type="search" id="instances-search" placeholder="Search instance ID…" aria-label="Search instances">
+  {{ search_input("instances-search", "Search instance ID or name…") }}
   {{ filter_select("instances-account-filter", "account", "All accounts", instance_accounts) }}
   {{ filter_select("instances-region-filter", "region", "All regions", instance_regions) }}
   {{ autoresize_select("instances-autoresize-filter") }}
@@ -38,9 +38,12 @@
     Export CSV
   </button>
 </div>
+<div class="active-filters-bar" id="instances-active-filters"></div>
+
 <div class="panel">
   <table id="instances-table">
     <thead><tr>
+      <th class="select-col"><input type="checkbox" class="select-all-checkbox" data-table="instances-table" aria-label="Select all instances"></th>
       <th>Instance ID</th><th>Name</th><th>Account</th><th>Region</th><th>Type</th><th>State</th><th class="num">Threshold</th>
       <th>Autoresize</th><th>Last scan</th><th>Last seen</th>
     </tr></thead>
@@ -48,7 +51,8 @@
     {% for i in instances %}
     <tr data-volume="" data-instance="{{ i.instance_id|lower }}" data-account="{{ i.account_name }}"
         data-region="{{ i.region }}" data-autoresize="{{ i.autoresize|lower }}">
-      <td class="mono">{{ i.instance_id }}</td>
+      <td class="select-col"><input type="checkbox" class="row-checkbox" data-kind="instances" data-id="{{ i.instance_id }}" aria-label="Select {{ i.instance_id }}"></td>
+      <td class="mono"><span class="copyable-cell"><span>{{ i.instance_id }}</span>{{ copy_button(i.instance_id) }}</span></td>
       <td>{{ i.name or "–" }}</td>
       <td>{{ i.account_name }}</td>
       <td>{{ i.region }}</td>
@@ -73,7 +77,7 @@
       <td class="ts" data-ts="{{ i.last_seen_at.isoformat() }}"></td>
     </tr>
     {% else %}
-    {{ empty_row(10, "No instances discovered yet.", "The controller syncs everything it can see on its first cycle.") }}
+    {{ empty_row(11, "No instances discovered yet.", "The controller syncs everything it can see on its first cycle.") }}
     {% endfor %}
     </tbody>
   </table>
