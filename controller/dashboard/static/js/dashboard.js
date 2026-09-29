@@ -342,8 +342,39 @@ function wireAllDrawers() {
 // Each of these wiring functions re-queries root (default: the whole
 // document) every time it's called, so calling it again after
 // refreshLiveData() swaps in fresh table rows picks up the new elements -
-// old elements are gone from the DOM by then, so there's no risk of
-// double-binding the same listener twice.
+function updateVolumesKPI() {
+  const summary = document.getElementById("volumes-summary");
+  if (!summary) return;
+  const rows = Array.from(document.querySelectorAll("#volumes-tbody tr[data-volume]"));
+  if (!rows.length) return;
+  const watchedCount = rows.filter(function (r) {
+    return r.dataset.watchedReason === "own" || r.dataset.watchedReason === "instance";
+  }).length;
+  const unwatchedCount = rows.length - watchedCount;
+
+  const watchedEl = document.getElementById("kpi-vol-watched");
+  if (watchedEl) watchedEl.textContent = String(watchedCount);
+  const unwatchedEl = document.getElementById("kpi-vol-unwatched");
+  if (unwatchedEl) unwatchedEl.textContent = String(unwatchedCount);
+  const totalEl = document.getElementById("kpi-vol-total");
+  if (totalEl) totalEl.textContent = String(rows.length);
+}
+
+function updateInstancesKPI() {
+  const summary = document.getElementById("instances-summary");
+  if (!summary) return;
+  const rows = Array.from(document.querySelectorAll("#instances-tbody tr[data-instance]"));
+  if (!rows.length) return;
+  const watchedCount = rows.filter(function (r) {
+    return r.dataset.autoresize === "true";
+  }).length;
+
+  const watchedEl = document.getElementById("kpi-inst-watched");
+  if (watchedEl) watchedEl.textContent = String(watchedCount);
+  const totalEl = document.getElementById("kpi-inst-total");
+  if (totalEl) totalEl.textContent = String(rows.length);
+}
+
 function wireAutoresizeToggles(root) {
   root.querySelectorAll(".autoresize-toggle").forEach(function (toggle) {
     toggle.addEventListener("change", function () {
@@ -374,6 +405,12 @@ function wireAutoresizeToggles(root) {
                 : '<span class="badge badge-muted">No</span>';
             }
             row.dataset.watchedReason = watched ? (viaInstance ? "instance" : "own") : "off";
+            updateVolumesKPI();
+          } else if (kind === "instances") {
+            updateInstancesKPI();
+          }
+          if (typeof showToast === "function") {
+            showToast((kind === "volumes" ? "Volume " : "Instance ") + id + " autoresize " + (desired ? "enabled" : "disabled"), "success");
           }
         })
         .catch(function () {
@@ -683,7 +720,7 @@ wireShortcutsModal();
 // outside the swapped elements, so they're untouched.
 const POLL_INTERVAL_MS = 10000;
 const SWAP_IDS = [
-  "dashboard-stats", "instances-tbody", "volumes-tbody", "resize-tbody", "scan-tbody", "audit-tbody",
+  "dashboard-stats", "volumes-summary", "instances-summary", "instances-tbody", "volumes-tbody", "resize-tbody", "scan-tbody", "audit-tbody",
   "accounts-tbody", "account-status",
 ];
 let refreshInFlight = false;

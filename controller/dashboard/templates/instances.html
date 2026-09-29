@@ -8,6 +8,25 @@
 {% endblock %}
 
 {% block content %}
+<div class="kpi-grid kpi-grid-compact" id="instances-summary">
+  <div class="kpi-card">
+    <div class="kpi-top"><span class="kpi-label">Discovered instances</span></div>
+    <div class="kpi-value" id="kpi-inst-total">{{ instances | length }}</div>
+  </div>
+  <div class="kpi-card">
+    <div class="kpi-top"><span class="kpi-label">Running instances</span></div>
+    <div class="kpi-value" id="kpi-inst-running">{{ instances | selectattr('state', 'equalto', 'running') | list | length }}</div>
+  </div>
+  <div class="kpi-card">
+    <div class="kpi-top"><span class="kpi-label">Autoresize watched</span></div>
+    <div class="kpi-value" id="kpi-inst-watched">{{ instances | selectattr('autoresize') | list | length }}</div>
+  </div>
+  <div class="kpi-card">
+    <div class="kpi-top"><span class="kpi-label">Stopped instances</span></div>
+    <div class="kpi-value" id="kpi-inst-stopped">{{ instances | selectattr('state', 'equalto', 'stopped') | list | length }}</div>
+  </div>
+</div>
+
 <div class="filters">
   <input type="search" id="instances-search" placeholder="Search instance ID…" aria-label="Search instances">
   {{ filter_select("instances-account-filter", "account", "All accounts", instance_accounts) }}
