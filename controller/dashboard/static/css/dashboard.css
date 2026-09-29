@@ -199,15 +199,15 @@ svg.icon { width: 16px; height: 16px; stroke: currentColor; fill: none; stroke-w
 .brand:hover { text-decoration: none; opacity: 0.9; color: var(--text); }
 
 .brand-mark {
-  width: 26px; height: 26px;
+  width: 28px; height: 28px;
   display: inline-flex; align-items: center; justify-content: center;
-  border-radius: 7px;
-  background: linear-gradient(135deg, #3b82f6 0%, #6366f1 55%, #8b5cf6 100%);
-  color: #ffffff;
-  box-shadow: 0 2px 8px rgba(99, 102, 241, 0.4), inset 0 1px 0 rgba(255, 255, 255, 0.25);
+  border-radius: 8px;
+  background: var(--surface-2);
+  border: 1px solid var(--border-strong);
+  box-shadow: 0 2px 8px rgba(99, 102, 241, 0.2);
   flex-shrink: 0;
 }
-.brand-mark svg { width: 15px; height: 15px; }
+.brand-mark svg { width: 18px; height: 18px; display: block; }
 
 .scope-badge {
   align-self: center;
@@ -311,7 +311,7 @@ svg.icon { width: 16px; height: 16px; stroke: currentColor; fill: none; stroke-w
 }
 
 .page-header { margin-bottom: var(--sp-6); }
-.page-narrow { max-width: 420px; padding-top: var(--sp-10); }
+.page-narrow { max-width: 440px; padding: var(--sp-6) var(--sp-4) var(--sp-10); margin: 0 auto; }
 
 .flashes { margin-bottom: var(--sp-5); display: flex; flex-direction: column; gap: var(--sp-2); }
 .flash {
@@ -816,8 +816,8 @@ td.empty {
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  padding: var(--sp-6) 0 var(--sp-10);
-  min-height: calc(85vh - 56px);
+  padding: var(--sp-4) 0 var(--sp-8);
+  width: 100%;
 }
 
 .auth-card {
@@ -849,8 +849,8 @@ td.empty {
 }
 
 .auth-brand-mark {
-  width: 48px;
-  height: 48px;
+  width: 52px;
+  height: 52px;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -861,8 +861,9 @@ td.empty {
   margin-bottom: var(--sp-4);
 }
 .auth-brand-mark svg {
-  width: 28px;
-  height: 28px;
+  width: 32px;
+  height: 32px;
+  display: block;
 }
 
 .auth-title {
