@@ -602,10 +602,25 @@ function wireAuditDetailModal() {
 function wireSettingsTabs() {
   const tabs = document.querySelectorAll(".settings-tab-btn");
   if (!tabs.length) return;
+
+  // The click handler below sets the active tab directly, but the
+  // IntersectionObserver scroll-spy further down also reacts to the
+  // smooth-scroll that click triggers - on a page this short, several
+  // sections pass through its detection band during that single
+  // animation, so it can overwrite the just-clicked tab with whichever
+  // one it last saw mid-scroll. Suppressing it for the scroll's duration
+  // stops it fighting the click; it still drives the highlight correctly
+  // once the user scrolls manually afterward.
+  let suppressSpy = false;
+  let suppressTimer = null;
+
   tabs.forEach(function (tab) {
     tab.addEventListener("click", function () {
       tabs.forEach(t => t.classList.remove("is-active"));
       tab.classList.add("is-active");
+      suppressSpy = true;
+      clearTimeout(suppressTimer);
+      suppressTimer = setTimeout(function () { suppressSpy = false; }, 700);
       const target = document.getElementById(tab.dataset.target);
       if (target) {
         target.scrollIntoView({ behavior: "smooth", block: "start" });
@@ -615,6 +630,7 @@ function wireSettingsTabs() {
 
   if ("IntersectionObserver" in window) {
     const observer = new IntersectionObserver(function (entries) {
+      if (suppressSpy) return;
       entries.forEach(function (entry) {
         if (entry.isIntersecting) {
           tabs.forEach(function (t) {
