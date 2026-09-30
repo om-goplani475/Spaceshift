@@ -383,6 +383,26 @@ function wireInlineCopyButtons(root) {
   });
 }
 
+let batchUpdateInFlight = false;
+
+function getSelectedCheckboxes() {
+  return Array.from(document.querySelectorAll(".row-checkbox:checked"));
+}
+
+function updateBatchBar() {
+  const batchBar = document.getElementById("batch-action-bar");
+  if (!batchBar) return;
+  const countEl = document.getElementById("batch-bar-count");
+  const selected = getSelectedCheckboxes();
+  if (selected.length > 0) {
+    const kind = selected[0].dataset.kind || "items";
+    if (countEl) countEl.textContent = selected.length + " " + (selected.length === 1 ? (kind === "volumes" ? "volume" : "instance") : (kind === "volumes" ? "volumes" : "instances")) + " selected";
+    batchBar.classList.add("is-visible");
+  } else {
+    batchBar.classList.remove("is-visible");
+  }
+}
+
 function wireBatchActions() {
   const batchBar = document.getElementById("batch-action-bar");
   const countEl = document.getElementById("batch-bar-count");
@@ -390,22 +410,6 @@ function wireBatchActions() {
   const disableBtn = document.getElementById("batch-disable-btn");
   const exportBtn = document.getElementById("batch-export-btn");
   const cancelBtn = document.getElementById("batch-cancel-btn");
-
-  function getSelectedCheckboxes() {
-    return Array.from(document.querySelectorAll(".row-checkbox:checked"));
-  }
-
-  function updateBatchBar() {
-    if (!batchBar) return;
-    const selected = getSelectedCheckboxes();
-    if (selected.length > 0) {
-      const kind = selected[0].dataset.kind || "items";
-      if (countEl) countEl.textContent = selected.length + " " + (selected.length === 1 ? (kind === "volumes" ? "volume" : "instance") : (kind === "volumes" ? "volumes" : "instances")) + " selected";
-      batchBar.classList.add("is-visible");
-    } else {
-      batchBar.classList.remove("is-visible");
-    }
-  }
 
   document.addEventListener("change", function (e) {
     if (e.target.classList.contains("select-all-checkbox")) {
@@ -431,9 +435,12 @@ function wireBatchActions() {
 
   async function setBatchAutoresize(desired) {
     const selected = getSelectedCheckboxes();
-    if (!selected.length) return;
-    enableBtn.disabled = true;
-    disableBtn.disabled = true;
+    if (!selected.length || batchUpdateInFlight) return;
+    batchUpdateInFlight = true;
+    if (enableBtn) enableBtn.disabled = true;
+    if (disableBtn) disableBtn.disabled = true;
+    if (cancelBtn) cancelBtn.disabled = true;
+    if (exportBtn) exportBtn.disabled = true;
 
     let succeeded = 0;
     let failed = 0;
@@ -468,8 +475,11 @@ function wireBatchActions() {
     });
 
     await Promise.all(promises);
-    enableBtn.disabled = false;
-    disableBtn.disabled = false;
+    batchUpdateInFlight = false;
+    if (enableBtn) enableBtn.disabled = false;
+    if (disableBtn) disableBtn.disabled = false;
+    if (cancelBtn) cancelBtn.disabled = false;
+    if (exportBtn) exportBtn.disabled = false;
 
     updateVolumesKPI();
     updateInstancesKPI();
@@ -571,7 +581,19 @@ function wireAuditDetailModal() {
         // malformed JSON in data-detail - skip it, the rest of the event still shows.
       }
     }
-    metaEl.textContent = "Actor: " + row.dataset.who + " | Action: " + row.dataset.action + " | " + row.dataset.ts;
+    let formattedTs = row.dataset.ts || "";
+    if (formattedTs) {
+      try {
+        const d = new Date(formattedTs);
+        if (!isNaN(d.getTime())) {
+          formattedTs = d.toLocaleString(undefined, {
+            year: "numeric", month: "short", day: "numeric",
+            hour: "2-digit", minute: "2-digit", second: "2-digit"
+          });
+        }
+      } catch (_) {}
+    }
+    metaEl.textContent = "Actor: " + (row.dataset.who || "") + " | Action: " + (row.dataset.action || "") + " | " + formattedTs;
     contentEl.textContent = lines.length ? lines.join("\n") : "No further detail recorded for this event.";
     modal.classList.remove("is-hidden");
   });
@@ -580,16 +602,48 @@ function wireAuditDetailModal() {
 function wireSettingsTabs() {
   const tabs = document.querySelectorAll(".settings-tab-btn");
   if (!tabs.length) return;
+
+  // The click handler below sets the active tab directly, but the
+  // IntersectionObserver scroll-spy further down also reacts to the
+  // smooth-scroll that click triggers - on a page this short, several
+  // sections pass through its detection band during that single
+  // animation, so it can overwrite the just-clicked tab with whichever
+  // one it last saw mid-scroll. Suppressing it for the scroll's duration
+  // stops it fighting the click; it still drives the highlight correctly
+  // once the user scrolls manually afterward.
+  let suppressSpy = false;
+  let suppressTimer = null;
+
   tabs.forEach(function (tab) {
     tab.addEventListener("click", function () {
       tabs.forEach(t => t.classList.remove("is-active"));
       tab.classList.add("is-active");
+      suppressSpy = true;
+      clearTimeout(suppressTimer);
+      suppressTimer = setTimeout(function () { suppressSpy = false; }, 700);
       const target = document.getElementById(tab.dataset.target);
       if (target) {
         target.scrollIntoView({ behavior: "smooth", block: "start" });
       }
     });
   });
+
+  if ("IntersectionObserver" in window) {
+    const observer = new IntersectionObserver(function (entries) {
+      if (suppressSpy) return;
+      entries.forEach(function (entry) {
+        if (entry.isIntersecting) {
+          tabs.forEach(function (t) {
+            t.classList.toggle("is-active", t.dataset.target === entry.target.id);
+          });
+        }
+      });
+    }, { rootMargin: "-120px 0px -60% 0px" });
+
+    document.querySelectorAll(".settings-group").forEach(function (g) {
+      observer.observe(g);
+    });
+  }
 }
 
 function wireRowDrawer(tableId) {
@@ -1047,7 +1101,7 @@ const liveIndicator = document.getElementById("live-indicator");
 const liveLabel = document.getElementById("live-label");
 
 async function refreshLiveData() {
-  if (document.hidden || refreshInFlight) return;
+  if (document.hidden || refreshInFlight || batchUpdateInFlight) return;
   refreshInFlight = true;
   if (liveIndicator) liveIndicator.dataset.state = "refreshing";
   try {
@@ -1063,6 +1117,17 @@ async function refreshLiveData() {
     if (!resp.ok) throw new Error("refresh failed: " + resp.status);
     const html = await resp.text();
     const fresh = new DOMParser().parseFromString(html, "text/html");
+
+    // Preserve checked state on checkboxes across live poll swap
+    const checkedIds = new Set(
+      Array.from(document.querySelectorAll(".row-checkbox:checked"))
+        .map(cb => cb.dataset.id)
+        .filter(Boolean)
+    );
+    const selectAllState = {};
+    document.querySelectorAll(".select-all-checkbox").forEach(cb => {
+      if (cb.checked && cb.dataset.table) selectAllState[cb.dataset.table] = true;
+    });
 
     SWAP_IDS.forEach(function (id) {
       const current = document.getElementById(id);
@@ -1082,6 +1147,21 @@ async function refreshLiveData() {
     if (settingsList && updatedSettings && !editingSettings && !hasUnsavedSettings) {
       settingsList.innerHTML = updatedSettings.innerHTML;
     }
+
+    // Restore checkbox selections
+    if (checkedIds.size > 0) {
+      document.querySelectorAll(".row-checkbox").forEach(cb => {
+        if (checkedIds.has(cb.dataset.id)) {
+          cb.checked = true;
+        }
+      });
+      document.querySelectorAll(".select-all-checkbox").forEach(cb => {
+        if (selectAllState[cb.dataset.table]) {
+          cb.checked = true;
+        }
+      });
+    }
+    updateBatchBar();
 
     formatTimestamps(document);
     renderMeters(document);

@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="csrf-token" content="{{ csrf_token() }}">
 <title>{% block title %}{% endblock %} · Spaceshift</title>
-<link rel="stylesheet" href="{{ url_for('static', filename='css/dashboard.css') }}?v=2.5.0">
+<link rel="stylesheet" href="{{ url_for('static', filename='css/dashboard.css') }}?v=2.6.4">
 </head>
 {# Sign-in pages set standalone: no nav, no live refresh - there's nothing to refresh. #}
 <body{% if standalone %} data-live="off"{% endif %}>
@@ -13,7 +13,18 @@
   <div class="topbar-inner">
     <a class="brand" href="{{ url_for('overview') }}">
       <span class="brand-mark" aria-hidden="true">
-        <svg viewBox="0 0 24 24"><path d="M12 2l8 4v6c0 5-3.5 8.5-8 10-4.5-1.5-8-5-8-10V6z"/></svg>
+        <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+          <defs>
+            <linearGradient id="ss-brand-g" x1="4" y1="4" x2="20" y2="20" gradientUnits="userSpaceOnUse">
+              <stop offset="0%" stop-color="#38bdf8"/>
+              <stop offset="50%" stop-color="#6366f1"/>
+              <stop offset="100%" stop-color="#c084fc"/>
+            </linearGradient>
+          </defs>
+          <path d="M17.5 4.5H9A3.75 3.75 0 0 0 9 12H15A3.75 3.75 0 0 1 15 19.5H6.5" stroke="url(#ss-brand-g)" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
+          <circle cx="17.5" cy="4.5" r="1.75" fill="#38bdf8"/>
+          <circle cx="6.5" cy="19.5" r="1.75" fill="#c084fc"/>
+        </svg>
       </span>
       Spaceshift
     </a>
@@ -50,6 +61,11 @@
       </form>
     </div>
     {% endif %}
+    {% else %}
+    <button type="button" class="theme-toggle auth-theme-toggle" id="theme-toggle" title="Toggle dark/light theme" aria-label="Toggle theme">
+      <svg class="icon theme-icon-dark" viewBox="0 0 24 24"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
+      <svg class="icon theme-icon-light" viewBox="0 0 24 24"><circle cx="12" cy="12" r="5"/><path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"/></svg>
+    </button>
     {% endif %}
   </div>
 </header>
@@ -74,10 +90,12 @@
   </div>
   {% endif %}
   {% endwith %}
+  {% if not standalone %}
   <div class="page-header">
     <h1>{% block heading %}{% endblock %}</h1>
     {% block lede %}{% endblock %}
   </div>
+  {% endif %}
   {% block content %}{% endblock %}
 </main>
 
@@ -165,7 +183,7 @@
 
 <div id="toast-container" class="toast-container" aria-live="polite"></div>
 
-<script src="{{ url_for('static', filename='js/dashboard.js') }}?v=2.5.0"></script>
+<script src="{{ url_for('static', filename='js/dashboard.js') }}?v=2.6.1"></script>
 {% block scripts %}{% endblock %}
 </body>
 </html>
