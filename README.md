@@ -1,6 +1,10 @@
 # Spaceshift
 
-Self-hosted controller that watches EC2/EBS disk usage across a fleet and automatically grows a volume — both the AWS-side size **and** the OS-side partition/filesystem — before it fills up.
+[![CI](https://github.com/om-goplani475/Spaceshift/actions/workflows/ci.yml/badge.svg)](https://github.com/om-goplani475/Spaceshift/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![Python 3.12](https://img.shields.io/badge/python-3.12-blue.svg)](Dockerfile)
+
+Self-hosted controller that watches EC2/EBS disk usage across a fleet and automatically grows a volume - both the AWS-side size **and** the OS-side partition/filesystem - before it fills up.
 
 ## Why
 
@@ -8,14 +12,14 @@ Resizing an EBS volume is a two-step process (grow the volume via the EC2 API, t
 
 ## How it works
 
-1. **Discovery** — every instance and volume the controller can see gets synced into Postgres each cycle; a volume is only actually watched once its (or its instance's) `autoresize` column is set, with an optional per-resource `threshold_percent` override.
-2. **Disk check** — connects to the instance via SSM Send-Command and checks real filesystem usage. There's no AWS API for this — CloudWatch doesn't report it natively either.
-3. **Resize** — if usage crosses the threshold, calls `modify-volume`, waits for AWS to complete it, then runs `growpart` + `resize2fs`/`xfs_growfs` remotely to actually extend the filesystem.
-4. **State tracking** — every resize attempt is tracked through a state machine in Postgres (its own container, started alongside the controller) so partial failures retry safely, duplicate triggers are prevented, and AWS's limits (4 modifications per 24h, and a 6-hour cooldown between modifications of the same volume) are respected.
+1. **Discovery** - every instance and volume the controller can see gets synced into Postgres each cycle; a volume is only actually watched once its (or its instance's) `autoresize` column is set, with an optional per-resource `threshold_percent` override.
+2. **Disk check** - connects to the instance via SSM Send-Command and checks real filesystem usage. There's no AWS API for this - CloudWatch doesn't report it natively either.
+3. **Resize** - if usage crosses the threshold, calls `modify-volume`, waits for AWS to complete it, then runs `growpart` + `resize2fs`/`xfs_growfs` remotely to actually extend the filesystem.
+4. **State tracking** - every resize attempt is tracked through a state machine in Postgres (its own container, started alongside the controller) so partial failures retry safely, duplicate triggers are prevented, and AWS's limits (4 modifications per 24h, and a 6-hour cooldown between modifications of the same volume) are respected.
 
 v1 supports **Amazon Linux + Ubuntu, ext4 + XFS**. LVM-based volumes are out of scope for now.
 
-**Known limitation — device naming.** The controller identifies a volume on the instance by the device name AWS reports at attach time (`/dev/xvdf`, `/dev/xvdf1`, `/dev/nvme1n1p1`). That works for partitioned volumes attached under `xvd*`/`nvme*` names, which is the setup it has been run against. It does **not** yet handle volumes attached as `/dev/sd*` (Ubuntu root disks, most marketplace AMIs), unpartitioned volumes with a filesystem directly on the disk, or root volumes with a separate EFI partition — those are either skipped or, in the EFI case, measured on the wrong partition. The fix (resolving the OS device from the volume ID's serial instead of the attach-time name) is designed but needs real-instance validation across Nitro/Xen and AL2023/Ubuntu; see [CHANGELOG.md](CHANGELOG.md). Until then, keep `dry_run` on and check the **Volumes** page shows the mount point you expect before enabling live mode.
+**Known limitation - device naming.** The controller identifies a volume on the instance by the device name AWS reports at attach time (`/dev/xvdf`, `/dev/xvdf1`, `/dev/nvme1n1p1`). That works for partitioned volumes attached under `xvd*`/`nvme*` names, which is the setup it has been run against. It does **not** yet handle volumes attached as `/dev/sd*` (Ubuntu root disks, most marketplace AMIs), unpartitioned volumes with a filesystem directly on the disk, or root volumes with a separate EFI partition - those are either skipped or, in the EFI case, measured on the wrong partition. The fix (resolving the OS device from the volume ID's serial instead of the attach-time name) is designed but needs real-instance validation across Nitro/Xen and AL2023/Ubuntu; see [CHANGELOG.md](CHANGELOG.md). Until then, keep `dry_run` on and check the **Volumes** page shows the mount point you expect before enabling live mode.
 
 ## Quickstart
 
@@ -28,9 +32,9 @@ docker compose up
 
 Then open `http://localhost:8089` - with no users yet it takes you to `/setup` - and create the first admin with the setup token from your `.env` (or run `docker compose exec dashboard python -m controller.dashboard.users create-admin <name>` instead). That page works exactly once. Then add your AWS account on the **Accounts** page (name, regions, optionally a role to assume) and click **Verify now**. There is no configuration file: secrets live in `.env`, everything else on the dashboard.
 
-This starts three containers: the controller, its dashboard (below), and a Postgres container both use to track resize state (no separate database setup needed — they connect to it automatically using the password from `.env`). `docker compose up` refuses to start if `.env` is missing the password or the secret key, rather than silently running with a guessable one.
+This starts three containers: the controller, its dashboard (below), and a Postgres container both use to track resize state (no separate database setup needed - they connect to it automatically using the password from `.env`). `docker compose up` refuses to start if `.env` is missing the password or the secret key, rather than silently running with a guessable one.
 
-`dry_run` defaults to `true` — the controller will log what it *would* resize without ever calling `modify-volume` or running a mutating remote command. Confirm the logs show what you expect against your own AWS account before flipping it off on the Settings page (see [docs/SETUP.md](docs/SETUP.md) section 5).
+`dry_run` defaults to `true` - the controller will log what it *would* resize without ever calling `modify-volume` or running a mutating remote command. Confirm the logs show what you expect against your own AWS account before flipping it off on the Settings page (see [docs/SETUP.md](docs/SETUP.md) section 5).
 
 Mark a volume (or the instance it's attached to) as eligible - the first cycle syncs everything it can see into Postgres, but nothing is watched until this is set. The dashboard (below) is the easiest way to do this - flip the `Autoresize` toggle next to the volume/instance on the **Instances** or **Volumes** page. Without the dashboard, it's a direct `UPDATE`:
 
@@ -41,16 +45,16 @@ docker compose exec postgres psql -U ebs_auto_resize -d ebs_auto_resize \
 
 ### Dashboard
 
-Already running as part of `docker compose up` above — no separate command needed. Served at `http://localhost:8089`, behind a login with per-account roles — viewer, operator, or global admin — so a user sees and touches only the AWS accounts they've been given (see [docs/SETUP.md](docs/SETUP.md) section 7):
+Already running as part of `docker compose up` above - no separate command needed. Served at `http://localhost:8089`, behind a login with per-account roles (viewer, operator, or global admin) so a user sees and touches only the AWS accounts they've been given (see [docs/SETUP.md](docs/SETUP.md) section 7):
 
-- **Overview** — the numbers that matter (volumes scanned, watched, resizes completed, in progress, needs attention), every resize the controller has started and where it got to, and the most recent disk checks.
-- **Instances** and **Volumes** — everything discovered, with an `Autoresize` toggle per row (this is how you mark things eligible). The Volumes page shows what's *actually* in effect after a volume's own flag, its instance's flag, and the default threshold are resolved.
-- **Audit log** — who changed what, when, and from where: every toggle, setting change, sign-in, failed sign-in and CLI user command, filterable and exportable as CSV. Kept for a year by default ([docs/SETUP.md](docs/SETUP.md) section 8).
-- **Accounts** (admins) — which AWS accounts to watch, through which role, in which regions; live status per account and a **Verify now** that reports the exact AWS error.
-- **Users** (admins) — create users, hand over a one-time temporary password, set roles per account, deactivate, reset, unlock.
-- **Settings** (admins) — `dry_run`, notifications and every other live-editable setting (see [docs/SETUP.md](docs/SETUP.md) section 5), grouped and described inline, no SQL and no restart.
+- **Overview** - the numbers that matter (volumes scanned, watched, resizes completed, in progress, needs attention), every resize the controller has started and where it got to, and the most recent disk checks.
+- **Instances** and **Volumes** - everything discovered, with an `Autoresize` toggle per row (this is how you mark things eligible). The Volumes page shows what's *actually* in effect after a volume's own flag, its instance's flag, and the default threshold are resolved.
+- **Audit log** - who changed what, when, and from where: every toggle, setting change, sign-in, failed sign-in and CLI user command, filterable and exportable as CSV. Kept for a year by default ([docs/SETUP.md](docs/SETUP.md) section 8).
+- **Accounts** (admins) - which AWS accounts to watch, through which role, in which regions; live status per account and a **Verify now** that reports the exact AWS error.
+- **Users** (admins) - create users, hand over a one-time temporary password, set roles per account, deactivate, reset, unlock.
+- **Settings** (admins) - `dry_run`, notifications and every other live-editable setting (see [docs/SETUP.md](docs/SETUP.md) section 5), grouped and described inline, no SQL and no restart.
 
-Managing more than one AWS account (see [docs/SETUP.md](docs/SETUP.md) section 1.4)? Every table is filterable by account alongside region. Pages keep themselves up to date (a 10s poll while the tab is visible, paused when it isn't) — the indicator in the top-right says when the last refresh happened. JSON is also available at `/api/status`, `/api/scans`, `/api/instances`, `/api/volumes`, `/api/config`, `/api/audit` — with the same session cookie a browser gets from `/login` (a `curl` recipe is in [docs/SETUP.md](docs/SETUP.md) 7.6). The container serves plain HTTP with gunicorn — if it's reachable beyond localhost, put it behind a TLS-terminating reverse proxy (nginx, Caddy, an ALB) and set `SPACESHIFT_BEHIND_TLS_PROXY=true` so the session cookie is only ever sent over HTTPS.
+Managing more than one AWS account (see [docs/SETUP.md](docs/SETUP.md) section 1.4)? Every table is filterable by account alongside region. Pages keep themselves up to date (a 10s poll while the tab is visible, paused when it isn't) - the indicator in the top-right says when the last refresh happened. JSON is also available at `/api/status`, `/api/scans`, `/api/instances`, `/api/volumes`, `/api/config`, `/api/audit` - with the same session cookie a browser gets from `/login` (a `curl` recipe is in [docs/SETUP.md](docs/SETUP.md) 7.6). The container serves plain HTTP with gunicorn - if it's reachable beyond localhost, put it behind a TLS-terminating reverse proxy (nginx, Caddy, an ALB) and set `SPACESHIFT_BEHIND_TLS_PROXY=true` so the session cookie is only ever sent over HTTPS.
 
 <p>
   <img src="docs/screenshots/overview-light.png" alt="Spaceshift overview page: stat tiles, resize activity table, scan history table" width="49%">
@@ -63,19 +67,19 @@ Before running this against a real AWS account, see **[docs/SETUP.md](docs/SETUP
 
 ## Required AWS permissions
 
-Attach an IAM role to whatever host runs the container — **never put access keys anywhere but `.env`, and never commit them.** A ready-to-copy least-privilege policy is in [docs/iam-policy.json](docs/iam-policy.json); see [docs/SETUP.md](docs/SETUP.md) for what each statement is for, and for a tag-scoped variant that limits which instances and volumes the role can touch. Be clear-eyed about what the default role can do: root on every SSM-managed instance, and any volume resized.
+Attach an IAM role to whatever host runs the container - **never put access keys anywhere but `.env`, and never commit them.** A ready-to-copy least-privilege policy is in [docs/iam-policy.json](docs/iam-policy.json); see [docs/SETUP.md](docs/SETUP.md) for what each statement is for, and for a tag-scoped variant that limits which instances and volumes the role can touch. Be clear-eyed about what the default role can do: root on every SSM-managed instance, and any volume resized.
 
-Not running on EC2 (no instance role available)? Put `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` in `.env` instead — see [docs/SETUP.md](docs/SETUP.md). The role-based path above remains the recommended default.
+Not running on EC2 (no instance role available)? Put `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` in `.env` instead - see [docs/SETUP.md](docs/SETUP.md). The role-based path above remains the recommended default.
 
 ## Connection method
 
-The controller talks to instances exclusively via **SSM Send-Command** — no inbound port, no key management, auth is purely the IAM role above. Target instances need the SSM Agent running and `AmazonSSMManagedInstanceCore` on their own instance profile; see [docs/SETUP.md](docs/SETUP.md).
+The controller talks to instances exclusively via **SSM Send-Command** - no inbound port, no key management, auth is purely the IAM role above. Target instances need the SSM Agent running and `AmazonSSMManagedInstanceCore` on their own instance profile; see [docs/SETUP.md](docs/SETUP.md).
 
 ## Running in Docker
 
 - The container runs as a non-root user by default.
 - **Health and recovery.** The controller writes a heartbeat only after a *successful* cycle, with a deadline it computes from your `scheduler.interval_seconds` (plus 30 minutes' grace for a slow cycle). If that deadline passes, `docker ps` shows the container unhealthy - so a loop that's alive but failing every cycle can't look fine. If three consecutive cycles fail (e.g. Postgres unreachable), the controller logs a `CRITICAL` line and exits; `restart: unless-stopped` brings it back with a fresh process and fresh database connections. Seeing that restart in the logs is intentional, not a crash. The `dashboard` service builds from the same image but has no scheduler loop, so it overrides the healthcheck in `docker-compose.yml` with a request to its own unauthenticated `/healthz`, which also proves Postgres answers.
-- Postgres runs as its own container (`docker-compose.yml`'s `postgres` service), with its data on a named volume (`postgres-data`). That volume holds your eligibility flags, settings, and in-flight resize state — not just history — so back it up; `docker compose down -v` wipes it. Commands and the upgrade procedure are in [docs/SETUP.md](docs/SETUP.md) section 6.
+- Postgres runs as its own container (`docker-compose.yml`'s `postgres` service), with its data on a named volume (`postgres-data`). That volume holds your eligibility flags, settings, and in-flight resize state, not just history, so back it up; `docker compose down -v` wipes it. Commands and the upgrade procedure are in [docs/SETUP.md](docs/SETUP.md) section 6.
 - **IMDSv2 gotcha:** if credentials mysteriously fail *only* inside the container (but work fine directly on the host), it's usually because Docker's networking adds an extra hop to the instance metadata service, and the default IMDSv2 hop limit is 1. Raise the instance's metadata hop limit to 2 to fix it.
 
 ## Testing
@@ -88,8 +92,8 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for full dev setup, including how to run 
 
 ## Contributing / Security
 
-- [CONTRIBUTING.md](CONTRIBUTING.md) — dev environment, running tests, code style.
-- [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md) — expectations for everyone participating in the project.
-- [SECURITY.md](SECURITY.md) — this tool holds real AWS and instance access; please report vulnerabilities privately rather than via a public issue.
-- [CHANGELOG.md](CHANGELOG.md) — what changed between versions.
-- [LICENSE](LICENSE) — MIT.
+- [CONTRIBUTING.md](CONTRIBUTING.md) - dev environment, running tests, code style.
+- [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md) - expectations for everyone participating in the project.
+- [SECURITY.md](SECURITY.md) - this tool holds real AWS and instance access; please report vulnerabilities privately rather than via a public issue.
+- [CHANGELOG.md](CHANGELOG.md) - what changed between versions.
+- [LICENSE](LICENSE) - MIT.
