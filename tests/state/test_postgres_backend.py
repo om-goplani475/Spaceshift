@@ -134,6 +134,57 @@ def test_upsert_never_overwrites_autoresize(postgres_state):
     assert instance.state == "stopped"
 
 
+def test_tag_seed_applies_once_on_insert_and_is_audited(postgres_state):
+    from controller.audit import AuditFilters
+
+    postgres_state.upsert_instance(
+        _ACCOUNT,
+        "i-1",
+        "us-east-1",
+        "t3.micro",
+        "running",
+        seed_autoresize=True,
+        seed_threshold_percent=70,
+        seed_max_size_gb=250,
+    )
+
+    instance = postgres_state.list_instances(region="us-east-1")[0]
+    assert instance.autoresize is True
+    assert instance.threshold_percent == 70
+    assert instance.max_size_gb == 250
+
+    rows = postgres_state.list_audit(AuditFilters(target="i-1"), limit=10)
+    assert len(rows) == 1
+    assert rows[0].actor_type == "system"
+    assert rows[0].detail == {"source": "tag"}
+    assert rows[0].after == {"autoresize": True, "threshold_percent": 70, "max_size_gb": 250}
+
+
+def test_tag_seed_never_reapplies_on_a_later_sync(postgres_state):
+    from controller.audit import AuditFilters
+
+    postgres_state.upsert_instance(_ACCOUNT, "i-1", "us-east-1", "t3.micro", "running", seed_autoresize=True)
+    postgres_state.set_instance_autoresize("i-1", False)  # a human turns it back off
+
+    # A later sync still carries the (unchanged) tag - must not reapply it.
+    postgres_state.upsert_instance(_ACCOUNT, "i-1", "us-east-1", "t3.micro", "stopped", seed_autoresize=True)
+
+    instance = postgres_state.list_instances(region="us-east-1")[0]
+    assert instance.autoresize is False
+    assert instance.state == "stopped"
+
+    rows = postgres_state.list_audit(AuditFilters(target="i-1"), limit=10)
+    assert len(rows) == 1  # only the initial tag-seed row - no second one from the resync
+
+
+def test_upsert_with_no_seed_values_writes_no_audit_row(postgres_state):
+    from controller.audit import AuditFilters
+
+    postgres_state.upsert_instance(_ACCOUNT, "i-1", "us-east-1", "t3.micro", "running")
+
+    assert postgres_state.list_audit(AuditFilters(target="i-1"), limit=10) == []
+
+
 def test_upsert_instance_stores_and_refreshes_the_name_tag(postgres_state):
     postgres_state.upsert_instance(_ACCOUNT, "i-1", "us-east-1", "t3.micro", "running", name="web-1")
     assert postgres_state.list_instances(region="us-east-1")[0].name == "web-1"

@@ -39,10 +39,12 @@ class ScanRecord:
 class InstanceRecord:
     """One EC2 instance seen by a discovery scan.
 
-    autoresize/threshold_percent are admin-controlled (set via the
-    dashboard toggle), never overwritten by upsert_instance - discovery
-    only refreshes the AWS-observed fields (instance_type, state, name,
-    last_seen_at) and never touches the eligibility flag itself.
+    autoresize/threshold_percent/max_size_gb are admin-controlled (set via
+    the dashboard toggle, or seeded once from spaceshift:* tags the moment
+    this resource is first ever discovered - see upsert_instance), never
+    overwritten by upsert_instance on a later cycle - discovery only
+    refreshes the AWS-observed fields (instance_type, state, name,
+    last_seen_at) and never touches the eligibility flags themselves.
     """
 
     instance_id: str
@@ -55,12 +57,13 @@ class InstanceRecord:
     last_seen_at: datetime
     is_stale: bool
     name: str | None = None
+    max_size_gb: int | None = None
 
 
 @dataclass
 class VolumeRecord:
     """One EBS volume seen by a discovery scan. Same admin-controlled
-    autoresize/threshold_percent contract as InstanceRecord."""
+    autoresize/threshold_percent/max_size_gb contract as InstanceRecord."""
 
     volume_id: str
     instance_id: str | None
@@ -73,6 +76,7 @@ class VolumeRecord:
     last_seen_at: datetime
     is_stale: bool
     name: str | None = None
+    max_size_gb: int | None = None
 
 
 class DiscoveryStateContract(abc.ABC):
@@ -110,17 +114,35 @@ class DiscoveryStateContract(abc.ABC):
 
     @abc.abstractmethod
     def upsert_instance(
-        self, account_name: str, instance_id: str, region: str, instance_type: str, state: str, name: str | None = None
+        self,
+        account_name: str,
+        instance_id: str,
+        region: str,
+        instance_type: str,
+        state: str,
+        name: str | None = None,
+        seed_autoresize: bool | None = None,
+        seed_threshold_percent: int | None = None,
+        seed_max_size_gb: int | None = None,
     ) -> None:
         """Insert or refresh one instance row from a discovery scan.
 
         Only touches AWS-observed fields (account_name, instance_type,
-        state, name, last_seen_at, is_stale=False) - never autoresize/
-        threshold_percent, which are exclusively admin-controlled via
-        set_instance_autoresize. `name` is the EC2 "Name" tag, shown on the
-        dashboard next to the instance id - None if the instance has no
-        Name tag, not the empty string, so the UI can tell "no tag" apart
-        from "tagged with an empty name".
+        state, name, last_seen_at, is_stale=False) on a row that already
+        exists - never autoresize/threshold_percent/max_size_gb, which are
+        exclusively admin-controlled via set_instance_autoresize (or the
+        dashboard's threshold/max-size fields) from that point on. `name`
+        is the EC2 "Name" tag, shown on the dashboard next to the instance
+        id - None if the instance has no Name tag, not the empty string, so
+        the UI can tell "no tag" apart from "tagged with an empty name".
+
+        seed_autoresize/seed_threshold_percent/seed_max_size_gb are the
+        only exception: parsed from spaceshift:* tags (see
+        controller/discovery.py), they apply **only** the first time this
+        instance_id is ever inserted - a resource that already has a row
+        ignores them completely, so a tag can never fight a later admin
+        change. Pass None for a field to leave it at its normal default
+        (False/NULL) on first insert, same as not tagging it at all.
         """
 
     @abc.abstractmethod
@@ -133,10 +155,13 @@ class DiscoveryStateContract(abc.ABC):
         size_gb: int,
         device_name: str | None,
         name: str | None = None,
+        seed_autoresize: bool | None = None,
+        seed_threshold_percent: int | None = None,
+        seed_max_size_gb: int | None = None,
     ) -> None:
         """Insert or refresh one volume row from a discovery scan. Same
-        admin-controlled-fields contract as upsert_instance, including the
-        EC2 "Name" tag (None if untagged)."""
+        admin-controlled-fields and first-insert-only tag-seeding contract
+        as upsert_instance, including the EC2 "Name" tag (None if untagged)."""
 
     @abc.abstractmethod
     def mark_stale(

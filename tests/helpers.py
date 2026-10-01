@@ -182,22 +182,39 @@ class InMemoryStateBackend(StateBackend):
             self._scans = [s for s in self._scans if s.timestamp >= older_than]
 
     def upsert_instance(
-        self, account_name: str, instance_id: str, region: str, instance_type: str, state: str, name: str | None = None
+        self,
+        account_name: str,
+        instance_id: str,
+        region: str,
+        instance_type: str,
+        state: str,
+        name: str | None = None,
+        seed_autoresize: bool | None = None,
+        seed_threshold_percent: int | None = None,
+        seed_max_size_gb: int | None = None,
     ) -> None:
         with self._lock:
             existing = self._instances.get(instance_id)
+            autoresize = existing.autoresize if existing else bool(seed_autoresize)
+            threshold_percent = existing.threshold_percent if existing else seed_threshold_percent
+            max_size_gb = existing.max_size_gb if existing else seed_max_size_gb
             self._instances[instance_id] = InstanceRecord(
                 instance_id=instance_id,
                 account_name=account_name,
                 region=region,
                 instance_type=instance_type,
                 state=state,
-                autoresize=existing.autoresize if existing else False,
-                threshold_percent=existing.threshold_percent if existing else None,
+                autoresize=autoresize,
+                threshold_percent=threshold_percent,
                 last_seen_at=datetime.now(UTC),
                 is_stale=False,
                 name=name,
+                max_size_gb=max_size_gb,
             )
+            if existing is None:
+                self._audit_tag_seed_if_any(
+                    "instance", instance_id, account_name, autoresize, threshold_percent, max_size_gb
+                )
 
     def upsert_volume(
         self,
@@ -208,9 +225,15 @@ class InMemoryStateBackend(StateBackend):
         size_gb: int,
         device_name: str | None,
         name: str | None = None,
+        seed_autoresize: bool | None = None,
+        seed_threshold_percent: int | None = None,
+        seed_max_size_gb: int | None = None,
     ) -> None:
         with self._lock:
             existing = self._volumes.get(volume_id)
+            autoresize = existing.autoresize if existing else bool(seed_autoresize)
+            threshold_percent = existing.threshold_percent if existing else seed_threshold_percent
+            max_size_gb = existing.max_size_gb if existing else seed_max_size_gb
             self._volumes[volume_id] = VolumeRecord(
                 volume_id=volume_id,
                 instance_id=instance_id,
@@ -218,12 +241,53 @@ class InMemoryStateBackend(StateBackend):
                 region=region,
                 size_gb=size_gb,
                 device_name=device_name,
-                autoresize=existing.autoresize if existing else False,
-                threshold_percent=existing.threshold_percent if existing else None,
+                autoresize=autoresize,
+                threshold_percent=threshold_percent,
                 last_seen_at=datetime.now(UTC),
                 is_stale=False,
                 name=name,
+                max_size_gb=max_size_gb,
             )
+            if existing is None:
+                self._audit_tag_seed_if_any(
+                    "volume", volume_id, account_name, autoresize, threshold_percent, max_size_gb
+                )
+
+    def _audit_tag_seed_if_any(
+        self,
+        target_type: str,
+        target_id: str,
+        account_name: str,
+        autoresize: bool,
+        threshold_percent: int | None,
+        max_size_gb: int | None,
+    ) -> None:
+        """Mirrors PostgresDiscoveryMixin._audit_tag_seed_if_new - called
+        only from inside upsert_instance/upsert_volume's `existing is None`
+        branch, i.e. only on a row's first-ever insert, never on a later
+        re-sync. Must use _append_audit (not record_audit), which
+        re-acquires self._lock and would deadlock here."""
+        if not (autoresize or threshold_percent is not None or max_size_gb is not None):
+            return
+        after: dict[str, object] = {}
+        if autoresize:
+            after["autoresize"] = autoresize
+        if threshold_percent is not None:
+            after["threshold_percent"] = threshold_percent
+        if max_size_gb is not None:
+            after["max_size_gb"] = max_size_gb
+        self._append_audit(
+            AuditEvent(
+                actor=AuditActor.system(),
+                action=AuditAction.INSTANCE_AUTORESIZE if target_type == "instance" else AuditAction.VOLUME_AUTORESIZE,
+                target_type=target_type,
+                target_id=target_id,
+                account_name=account_name,
+                before={},
+                after=after,
+                detail={"source": "tag"},
+            )
+        )
 
     def mark_stale(
         self, account_name: str, region: str, seen_instance_ids: set[str], seen_volume_ids: set[str]

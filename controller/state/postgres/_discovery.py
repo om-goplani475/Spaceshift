@@ -55,14 +55,24 @@ class PostgresDiscoveryMixin(DiscoveryStateContract):
             cur.execute("DELETE FROM scan_log WHERE timestamp < %s", (older_than,))
 
     def upsert_instance(
-        self, account_name: str, instance_id: str, region: str, instance_type: str, state: str, name: str | None = None
+        self,
+        account_name: str,
+        instance_id: str,
+        region: str,
+        instance_type: str,
+        state: str,
+        name: str | None = None,
+        seed_autoresize: bool | None = None,
+        seed_threshold_percent: int | None = None,
+        seed_max_size_gb: int | None = None,
     ) -> None:
         with self._cursor(commit=True) as cur:
             cur.execute(
                 """
                 INSERT INTO instances
-                    (instance_id, account_name, region, instance_type, state, name, last_seen_at, is_stale)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, FALSE)
+                    (instance_id, account_name, region, instance_type, state, name,
+                     autoresize, threshold_percent, max_size_gb, last_seen_at, is_stale)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, FALSE)
                 ON CONFLICT (instance_id) DO UPDATE SET
                     account_name  = EXCLUDED.account_name,
                     region        = EXCLUDED.region,
@@ -71,9 +81,23 @@ class PostgresDiscoveryMixin(DiscoveryStateContract):
                     name          = EXCLUDED.name,
                     last_seen_at  = EXCLUDED.last_seen_at,
                     is_stale      = FALSE
+                RETURNING (xmax = 0) AS inserted, autoresize, threshold_percent, max_size_gb
                 """,
-                (instance_id, account_name, region, instance_type, state, name, datetime.now(UTC)),
+                (
+                    instance_id,
+                    account_name,
+                    region,
+                    instance_type,
+                    state,
+                    name,
+                    bool(seed_autoresize),
+                    seed_threshold_percent,
+                    seed_max_size_gb,
+                    datetime.now(UTC),
+                ),
             )
+            row = cur.fetchone()
+            self._audit_tag_seed_if_new(cur, "instances", instance_id, account_name, row)
 
     def upsert_volume(
         self,
@@ -84,13 +108,17 @@ class PostgresDiscoveryMixin(DiscoveryStateContract):
         size_gb: int,
         device_name: str | None,
         name: str | None = None,
+        seed_autoresize: bool | None = None,
+        seed_threshold_percent: int | None = None,
+        seed_max_size_gb: int | None = None,
     ) -> None:
         with self._cursor(commit=True) as cur:
             cur.execute(
                 """
                 INSERT INTO volumes
-                    (volume_id, instance_id, account_name, region, size_gb, device_name, name, last_seen_at, is_stale)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, FALSE)
+                    (volume_id, instance_id, account_name, region, size_gb, device_name, name,
+                     autoresize, threshold_percent, max_size_gb, last_seen_at, is_stale)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, FALSE)
                 ON CONFLICT (volume_id) DO UPDATE SET
                     instance_id  = EXCLUDED.instance_id,
                     account_name = EXCLUDED.account_name,
@@ -100,9 +128,56 @@ class PostgresDiscoveryMixin(DiscoveryStateContract):
                     name         = EXCLUDED.name,
                     last_seen_at = EXCLUDED.last_seen_at,
                     is_stale     = FALSE
+                RETURNING (xmax = 0) AS inserted, autoresize, threshold_percent, max_size_gb
                 """,
-                (volume_id, instance_id, account_name, region, size_gb, device_name, name, datetime.now(UTC)),
+                (
+                    volume_id,
+                    instance_id,
+                    account_name,
+                    region,
+                    size_gb,
+                    device_name,
+                    name,
+                    bool(seed_autoresize),
+                    seed_threshold_percent,
+                    seed_max_size_gb,
+                    datetime.now(UTC),
+                ),
             )
+            row = cur.fetchone()
+            self._audit_tag_seed_if_new(cur, "volumes", volume_id, account_name, row)
+
+    def _audit_tag_seed_if_new(self, cur, table: str, row_id: str, account_name: str, row) -> None:
+        """Write one audit row the moment spaceshift:* tags set a brand-new
+        resource's autoresize/threshold/max size - never on a later sync of
+        an already-known resource, since `row` here only ever carries a
+        non-default autoresize/threshold_percent/max_size_gb when this was
+        genuinely the row's first-ever INSERT (see upsert_instance/
+        upsert_volume: those three columns are absent from the ON CONFLICT
+        DO UPDATE SET clause, so a re-sync can never produce this state)."""
+        inserted, autoresize, threshold_percent, max_size_gb = row
+        if not inserted or not (autoresize or threshold_percent is not None or max_size_gb is not None):
+            return
+        after: dict[str, object] = {}
+        if autoresize:
+            after["autoresize"] = autoresize
+        if threshold_percent is not None:
+            after["threshold_percent"] = threshold_percent
+        if max_size_gb is not None:
+            after["max_size_gb"] = max_size_gb
+        self._insert_audit(
+            cur,
+            AuditEvent(
+                actor=AuditActor.system(),
+                action=AuditAction.INSTANCE_AUTORESIZE if table == "instances" else AuditAction.VOLUME_AUTORESIZE,
+                target_type=table[:-1],
+                target_id=row_id,
+                account_name=account_name,
+                before={},
+                after=after,
+                detail={"source": "tag"},
+            ),
+        )
 
     def mark_stale(
         self, account_name: str, region: str, seen_instance_ids: set[str], seen_volume_ids: set[str]

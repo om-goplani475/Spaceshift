@@ -131,6 +131,34 @@ def test_upsert_never_overwrites_autoresize():
     assert instance.state == "stopped"
 
 
+def test_tag_seed_applies_once_on_insert_and_is_audited():
+    backend = InMemoryStateBackend()
+    backend.upsert_instance(
+        _ACCOUNT, "i-1", "us-east-1", "t3.micro", "running", seed_autoresize=True, seed_threshold_percent=70
+    )
+
+    instance = backend.list_instances(region="us-east-1")[0]
+    assert instance.autoresize is True
+    assert instance.threshold_percent == 70
+
+    rows = backend.list_audit(AuditFilters(target="i-1"), limit=10)
+    assert len(rows) == 1
+    assert rows[0].actor_type == "system"
+    assert rows[0].detail == {"source": "tag"}
+
+
+def test_tag_seed_never_reapplies_on_a_later_sync():
+    backend = InMemoryStateBackend()
+    backend.upsert_instance(_ACCOUNT, "i-1", "us-east-1", "t3.micro", "running", seed_autoresize=True)
+    backend.set_instance_autoresize("i-1", False)
+
+    backend.upsert_instance(_ACCOUNT, "i-1", "us-east-1", "t3.micro", "stopped", seed_autoresize=True)
+
+    instance = backend.list_instances(region="us-east-1")[0]
+    assert instance.autoresize is False
+    assert len(backend.list_audit(AuditFilters(target="i-1"), limit=10)) == 1
+
+
 def test_upsert_instance_stores_the_name_tag():
     backend = InMemoryStateBackend()
     backend.upsert_instance(_ACCOUNT, "i-1", "us-east-1", "t3.micro", "running", name="web-1")

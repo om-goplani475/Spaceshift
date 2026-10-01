@@ -71,4 +71,20 @@ MIGRATIONS: list[tuple[str, str]] = [
         ALTER TABLE volumes ADD COLUMN name TEXT;
         """,
     ),
+    (
+        "0005_resource_max_size_gb",
+        """
+        -- Per-resource override of resize.max_volume_size_gb (the global
+        -- app_config ceiling), same admin-controlled/tag-seedable contract
+        -- as threshold_percent. NULL means "use the global default" -
+        -- see discovery.py's fallback chain (volume's own, then its
+        -- instance's, then the global config value).
+        ALTER TABLE instances ADD COLUMN max_size_gb INTEGER;
+        ALTER TABLE volumes ADD COLUMN max_size_gb INTEGER;
+        ALTER TABLE instances ADD CONSTRAINT instances_max_size_gb_positive
+            CHECK (max_size_gb IS NULL OR max_size_gb > 0);
+        ALTER TABLE volumes ADD CONSTRAINT volumes_max_size_gb_positive
+            CHECK (max_size_gb IS NULL OR max_size_gb > 0);
+        """,
+    ),
 ]
