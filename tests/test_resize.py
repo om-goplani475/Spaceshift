@@ -96,6 +96,28 @@ def test_start_resize_size_ceiling_guard(aws, state, notifier):
     assert state.get(volume_id) is None
 
 
+def test_start_resize_honors_a_per_resource_max_size_gb_override(aws, state, notifier):
+    # The global ceiling (500GB) would allow this resize; a tighter
+    # per-resource max_size_gb (resolved by discovery.py's fallback chain
+    # and passed in explicitly) blocks it instead.
+    ec2 = boto3.client("ec2", region_name="us-east-1")
+    volume_id = ec2.create_volume(AvailabilityZone="us-east-1a", Size=100)["VolumeId"]
+    config = Config.from_dict({"dry_run": False, "resize": {"max_volume_size_gb": 500}})
+
+    result = start_resize(ec2, state, notifier, config, volume_id, "i-1", 100, max_size_gb=10)
+
+    assert result is False
+    assert state.get(volume_id) is None
+
+
+def test_start_resize_defaults_to_the_global_ceiling_when_no_override_given(aws, state, notifier):
+    ec2 = boto3.client("ec2", region_name="us-east-1")
+    volume_id = ec2.create_volume(AvailabilityZone="us-east-1a", Size=100)["VolumeId"]
+    config = Config.from_dict({"dry_run": True, "resize": {"max_volume_size_gb": 500}})
+
+    assert start_resize(ec2, state, notifier, config, volume_id, "i-1", 100) is True
+
+
 def test_start_resize_modification_limit_guard(aws, state, notifier):
     ec2 = boto3.client("ec2", region_name="us-east-1")
     volume_id = ec2.create_volume(AvailabilityZone="us-east-1a", Size=100)["VolumeId"]

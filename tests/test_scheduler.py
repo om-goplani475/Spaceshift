@@ -28,7 +28,12 @@ def scheduler(config, state, notifier):
 @pytest.fixture
 def volume():
     return EligibleVolume(
-        volume_id="vol-1", instance_id="i-1", device_name="/dev/xvdf", size_gb=100, threshold_percent=80
+        volume_id="vol-1",
+        instance_id="i-1",
+        device_name="/dev/xvdf",
+        size_gb=100,
+        threshold_percent=80,
+        max_size_gb=500,
     )
 
 

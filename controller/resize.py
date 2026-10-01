@@ -72,8 +72,15 @@ def start_resize(
     current_size_gb: int,
     account_name: str = "",
     region: str = "",
+    max_size_gb: int | None = None,
 ) -> bool:
     """Attempt to start the AWS-side resize for volume_id.
+
+    max_size_gb is the effective ceiling already resolved by discovery.py's
+    fallback chain (the volume's own override, then its instance's, then
+    config.resize.max_volume_size_gb) - defaults to the global config value
+    directly when not given, so every existing caller that only cares about
+    the global ceiling is unaffected.
 
     Returns True if a resize was started (or dry-run logged), False if
     skipped for an expected reason (already in flight, at the size
@@ -81,13 +88,14 @@ def start_resize(
     propagate - the scheduler wraps each volume in its own try/except so
     one bad volume never blocks the rest of the fleet.
     """
+    effective_max_size_gb = max_size_gb if max_size_gb is not None else config.resize.max_volume_size_gb
     target_size_gb = compute_target_size_gb(current_size_gb, config.resize.growth_increment_percent)
 
-    if target_size_gb > config.resize.max_volume_size_gb:
+    if target_size_gb > effective_max_size_gb:
         notifier.send(
             "EBS volume needs manual review",
             f"Volume {volume_id} on {instance_id} would grow to {target_size_gb}GB, exceeding "
-            f"the configured max_volume_size_gb ({config.resize.max_volume_size_gb}GB). "
+            f"the configured max size ({effective_max_size_gb}GB). "
             f"Auto-resize has stopped for this volume - investigate before raising the ceiling.",
         )
         return False

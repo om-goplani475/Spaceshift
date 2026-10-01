@@ -5,10 +5,15 @@ from dataclasses import replace
 import boto3
 from botocore.stub import Stubber
 
+from controller.config import DiscoveryConfig
 from controller.discovery import discover_eligible_volumes, is_ssm_ready
 
 _REGION = "us-east-1"
 _ACCOUNT = "default"
+
+
+def _with_tags_honored(config):
+    return replace(config, discovery=DiscoveryConfig(honor_resource_tags=True))
 
 
 def _new_instance(ec2):
@@ -162,6 +167,153 @@ def test_stale_resource_excluded_from_eligibility(aws, state, config):
     assert results == []
     stale_volumes = state.list_volumes(region=_REGION, include_stale=True)
     assert next(v for v in stale_volumes if v.volume_id == volume_id).is_stale is True
+
+
+def test_tags_ignored_when_honor_resource_tags_is_off(aws, state, config):
+    # config fixture defaults to honor_resource_tags=False - the tag is
+    # there, but nothing reads it.
+    ec2 = boto3.client("ec2", region_name=_REGION)
+    instance_id = _new_instance(ec2)
+    ec2.create_tags(Resources=[instance_id], Tags=[{"Key": "spaceshift:autoresize", "Value": "true"}])
+
+    discover_eligible_volumes(ec2, state, _ACCOUNT, _REGION, config)
+
+    instance = next(i for i in state.list_instances(region=_REGION) if i.instance_id == instance_id)
+    assert instance.autoresize is False
+
+
+def test_tags_seed_autoresize_threshold_and_max_gb_on_a_new_instance(aws, state, config):
+    ec2 = boto3.client("ec2", region_name=_REGION)
+    instance_id = _new_instance(ec2)
+    ec2.create_tags(
+        Resources=[instance_id],
+        Tags=[
+            {"Key": "spaceshift:autoresize", "Value": "true"},
+            {"Key": "spaceshift:threshold", "Value": "70"},
+            {"Key": "spaceshift:max_gb", "Value": "250"},
+        ],
+    )
+
+    discover_eligible_volumes(ec2, state, _ACCOUNT, _REGION, _with_tags_honored(config))
+
+    instance = next(i for i in state.list_instances(region=_REGION) if i.instance_id == instance_id)
+    assert instance.autoresize is True
+    assert instance.threshold_percent == 70
+    assert instance.max_size_gb == 250
+
+
+def test_tags_seed_a_new_volume_directly(aws, state, config):
+    ec2 = boto3.client("ec2", region_name=_REGION)
+    instance_id = _new_instance(ec2)
+    volume_id = ec2.create_volume(AvailabilityZone="us-east-1a", Size=100)["VolumeId"]
+    ec2.attach_volume(VolumeId=volume_id, InstanceId=instance_id, Device="/dev/xvdf")
+    ec2.create_tags(
+        Resources=[volume_id],
+        Tags=[{"Key": "spaceshift:autoresize", "Value": "true"}, {"Key": "spaceshift:threshold", "Value": "85"}],
+    )
+
+    results = discover_eligible_volumes(ec2, state, _ACCOUNT, _REGION, _with_tags_honored(config))
+
+    assert len(results) == 1
+    assert results[0].volume_id == volume_id
+    assert results[0].threshold_percent == 85
+
+
+def test_tag_seeding_never_reapplies_on_a_later_sync(aws, state, config):
+    config = _with_tags_honored(config)
+    ec2 = boto3.client("ec2", region_name=_REGION)
+    instance_id = _new_instance(ec2)
+    ec2.create_tags(Resources=[instance_id], Tags=[{"Key": "spaceshift:autoresize", "Value": "true"}])
+
+    discover_eligible_volumes(ec2, state, _ACCOUNT, _REGION, config)  # seeds autoresize=true
+    state.set_instance_autoresize(instance_id, False)  # a human turns it back off
+
+    discover_eligible_volumes(ec2, state, _ACCOUNT, _REGION, config)  # tag is still there in AWS
+
+    instance = next(i for i in state.list_instances(region=_REGION) if i.instance_id == instance_id)
+    assert instance.autoresize is False
+
+
+def test_malformed_tag_value_is_skipped_but_a_valid_sibling_tag_still_applies(aws, state, config):
+    ec2 = boto3.client("ec2", region_name=_REGION)
+    instance_id = _new_instance(ec2)
+    ec2.create_tags(
+        Resources=[instance_id],
+        Tags=[
+            {"Key": "spaceshift:autoresize", "Value": "true"},
+            {"Key": "spaceshift:threshold", "Value": "not-a-number"},
+            {"Key": "spaceshift:max_gb", "Value": "150"},
+        ],
+    )
+
+    discover_eligible_volumes(ec2, state, _ACCOUNT, _REGION, _with_tags_honored(config))
+
+    instance = next(i for i in state.list_instances(region=_REGION) if i.instance_id == instance_id)
+    assert instance.autoresize is True
+    assert instance.threshold_percent is None  # malformed - fell back to the normal default
+    assert instance.max_size_gb == 150
+
+
+def test_out_of_range_threshold_tag_is_skipped(aws, state, config):
+    ec2 = boto3.client("ec2", region_name=_REGION)
+    instance_id = _new_instance(ec2)
+    ec2.create_tags(Resources=[instance_id], Tags=[{"Key": "spaceshift:threshold", "Value": "150"}])
+
+    discover_eligible_volumes(ec2, state, _ACCOUNT, _REGION, _with_tags_honored(config))
+
+    instance = next(i for i in state.list_instances(region=_REGION) if i.instance_id == instance_id)
+    assert instance.threshold_percent is None
+
+
+def test_untagged_volume_inherits_its_instance_tags(aws, state, config):
+    ec2 = boto3.client("ec2", region_name=_REGION)
+    instance_id = _new_instance(ec2)
+    volume_id = ec2.create_volume(AvailabilityZone="us-east-1a", Size=100)["VolumeId"]
+    ec2.attach_volume(VolumeId=volume_id, InstanceId=instance_id, Device="/dev/xvdf")
+    ec2.create_tags(
+        Resources=[instance_id],
+        Tags=[{"Key": "spaceshift:autoresize", "Value": "true"}, {"Key": "spaceshift:threshold", "Value": "60"}],
+    )
+
+    discover_eligible_volumes(ec2, state, _ACCOUNT, _REGION, _with_tags_honored(config))
+
+    volume = next(v for v in state.list_volumes(region=_REGION) if v.volume_id == volume_id)
+    assert volume.autoresize is True
+    assert volume.threshold_percent == 60
+
+
+def test_volumes_own_tag_overrides_its_instance_tag(aws, state, config):
+    ec2 = boto3.client("ec2", region_name=_REGION)
+    instance_id = _new_instance(ec2)
+    volume_id = ec2.create_volume(AvailabilityZone="us-east-1a", Size=100)["VolumeId"]
+    ec2.attach_volume(VolumeId=volume_id, InstanceId=instance_id, Device="/dev/xvdf")
+    ec2.create_tags(Resources=[instance_id], Tags=[{"Key": "spaceshift:threshold", "Value": "60"}])
+    ec2.create_tags(Resources=[volume_id], Tags=[{"Key": "spaceshift:threshold", "Value": "90"}])
+
+    discover_eligible_volumes(ec2, state, _ACCOUNT, _REGION, _with_tags_honored(config))
+
+    volume = next(v for v in state.list_volumes(region=_REGION) if v.volume_id == volume_id)
+    assert volume.threshold_percent == 90
+
+
+def test_max_gb_resolution_chain_matches_threshold(aws, state, config):
+    config = _with_tags_honored(config)
+    ec2 = boto3.client("ec2", region_name=_REGION)
+    instance_id = _new_instance(ec2)
+    volume_id = ec2.create_volume(AvailabilityZone="us-east-1a", Size=20)["VolumeId"]
+    ec2.attach_volume(VolumeId=volume_id, InstanceId=instance_id, Device="/dev/xvdg")
+    ec2.create_tags(
+        Resources=[instance_id],
+        Tags=[{"Key": "spaceshift:autoresize", "Value": "true"}, {"Key": "spaceshift:max_gb", "Value": "300"}],
+    )
+
+    results = discover_eligible_volumes(ec2, state, _ACCOUNT, _REGION, config)
+
+    # The instance's autoresize tag also makes its auto-created root volume
+    # eligible (same fallback chain as autoresize/threshold) - look up the
+    # specific volume under test rather than assuming result count.
+    result = next(r for r in results if r.volume_id == volume_id)
+    assert result.max_size_gb == 300  # inherited from the instance, no volume-level override
 
 
 def _stubbed_ssm(response):

@@ -324,6 +324,7 @@ class Scheduler:
                         volume.size_gb,
                         account_name,
                         region,
+                        max_size_gb=volume.max_size_gb,
                     )
                 except ModifyVolumeError as exc:
                     # Already alerted and recorded as MODIFY_FAILED inside
