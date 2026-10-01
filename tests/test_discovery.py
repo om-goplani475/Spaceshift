@@ -67,6 +67,30 @@ def test_sync_captures_the_volume_name_tag(aws, state, config):
     assert volume.name == "data-1"
 
 
+def test_sync_captures_the_volume_type(aws, state, config):
+    ec2 = boto3.client("ec2", region_name=_REGION)
+    volume_id = ec2.create_volume(AvailabilityZone="us-east-1a", Size=100, VolumeType="gp3")["VolumeId"]
+
+    discover_eligible_volumes(ec2, state, _ACCOUNT, _REGION, config)
+
+    volume = next(v for v in state.list_volumes(region=_REGION) if v.volume_id == volume_id)
+    assert volume.volume_type == "gp3"
+
+
+def test_volume_type_is_refreshed_on_a_later_sync(aws, state, config):
+    # Unlike the tag-seeded fields, volume_type tracks AWS reality every
+    # cycle - a volume's type can genuinely change (e.g. gp2 -> gp3).
+    ec2 = boto3.client("ec2", region_name=_REGION)
+    volume_id = ec2.create_volume(AvailabilityZone="us-east-1a", Size=100, VolumeType="gp2")["VolumeId"]
+    discover_eligible_volumes(ec2, state, _ACCOUNT, _REGION, config)
+    ec2.modify_volume(VolumeId=volume_id, VolumeType="gp3")
+
+    discover_eligible_volumes(ec2, state, _ACCOUNT, _REGION, config)
+
+    volume = next(v for v in state.list_volumes(region=_REGION) if v.volume_id == volume_id)
+    assert volume.volume_type == "gp3"
+
+
 def test_volume_level_autoresize_makes_it_eligible(aws, state, config):
     ec2 = boto3.client("ec2", region_name=_REGION)
     instance_id = _new_instance(ec2)

@@ -108,6 +108,7 @@ class PostgresDiscoveryMixin(DiscoveryStateContract):
         size_gb: int,
         device_name: str | None,
         name: str | None = None,
+        volume_type: str | None = None,
         seed_autoresize: bool | None = None,
         seed_threshold_percent: int | None = None,
         seed_max_size_gb: int | None = None,
@@ -116,9 +117,9 @@ class PostgresDiscoveryMixin(DiscoveryStateContract):
             cur.execute(
                 """
                 INSERT INTO volumes
-                    (volume_id, instance_id, account_name, region, size_gb, device_name, name,
+                    (volume_id, instance_id, account_name, region, size_gb, device_name, name, volume_type,
                      autoresize, threshold_percent, max_size_gb, last_seen_at, is_stale)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, FALSE)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, FALSE)
                 ON CONFLICT (volume_id) DO UPDATE SET
                     instance_id  = EXCLUDED.instance_id,
                     account_name = EXCLUDED.account_name,
@@ -126,6 +127,7 @@ class PostgresDiscoveryMixin(DiscoveryStateContract):
                     size_gb      = EXCLUDED.size_gb,
                     device_name  = EXCLUDED.device_name,
                     name         = EXCLUDED.name,
+                    volume_type  = EXCLUDED.volume_type,
                     last_seen_at = EXCLUDED.last_seen_at,
                     is_stale     = FALSE
                 RETURNING (xmax = 0) AS inserted, autoresize, threshold_percent, max_size_gb
@@ -138,6 +140,7 @@ class PostgresDiscoveryMixin(DiscoveryStateContract):
                     size_gb,
                     device_name,
                     name,
+                    volume_type,
                     bool(seed_autoresize),
                     seed_threshold_percent,
                     seed_max_size_gb,

@@ -225,6 +225,7 @@ class InMemoryStateBackend(StateBackend):
         size_gb: int,
         device_name: str | None,
         name: str | None = None,
+        volume_type: str | None = None,
         seed_autoresize: bool | None = None,
         seed_threshold_percent: int | None = None,
         seed_max_size_gb: int | None = None,
@@ -247,6 +248,7 @@ class InMemoryStateBackend(StateBackend):
                 is_stale=False,
                 name=name,
                 max_size_gb=max_size_gb,
+                volume_type=volume_type,
             )
             if existing is None:
                 self._audit_tag_seed_if_any(

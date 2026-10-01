@@ -262,6 +262,7 @@ def _sync_volumes(
                 size_gb=volume["Size"],
                 device_name=attachment["Device"] if attachment else None,
                 name=_name_tag(tags),
+                volume_type=volume.get("VolumeType"),
                 seed_autoresize=seed.autoresize,
                 seed_threshold_percent=seed.threshold_percent,
                 seed_max_size_gb=seed.max_size_gb,

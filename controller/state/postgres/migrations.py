@@ -87,4 +87,13 @@ MIGRATIONS: list[tuple[str, str]] = [
             CHECK (max_size_gb IS NULL OR max_size_gb > 0);
         """,
     ),
+    (
+        "0006_volume_type",
+        """
+        -- AWS-observed EBS volume type (gp2/gp3/io1/io2/st1/sc1/standard),
+        -- refreshed every sync like size_gb - used to estimate monthly
+        -- storage cost via the AWS Pricing API (controller/pricing.py).
+        ALTER TABLE volumes ADD COLUMN volume_type TEXT;
+        """,
+    ),
 ]

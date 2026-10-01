@@ -171,6 +171,15 @@ def test_upsert_volume_stores_the_name_tag():
     assert backend.list_volumes(region="us-east-1")[0].name == "data-1"
 
 
+def test_upsert_volume_stores_and_refreshes_volume_type():
+    backend = InMemoryStateBackend()
+    backend.upsert_volume(_ACCOUNT, "vol-1", "i-1", "us-east-1", 100, "/dev/xvdf", volume_type="gp2")
+    assert backend.list_volumes(region="us-east-1")[0].volume_type == "gp2"
+
+    backend.upsert_volume(_ACCOUNT, "vol-1", "i-1", "us-east-1", 100, "/dev/xvdf", volume_type="gp3")
+    assert backend.list_volumes(region="us-east-1")[0].volume_type == "gp3"
+
+
 def test_set_autoresize_returns_false_for_unknown_id():
     backend = InMemoryStateBackend()
     assert backend.set_instance_autoresize("i-nonexistent", True) is False

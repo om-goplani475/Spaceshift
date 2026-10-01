@@ -63,7 +63,13 @@ class InstanceRecord:
 @dataclass
 class VolumeRecord:
     """One EBS volume seen by a discovery scan. Same admin-controlled
-    autoresize/threshold_percent/max_size_gb contract as InstanceRecord."""
+    autoresize/threshold_percent/max_size_gb contract as InstanceRecord.
+
+    volume_type (gp2/gp3/io1/io2/st1/sc1/standard) is a plain AWS-observed
+    field, refreshed on every sync like size_gb - unlike the admin-owned
+    fields above, a volume's type can genuinely change (e.g. gp2 -> gp3 via
+    ModifyVolume), so there's no first-insert-only exception for it.
+    """
 
     volume_id: str
     instance_id: str | None
@@ -77,6 +83,7 @@ class VolumeRecord:
     is_stale: bool
     name: str | None = None
     max_size_gb: int | None = None
+    volume_type: str | None = None
 
 
 class DiscoveryStateContract(abc.ABC):
@@ -155,13 +162,18 @@ class DiscoveryStateContract(abc.ABC):
         size_gb: int,
         device_name: str | None,
         name: str | None = None,
+        volume_type: str | None = None,
         seed_autoresize: bool | None = None,
         seed_threshold_percent: int | None = None,
         seed_max_size_gb: int | None = None,
     ) -> None:
         """Insert or refresh one volume row from a discovery scan. Same
         admin-controlled-fields and first-insert-only tag-seeding contract
-        as upsert_instance, including the EC2 "Name" tag (None if untagged)."""
+        as upsert_instance, including the EC2 "Name" tag (None if untagged).
+
+        volume_type is a plain AWS-observed field like size_gb/device_name -
+        refreshed on every sync, not first-insert-only, since AWS lets a
+        volume's type change in place."""
 
     @abc.abstractmethod
     def mark_stale(
