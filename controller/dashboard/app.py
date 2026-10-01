@@ -76,6 +76,7 @@ _CONFIG_LABELS: dict[str, str] = {
     "dry_run": "Dry run",
     "notifications.method": "Notification method",
     "notifications.slack_channel_id": "Slack channel ID",
+    "discovery.honor_resource_tags": "Honor resource tags",
 }
 
 _CONFIG_DESCRIPTIONS: dict[str, str] = {
@@ -118,6 +119,12 @@ _CONFIG_DESCRIPTIONS: dict[str, str] = {
     "notifications.slack_channel_id": (
         "The channel the bot posts to (its ID, e.g. C0123456789 - not its name). The bot must be invited to it."
     ),
+    "discovery.honor_resource_tags": (
+        "When on, a brand-new instance or volume's autoresize/threshold/max size seed once from its "
+        "spaceshift:autoresize / spaceshift:threshold / spaceshift:max_gb tags at the moment it's first "
+        "discovered - useful for ASG/Karpenter fleets where nothing is around to click a toggle. Off by "
+        "default; never re-reads tags after that first discovery, so it can't override a later manual change."
+    ),
 }
 
 # Settings page layout: (group title, keys in display order). Safety is
@@ -126,7 +133,7 @@ _CONFIG_DESCRIPTIONS: dict[str, str] = {
 # one group - a test enforces this so a new setting can't be silently
 # missing from the page.
 _CONFIG_GROUPS: list[tuple[str, list[str]]] = [
-    ("Safety", ["dry_run"]),
+    ("Safety", ["dry_run", "discovery.honor_resource_tags"]),
     (
         "Thresholds and growth",
         ["default_threshold_percent", "resize.growth_increment_percent", "resize.max_volume_size_gb"],

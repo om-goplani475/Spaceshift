@@ -70,6 +70,7 @@ DB_CONFIG_KEYS: dict[str, tuple[str, ...]] = {
     "dry_run": ("dry_run",),
     "notifications.method": ("notifications", "method"),
     "notifications.slack_channel_id": ("notifications", "slack_channel_id"),
+    "discovery.honor_resource_tags": ("discovery", "honor_resource_tags"),
 }
 
 
@@ -142,12 +143,26 @@ class NotificationsConfig:
 
 
 @dataclass
+class DiscoveryConfig:
+    # Off by default: nothing changes for an existing install until an
+    # admin opts in on the Settings page. See controller/discovery.py's
+    # module docstring for exactly what this does and doesn't do.
+    honor_resource_tags: bool = False
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> DiscoveryConfig:
+        d = cls()
+        return cls(honor_resource_tags=data.get("honor_resource_tags", d.honor_resource_tags))
+
+
+@dataclass
 class Config:
     default_threshold_percent: int = 80
     scheduler: SchedulerConfig = field(default_factory=SchedulerConfig)
     resize: ResizeConfig = field(default_factory=ResizeConfig)
     dry_run: bool = True
     notifications: NotificationsConfig = field(default_factory=NotificationsConfig)
+    discovery: DiscoveryConfig = field(default_factory=DiscoveryConfig)
 
     def __post_init__(self) -> None:
         # app_config values arrive as YAML-parsed text: "0", "null", "" and
@@ -157,6 +172,10 @@ class Config:
         # that decides whether real AWS calls happen.
         if not isinstance(self.dry_run, bool):
             raise ValueError(f"dry_run must be true or false, got {self.dry_run!r}")
+        if not isinstance(self.discovery.honor_resource_tags, bool):
+            raise ValueError(
+                f"discovery.honor_resource_tags must be true or false, got {self.discovery.honor_resource_tags!r}"
+            )
         if self.notifications.method not in VALID_NOTIFICATION_METHODS:
             raise ValueError(
                 f"notifications.method must be one of {list(VALID_NOTIFICATION_METHODS)}, "
@@ -201,6 +220,7 @@ class Config:
             resize=ResizeConfig.from_dict(data.get("resize", {})),
             dry_run=data.get("dry_run", defaults_source["dry_run"]),
             notifications=NotificationsConfig.from_dict(data.get("notifications", {})),
+            discovery=DiscoveryConfig.from_dict(data.get("discovery", {})),
         )
 
 

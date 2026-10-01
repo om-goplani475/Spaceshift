@@ -371,6 +371,16 @@ def test_settings_page_puts_dry_run_first(state, client):
             assert html.index(f'data-key="{key}"') > dry_run_position
 
 
+def test_discovery_honor_resource_tags_renders_as_a_toggle_not_a_text_input(state, client):
+    html = client.get("/settings").data.decode()
+
+    start = html.index('data-key="discovery.honor_resource_tags"')
+    end = html.index("</div>", html.index("setting-control", start))
+    # The checkbox switch markup (shared with dry_run) - a plain setting
+    # would instead render a bare <input type="text" ...> in this block.
+    assert 'type="checkbox"' in html[start:end]
+
+
 def test_settings_groups_cover_every_key_exactly_once():
     grouped = [key for _, keys in _CONFIG_GROUPS for key in keys]
     assert sorted(grouped) == sorted(DB_CONFIG_KEYS)

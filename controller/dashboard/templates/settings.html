@@ -29,7 +29,7 @@
           <p class="setting-description">{{ s.description }}</p>
         </div>
         <div class="setting-control">
-          {% if s.key == "dry_run" %}
+          {% if s.key in ("dry_run", "discovery.honor_resource_tags") %}
           <label class="switch">
             <input type="checkbox" id="setting-{{ s.key }}" class="config-bool-input" data-key="{{ s.key }}"
                    {{ "checked" if (s.value if s.value is not none else s.default) == "true" }}>
