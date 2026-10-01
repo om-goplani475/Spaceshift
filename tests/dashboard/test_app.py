@@ -2,10 +2,35 @@
 
 import re
 from dataclasses import replace
+from decimal import Decimal
 
 from controller.config import DB_CONFIG_KEYS
+from controller.dashboard import create_app
 from controller.dashboard.app import _CONFIG_GROUPS
 from controller.state.base import ResizeStatus
+from tests.dashboard.conftest import sign_in
+
+
+class _FakeCostEstimator:
+    """Returns a fixed price for (region, volume_type), or None for
+    anything else - stands in for the real AWS-Pricing-API-backed
+    CostEstimator in tests, which never hit the network."""
+
+    def __init__(self, price: Decimal | None = Decimal("0.08")):
+        self._price = price
+
+    def price_per_gb_month(self, region, volume_type):
+        if volume_type is None:
+            return None
+        return self._price
+
+
+def _client_with_cost_estimator(state, auth_settings, admin, cost_estimator):
+    app = create_app(state, auth_settings, cost_estimator=cost_estimator)
+    app.config["WTF_CSRF_ENABLED"] = False
+    client = app.test_client()
+    assert sign_in(client).status_code == 302
+    return client
 
 
 def test_pages_render_empty_states(state, client):
@@ -672,3 +697,53 @@ def test_watched_uses_full_instance_list_even_when_instance_is_stopped(state, cl
 
     assert "Yes" in row
     assert "via instance" in row
+
+
+def test_overview_shows_an_estimated_monthly_cost_card(state, auth_settings, admin):
+    state.upsert_volume("default", "vol-1", "i-1", "us-east-1", 100, "/dev/xvdf", volume_type="gp3")
+    client = _client_with_cost_estimator(state, auth_settings, admin, _FakeCostEstimator(Decimal("0.08")))
+
+    html = client.get("/").data.decode()
+
+    assert "$8.00" in html  # 100 GB * $0.08/GB-mo
+    assert "Est. monthly EBS spend" in html
+
+
+def test_overview_cost_card_flags_a_partial_estimate_when_a_volume_has_no_price(state, auth_settings, admin):
+    state.upsert_volume("default", "vol-1", "i-1", "us-east-1", 100, "/dev/xvdf", volume_type="gp3")
+    state.upsert_volume("default", "vol-2", "i-1", "us-east-1", 50, "/dev/xvdg", volume_type=None)
+    client = _client_with_cost_estimator(state, auth_settings, admin, _FakeCostEstimator(Decimal("0.08")))
+
+    html = client.get("/").data.decode()
+
+    assert "~$8.00" in html
+    assert "some volumes excluded" in html
+
+
+def test_overview_cost_card_shows_a_dash_when_nothing_can_be_priced(state, auth_settings, admin):
+    state.upsert_volume("default", "vol-1", "i-1", "us-east-1", 100, "/dev/xvdf", volume_type=None)
+    client = _client_with_cost_estimator(state, auth_settings, admin, _FakeCostEstimator())
+
+    html = client.get("/").data.decode()
+
+    assert "&mdash;" in html
+
+
+def test_resize_row_shows_the_estimated_cost_delta(state, auth_settings, admin):
+    state.upsert_volume("default", "vol-1", "i-1", "us-east-1", 120, "/dev/xvdf", volume_type="gp3")
+    state.create_if_absent("vol-1", "i-1", 100, 120, "default", "us-east-1")
+    client = _client_with_cost_estimator(state, auth_settings, admin, _FakeCostEstimator(Decimal("0.08")))
+
+    html = client.get("/").data.decode()
+
+    assert "+$1.60/mo" in html  # (120 - 100) GB * $0.08/GB-mo
+
+
+def test_resize_row_shows_no_cost_delta_when_the_volume_has_no_known_price(state, auth_settings, admin):
+    state.upsert_volume("default", "vol-1", "i-1", "us-east-1", 120, "/dev/xvdf", volume_type=None)
+    state.create_if_absent("vol-1", "i-1", 100, 120, "default", "us-east-1")
+    client = _client_with_cost_estimator(state, auth_settings, admin, _FakeCostEstimator())
+
+    html = client.get("/").data.decode()
+
+    assert "/mo</span>" not in html

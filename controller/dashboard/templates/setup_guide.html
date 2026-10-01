@@ -33,6 +33,7 @@
       </div>
       <p class="muted-note">The last statement (<code>sts:AssumeRole</code>) is only needed once you're managing a second AWS account (step 3) - delete it if you'll only ever manage this one.</p>
       <p class="muted-note">No instance role available (running locally, on your own server, or off AWS entirely)? Put an IAM <strong>user's</strong> access key in <code>.env</code> as <code>AWS_ACCESS_KEY_ID</code> / <code>AWS_SECRET_ACCESS_KEY</code> instead - the same policy applies to that user. Static keys are a weaker posture than a role; use them only when a role genuinely isn't an option.</p>
+      <p class="muted-note">Optional: add <code>pricing:GetProducts</code> to this same identity to enable the dashboard's monthly cost estimates - it's public AWS catalog data, so it never needs to go on a per-account role. Without it the dashboard just shows <code>&mdash;</code> instead of an estimate.</p>
     </div>
   </li>
 

@@ -71,6 +71,8 @@ Attach an IAM role to whatever host runs the container - **never put access keys
 
 Not running on EC2 (no instance role available)? Put `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` in `.env` instead - see [docs/SETUP.md](docs/SETUP.md). The role-based path above remains the recommended default.
 
+**Optional:** add `pricing:GetProducts` to that same base identity (not the per-account policy above) to enable the dashboard's monthly cost estimates. EBS list pricing is public catalog data, so this never needs to touch a customer account's assumed role. Without it, the dashboard just shows `—` instead of an estimate.
+
 ## Connection method
 
 The controller talks to instances exclusively via **SSM Send-Command** - no inbound port, no key management, auth is purely the IAM role above. Target instances need the SSM Agent running and `AmazonSSMManagedInstanceCore` on their own instance profile; see [docs/SETUP.md](docs/SETUP.md).

@@ -25,6 +25,19 @@
   </div>
   <div class="kpi-card">
     <div class="kpi-top">
+      <span class="kpi-label">Est. monthly EBS spend</span>
+      <span class="kpi-icon" aria-hidden="true"><svg class="icon" viewBox="0 0 24 24"><line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg></span>
+    </div>
+    {% if monthly_cost is not none %}
+    <div class="kpi-value">{{ "~" if monthly_cost_is_partial else "" }}${{ "{:,.2f}".format(monthly_cost) }}</div>
+    <p class="section-note">Estimated, AWS list pricing{{ " - some volumes excluded" if monthly_cost_is_partial else "" }}</p>
+    {% else %}
+    <div class="kpi-value">&mdash;</div>
+    <p class="section-note">Estimated, AWS list pricing</p>
+    {% endif %}
+  </div>
+  <div class="kpi-card">
+    <div class="kpi-top">
       <span class="l kpi-label">Volumes scanned</span>
       <span class="kpi-icon" aria-hidden="true"><svg class="icon" viewBox="0 0 24 24"><path d="M12 20V10M18 20V4M6 20v-4"/></svg></span>
     </div>
@@ -109,7 +122,7 @@
         <td class="mono"><span class="copyable-cell"><span>{{ r.volume_id }}</span>{{ copy_button(r.volume_id) }}</span></td>
         <td class="mono"><span class="copyable-cell"><span>{{ r.instance_id }}</span>{{ copy_button(r.instance_id) }}</span></td>
         <td><span class="badge {{ status_badge(r.status) }}">{{ r.status.value }}</span></td>
-        <td class="num">{{ r.from_size_gb }} GB &rarr; {{ r.to_size_gb }} GB</td>
+        <td class="num">{{ r.from_size_gb }} GB &rarr; {{ r.to_size_gb }} GB{% if r.volume_id in resize_cost_deltas %} <span class="cost-delta">{{ resize_cost_deltas[r.volume_id] }}</span>{% endif %}</td>
         <td class="num">{{ r.extend_attempts }}</td>
         <td class="ts" data-ts="{{ r.updated_at.isoformat() }}"></td>
       </tr>

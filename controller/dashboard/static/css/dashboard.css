@@ -411,6 +411,7 @@ svg.icon { width: 16px; height: 16px; stroke: currentColor; fill: none; stroke-w
 }
 .kpi-sub { margin-top: 3px; font-size: var(--text-xs); color: var(--text-3); }
 .kpi-unit { font-size: 0.5em; color: var(--text-3); margin-left: 4px; }
+.cost-delta { color: var(--text-3); font-size: var(--text-xs); }
 .kpi-card.warn { border-color: color-mix(in srgb, var(--red) 45%, var(--border)); }
 .kpi-card.warn .kpi-value { color: var(--red); }
 .kpi-card.warn .kpi-icon { background: color-mix(in srgb, var(--red) 16%, transparent); color: var(--red); }
