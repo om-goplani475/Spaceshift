@@ -164,14 +164,14 @@ def test_verify_now_sets_the_request_and_page_shows_status(client, state):
 def test_notification_test_button_uses_saved_settings_and_is_audited(client, state):
     state.set_config("notifications.method", "slack")
     state.set_config("notifications.slack_channel_id", "C0123")
-    with patch("controller.dashboard.app.Notifier") as notifier_cls:
+    with patch("controller.dashboard.settings_pages.Notifier") as notifier_cls:
         response = client.post("/api/notifications/test", json={})
     assert response.status_code == 200 and response.get_json() == {"ok": True, "method": "slack"}
     subject, message = notifier_cls.return_value.deliver.call_args.args
     assert "test" in subject.lower() and ADMIN_USERNAME in message
     assert _rows(state, AuditAction.NOTIFICATION_TEST)[0].detail == {"ok": True, "method": "slack"}
 
-    with patch("controller.dashboard.app.Notifier") as notifier_cls:
+    with patch("controller.dashboard.settings_pages.Notifier") as notifier_cls:
         notifier_cls.return_value.deliver.side_effect = NotificationError(
             "Slack refused the message: channel_not_found"
         )

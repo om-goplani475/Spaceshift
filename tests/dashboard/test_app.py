@@ -6,7 +6,7 @@ from decimal import Decimal
 
 from controller.config import DB_CONFIG_KEYS
 from controller.dashboard import create_app
-from controller.dashboard.app import _CONFIG_GROUPS
+from controller.dashboard.config_support import _CONFIG_GROUPS
 from controller.state.base import ResizeStatus
 from tests.dashboard.conftest import sign_in
 

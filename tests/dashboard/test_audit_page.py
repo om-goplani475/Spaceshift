@@ -46,9 +46,9 @@ def test_audit_page_filters_narrow_and_export_link_carries_them(client, state):
 
 
 def test_audit_page_keyset_paging(client, state, monkeypatch):
-    from controller.dashboard import app as app_module
+    from controller.dashboard import audit_pages
 
-    monkeypatch.setattr(app_module, "_AUDIT_PAGE_SIZE", 2)
+    monkeypatch.setattr(audit_pages, "_AUDIT_PAGE_SIZE", 2)
     _seed(state, n=4)  # 6 rows total
     page1 = client.get("/audit").data.decode()
     assert ">Older<" in page1 and ">Newest<" not in page1
