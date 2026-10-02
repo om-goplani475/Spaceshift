@@ -421,17 +421,19 @@ def test_settings_page_has_single_update_button_not_per_row_save(state, client):
 
 
 def test_page_links_its_static_assets(state, client):
-    # The stylesheet and script live in static/ now - if either link breaks
+    # The stylesheets and script live in static/ now - if any link breaks
     # (renamed file, wrong url_for), the page still renders 200 but unstyled
     html = client.get("/").data.decode()
-    assert re.search(r'<link rel="stylesheet" href="/static/css/dashboard\.css(\?[^"]*)?">', html)
-    assert re.search(r'<script src="/static/js/dashboard\.js(\?[^"]*)?"></script>', html)
-    assert client.get("/static/css/dashboard.css").status_code == 200
-    assert client.get("/static/js/dashboard.js").status_code == 200
+    for css_file in ("dashboard-base.css", "dashboard-components.css", "dashboard-pages.css"):
+        assert re.search(rf'<link rel="stylesheet" href="/static/css/{css_file}(\?[^"]*)?">', html)
+        assert client.get(f"/static/css/{css_file}").status_code == 200
+    for js_file in ("dashboard-utils.js", "dashboard-features.js", "dashboard-init.js"):
+        assert re.search(rf'<script src="/static/js/{js_file}(\?[^"]*)?"></script>', html)
+        assert client.get(f"/static/js/{js_file}").status_code == 200
 
 
 def test_settings_script_has_dirty_tracking_and_batched_update(state, client):
-    js = client.get("/static/js/dashboard.js").data.decode()
+    js = client.get("/static/js/dashboard-features.js").data.decode()
 
     assert "function wireConfigDirtyTracking" in js
     assert "function wireSettingsUpdateButton" in js
@@ -542,12 +544,12 @@ def test_pages_have_stable_ids_for_live_refresh_swap(state, client):
 def test_live_refresh_fetches_the_current_page(state, client):
     # Each page is its own route now - refreshing "/" from /instances
     # would swap in nothing (the ids don't match) and look like a dead poll.
-    js = client.get("/static/js/dashboard.js").data.decode()
+    js = client.get("/static/js/dashboard-init.js").data.decode()
     assert "fetch(location.pathname + location.search)" in js
 
 
 def test_script_includes_live_refresh(state, client):
-    js = client.get("/static/js/dashboard.js").data.decode()
+    js = client.get("/static/js/dashboard-init.js").data.decode()
 
     assert "function refreshLiveData" in js
     assert "setInterval(refreshLiveData" in js

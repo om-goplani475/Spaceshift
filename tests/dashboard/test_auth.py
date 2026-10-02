@@ -79,7 +79,7 @@ def test_public_routes_do_not_require_login(app):
     anonymous = app.test_client()
     assert anonymous.get("/login").status_code == 200
     assert anonymous.get("/healthz").status_code == 200
-    assert anonymous.get("/static/css/dashboard.css").status_code == 200
+    assert anonymous.get("/static/css/dashboard-base.css").status_code == 200
 
 
 def test_healthz_reports_ok_and_no_data(app):
@@ -529,7 +529,7 @@ def test_post_without_csrf_token_is_rejected(csrf_app, state):
 def test_pages_carry_the_csrf_meta_tag_and_script_sends_it(client):
     html = client.get("/").data.decode()
     assert 'name="csrf-token"' in html
-    js = client.get("/static/js/dashboard.js").data.decode()
+    js = client.get("/static/js/dashboard-utils.js").data.decode()
     assert "X-CSRFToken" in js
 
 
