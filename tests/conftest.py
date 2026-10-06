@@ -24,7 +24,7 @@ def state() -> InMemoryStateBackend:
 
 @pytest.fixture
 def notifier(config: Config) -> Notifier:
-    return Notifier(config, slack_bot_token=None)
+    return Notifier(config)
 
 
 @pytest.fixture

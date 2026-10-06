@@ -20,7 +20,7 @@ from datetime import UTC, datetime, timedelta
 from controller.config import Config
 from controller.connections.base import ConnectionTarget, Connector
 from controller.disk_check import DEVICE_PATTERN, DiskCheckError, find_mount_point
-from controller.notifications import Notifier
+from controller.notifications import SEVERITY_CRITICAL, Notifier
 from controller.state.base import ResizeRecord, ResizeStatus, StateBackend
 
 logger = logging.getLogger(__name__)
@@ -97,6 +97,8 @@ def start_resize(
             f"Volume {volume_id} on {instance_id} would grow to {target_size_gb}GB, exceeding "
             f"the configured max size ({effective_max_size_gb}GB). "
             f"Auto-resize has stopped for this volume - investigate before raising the ceiling.",
+            severity=SEVERITY_CRITICAL,
+            dedup_key=f"ceiling:{volume_id}",
         )
         return False
 
@@ -195,6 +197,8 @@ def attempt_extend(
                 f"Volume {volume_id} on {target.instance_id}: filesystem extend failed after "
                 f"{attempts} attempts ({exc}). AWS-side resize succeeded; OS-side extend needs "
                 f"manual follow-up.",
+                severity=SEVERITY_CRITICAL,
+                dedup_key=f"needs-attention:{volume_id}",
             )
         else:
             state.update_status(volume_id, ResizeStatus.EXTEND_FAILED)

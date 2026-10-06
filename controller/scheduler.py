@@ -24,7 +24,7 @@ from controller.connections.base import ConnectionTarget, Connector
 from controller.connections.ssm_connector import SsmConnector
 from controller.discovery import EligibleVolume, discover_eligible_volumes, is_ssm_ready
 from controller.disk_check import check_disk_usage
-from controller.notifications import Notifier
+from controller.notifications import SEVERITY_CRITICAL, Notifier
 from controller.resize import (
     SIZE_AVAILABLE_STATES,
     ModifyVolumeError,
@@ -418,6 +418,8 @@ class Scheduler:
                 "EBS auto-resize needs attention",
                 f"Volume {record.volume_id}: AWS reported the modify-volume request failed "
                 f"after the controller restarted mid-resize.",
+                severity=SEVERITY_CRITICAL,
+                dedup_key=f"needs-attention:{record.volume_id}",
             )
         # else: still "modifying" per AWS - leave the row as-is for the next check.
 
