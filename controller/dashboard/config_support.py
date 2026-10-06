@@ -48,8 +48,13 @@ _CONFIG_LABELS: dict[str, str] = {
     "resize.extend_retry.backoff_seconds": "Extend retry backoff (sec)",
     "resize.stale_lock_timeout_minutes": "Stale lock timeout (min)",
     "dry_run": "Dry run",
-    "notifications.method": "Notification method",
+    "notifications.slack_enabled": "Slack",
     "notifications.slack_channel_id": "Slack channel ID",
+    "notifications.discord_enabled": "Discord",
+    "notifications.teams_enabled": "Microsoft Teams",
+    "notifications.telegram_enabled": "Telegram",
+    "notifications.telegram_chat_id": "Telegram chat ID",
+    "notifications.pagerduty_enabled": "PagerDuty (critical only)",
     "discovery.honor_resource_tags": "Honor resource tags",
 }
 
@@ -86,12 +91,21 @@ _CONFIG_DESCRIPTIONS: dict[str, str] = {
         "When on, the controller only logs what it would do - no real AWS resize call or filesystem change. "
         "The most important setting for a first run."
     ),
-    "notifications.method": (
-        "Where alerts go: none (log only) or slack. Slack needs the channel ID below and "
-        "SPACESHIFT_SLACK_BOT_TOKEN in .env."
+    "notifications.slack_enabled": (
+        "Post alerts to Slack. Needs SPACESHIFT_SLACK_BOT_TOKEN and the channel ID below in place."
     ),
     "notifications.slack_channel_id": (
         "The channel the bot posts to (its ID, e.g. C0123456789 - not its name). The bot must be invited to it."
+    ),
+    "notifications.discord_enabled": "Post alerts to Discord. Needs SPACESHIFT_DISCORD_WEBHOOK_URL in .env.",
+    "notifications.teams_enabled": "Post alerts to Microsoft Teams. Needs SPACESHIFT_TEAMS_WEBHOOK_URL in .env.",
+    "notifications.telegram_enabled": (
+        "Send alerts to Telegram. Needs SPACESHIFT_TELEGRAM_BOT_TOKEN in .env and the chat ID below."
+    ),
+    "notifications.telegram_chat_id": "The Telegram chat or channel ID the bot sends to.",
+    "notifications.pagerduty_enabled": (
+        "Create PagerDuty incidents for critical events only (ceiling reached, needs attention). Needs "
+        "SPACESHIFT_PAGERDUTY_ROUTING_KEY in .env. Routine alerts never page."
     ),
     "discovery.honor_resource_tags": (
         "When on, a brand-new instance or volume's autoresize/threshold/max size seed once from its "
@@ -129,7 +143,18 @@ _CONFIG_GROUPS: list[tuple[str, list[str]]] = [
             "resize.stale_lock_timeout_minutes",
         ],
     ),
-    ("Notifications", ["notifications.method", "notifications.slack_channel_id"]),
+    (
+        "Notifications",
+        [
+            "notifications.slack_enabled",
+            "notifications.slack_channel_id",
+            "notifications.discord_enabled",
+            "notifications.teams_enabled",
+            "notifications.telegram_enabled",
+            "notifications.telegram_chat_id",
+            "notifications.pagerduty_enabled",
+        ],
+    ),
 ]
 
 

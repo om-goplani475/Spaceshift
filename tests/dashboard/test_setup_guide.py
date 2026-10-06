@@ -38,7 +38,7 @@ def test_setup_guide_steps_track_real_progress(client, state):
     html = client.get("/setup-guide").data.decode()
     assert html.count("is-done") == 3  # step 5: autoresize on
 
-    state.set_config("notifications.method", "slack")
+    state.set_config("notifications.slack_enabled", "true")
     state.set_config("notifications.slack_channel_id", "C0123")
     html = client.get("/setup-guide").data.decode()
     assert html.count("is-done") == 4  # step 6: notifications configured

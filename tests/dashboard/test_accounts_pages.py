@@ -7,7 +7,6 @@ from unittest.mock import patch
 
 from controller.audit import AuditAction, AuditFilters
 from controller.dashboard.auth import hash_password
-from controller.notifications import NotificationError
 from controller.state.base import ResizeStatus
 from tests.dashboard.conftest import ADMIN_USERNAME, sign_in
 
@@ -161,30 +160,33 @@ def test_verify_now_sets_the_request_and_page_shows_status(client, state):
     assert data[0]["name"] == "prod" and data[0]["last_ok_at"] is not None
 
 
-def test_notification_test_button_uses_saved_settings_and_is_audited(client, state):
-    state.set_config("notifications.method", "slack")
+def test_notification_test_button_reports_each_channel_and_is_audited(client, state):
+    state.set_config("notifications.slack_enabled", "true")
     state.set_config("notifications.slack_channel_id", "C0123")
     with patch("controller.dashboard.settings_pages.Notifier") as notifier_cls:
+        notifier_cls.return_value.deliver.return_value = {"slack": None}
         response = client.post("/api/notifications/test", json={})
-    assert response.status_code == 200 and response.get_json() == {"ok": True, "method": "slack"}
+    assert response.status_code == 200 and response.get_json() == {"ok": True, "channels": {"slack": None}}
     subject, message = notifier_cls.return_value.deliver.call_args.args
     assert "test" in subject.lower() and ADMIN_USERNAME in message
-    assert _rows(state, AuditAction.NOTIFICATION_TEST)[0].detail == {"ok": True, "method": "slack"}
+    assert _rows(state, AuditAction.NOTIFICATION_TEST)[0].detail == {"ok": True, "channels": {"slack": None}}
 
     with patch("controller.dashboard.settings_pages.Notifier") as notifier_cls:
-        notifier_cls.return_value.deliver.side_effect = NotificationError(
-            "Slack refused the message: channel_not_found"
-        )
+        notifier_cls.return_value.deliver.return_value = {"slack": "Slack refused the message: channel_not_found"}
         response = client.post("/api/notifications/test", json={})
-    assert response.status_code == 502 and "channel_not_found" in response.get_json()["error"]
+    assert response.status_code == 502
+    assert "channel_not_found" in response.get_json()["channels"]["slack"]
     failed = _rows(state, AuditAction.NOTIFICATION_TEST)[0]
     assert failed.detail["ok"] is False and "xoxb" not in repr(failed.detail)
 
-    state.set_config("notifications.slack_channel_id", "")
-    assert client.post("/api/notifications/test", json={}).status_code == 400  # saved settings invalid
+
+def test_notification_test_button_refuses_when_no_channel_is_enabled(client, state):
+    response = client.post("/api/notifications/test", json={})
+    assert response.status_code == 400 and "no notification channel is enabled" in response.get_json()["error"]
 
 
 def test_settings_page_has_notifications_group_and_test_button(client):
     html = client.get("/settings").data.decode()
-    assert "Notifications" in html and 'id="setting-notifications.method"' in html
-    assert '<option value="slack"' in html and 'id="notification-test-btn"' in html
+    assert "Notifications" in html and 'id="setting-notifications.slack_enabled"' in html
+    assert 'id="setting-notifications.pagerduty_enabled"' in html and 'id="notification-test-btn"' in html
+    assert 'id="setting-notifications.method"' not in html

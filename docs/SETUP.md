@@ -82,7 +82,7 @@ Only needed if you want resize alerts in Slack. Skip this entirely to keep the d
 4. Get the target channel's ID: in Slack, right-click the channel → **View channel details** → the ID is at the bottom of that panel (looks like `C0123456789`, not the channel name). This is `notifications.slack_channel_id`.
 5. If you didn't add `chat:write.public` in step 2, invite the bot to that channel: `/invite @your-bot-name` in Slack.
 
-The bot token is a secret: it goes in `.env` as `SPACESHIFT_SLACK_BOT_TOKEN` (section 4) and nowhere else. The channel ID isn't - set it, and switch the method to `slack`, in the **Notifications** group on the Settings page (5). **Send test notification** there posts a message with the saved settings and shows Slack's own error if it fails.
+The bot token is a secret: it goes in `.env` as `SPACESHIFT_SLACK_BOT_TOKEN` (section 4) and nowhere else. The channel ID isn't - set it, and turn on **Slack**, in the **Notifications** group on the Settings page (5). **Send test notification** there posts a message with the saved settings and shows Slack's own error if it fails.
 
 ## 3. Host prerequisites
 
@@ -104,6 +104,10 @@ Copy [`.env.example`](../.env.example) to `.env`. docker compose reads it for va
 | `SPACESHIFT_SETUP_TOKEN` | no | dashboard | Guards `/setup` (7.2). Ignored once a user exists. |
 | `SPACESHIFT_BEHIND_TLS_PROXY` | no, default `false` | dashboard | See 7.5. |
 | `SPACESHIFT_SLACK_BOT_TOKEN` | no | controller + dashboard | Bot User OAuth Token (`xoxb-...`) for Slack alerts (2). The dashboard needs it only for the test button. |
+| `SPACESHIFT_DISCORD_WEBHOOK_URL` | no | controller + dashboard | Incoming webhook URL for a Discord channel. Used only while Discord is enabled on the Settings page. |
+| `SPACESHIFT_TEAMS_WEBHOOK_URL` | no | controller + dashboard | Workflows webhook URL for a Microsoft Teams channel. Microsoft is retiring Office 365 connectors, so use a Workflows webhook. |
+| `SPACESHIFT_TELEGRAM_BOT_TOKEN` | no | controller + dashboard | Token from `@BotFather`. Used only while Telegram is enabled. |
+| `SPACESHIFT_PAGERDUTY_ROUTING_KEY` | no | controller + dashboard | Events API v2 routing key for a PagerDuty service. Receives critical alerts only. |
 | `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` / `AWS_SESSION_TOKEN` | no | controller | Only when no instance role is available (1.1). Unset = use the attached role. |
 
 The state backend is always the bundled Postgres container (`docker-compose.yml`'s `postgres` service) and its named volume (`postgres-data`), not something you point elsewhere.
@@ -131,8 +135,15 @@ Values are parsed as YAML scalars (so `false`, `true`, `300` parse as bool/int -
 | `scheduler.max_concurrent_resizes` | `5` | Size of the thread pool processing volumes in parallel each cycle. Raise for a larger fleet. Maximum 32 - each worker holds its own Postgres connection. |
 | `scheduler.scan_log_retention_days` | `7` | How long the dashboard's scan-history table (Postgres `scan_log`) keeps rows before a row older than this gets pruned, once per cycle. Pure observability data, unrelated to `resize_state`. |
 | `scheduler.audit_log_retention_days` | `365` | How long the audit log (section 8) keeps rows. Minimum 30 - a value below that is rejected. Changing it is itself an audit event. |
-| `notifications.method` | `none` | `none` (alerts go to the controller log only) or `slack`. |
-| `notifications.slack_channel_id` | unset | The channel the bot posts to - its ID (`C0123456789`), not its name. Required when the method is `slack`; the bot must be a member of the channel. The token itself is `SPACESHIFT_SLACK_BOT_TOKEN` in `.env` (4). |
+| `notifications.slack_enabled` | `false` | Post alerts to Slack. Needs `SPACESHIFT_SLACK_BOT_TOKEN` and the channel ID below. |
+| `notifications.slack_channel_id` | unset | The channel the bot posts to - its ID (`C0123456789`), not its name. Required while Slack is enabled; the bot must be a member of the channel. |
+| `notifications.discord_enabled` | `false` | Post alerts to Discord. Needs `SPACESHIFT_DISCORD_WEBHOOK_URL`. |
+| `notifications.teams_enabled` | `false` | Post alerts to Microsoft Teams. Needs `SPACESHIFT_TEAMS_WEBHOOK_URL`. |
+| `notifications.telegram_enabled` | `false` | Send alerts to Telegram. Needs `SPACESHIFT_TELEGRAM_BOT_TOKEN` and the chat ID below. |
+| `notifications.telegram_chat_id` | unset | The Telegram chat or channel the bot sends to. Required while Telegram is enabled. |
+| `notifications.pagerduty_enabled` | `false` | Create PagerDuty incidents for critical events only: ceiling reached, or a resize that needs manual follow-up. Routine alerts never page. Needs `SPACESHIFT_PAGERDUTY_ROUTING_KEY`. |
+
+Each channel is independent: an alert goes to every enabled channel, and one channel failing never blocks the others. A toggle only chooses whether a channel is used. Its secret stays in `.env`, so you can keep a channel configured and switch it off without touching the secret.
 | `resize.max_volume_size_gb` | `500` | Hard per-volume ceiling. Crossing it stops auto-resize for that volume and sends a "needs manual review" alert instead of continuing - the guardrail against a runaway log file quietly costing you money forever. |
 | `resize.growth_increment_percent` | `20` | How much bigger each resize makes the volume (e.g. 100GB → 120GB), not the target size itself. |
 | `resize.extend_retry.max_attempts` | `3` | How many times to retry the OS-side extend step (`growpart`/`resize2fs`/`xfs_growfs`) before giving up and alerting. Never re-triggers the AWS-side `modify-volume` call. |
@@ -311,5 +322,5 @@ curl -s -b jar "http://localhost:8089/api/audit?actor=alice&action=config.set&li
 6. First admin created, via `http://localhost:8089/setup` or the CLI (7.2).
 7. At least one AWS account added on the Accounts page with its regions (1.4); **Verify now** shows OK. The next cycle syncs every instance/volume it can see into Postgres, but nothing is eligible yet. `dry_run` defaults to `true` (5) - nothing gets resized for real yet either way.
 8. At least one volume or instance's `autoresize` column set to `true` (1.3) - confirm the next cycle's dry-run output matches what you expect.
-9. Slack: `SPACESHIFT_SLACK_BOT_TOKEN` in `.env`, then method + channel ID on the Settings page and a test message (2).
+9. Slack: `SPACESHIFT_SLACK_BOT_TOKEN` in `.env`, then the Slack toggle + channel ID on the Settings page and a test message (2). Other channels work the same way: secret in `.env`, toggle on the Settings page.
 10. Only then, turn `dry_run` off on the Settings page (5).

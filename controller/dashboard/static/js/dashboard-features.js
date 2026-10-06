@@ -472,8 +472,12 @@ function wireNotificationTestButton() {
       .then(function (resp) { return resp.json().then(function (data) { return { ok: resp.ok, data: data }; }); })
       .catch(function () { return { ok: false, data: { error: "Request failed" } }; })
       .then(function (result) {
-        statusEl.textContent = result.ok
-          ? "Sent via " + result.data.method + " - check the channel"
+        // One line per enabled channel, so a failing one is named next to the working ones.
+        const channels = result.data.channels || {};
+        statusEl.textContent = Object.keys(channels).length
+          ? Object.keys(channels).map(function (name) {
+              return name + ": " + (channels[name] === null ? "sent" : channels[name]);
+            }).join(" · ")
           : (result.data.error || "Failed");
         statusEl.className = "config-status " + (result.ok ? "ok" : "error");
         btn.disabled = false;

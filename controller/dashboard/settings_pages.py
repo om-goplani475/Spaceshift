@@ -12,7 +12,7 @@ from controller.config import DB_CONFIG_KEYS, Config, apply_db_overrides
 from controller.dashboard.auth import current_actor
 from controller.dashboard.config_support import _DEFAULT_CONFIG_DICT, _group_settings, _list_settings
 from controller.dashboard.rbac import require_admin
-from controller.notifications import NotificationError, Notifier
+from controller.notifications import Notifier
 from controller.state.base import StateBackend
 
 
@@ -27,34 +27,28 @@ def api_config_view(state: StateBackend):
 
 
 def test_notification_view(state: StateBackend):
-    """Send a test message with the *saved* notification settings -
-    the one outbound call the dashboard makes, to Slack, with the
-    same env token the controller uses. Recorded either way."""
+    """Send a test message to every enabled channel with the *saved* settings
+    and the same env secrets the controller uses. The per-channel outcome is
+    returned and audited in one row, so a failing channel is visible without
+    hiding the others."""
     require_admin()
     try:
         config = Config.from_dict(apply_db_overrides(_DEFAULT_CONFIG_DICT, state.list_config()))
     except (ValueError, TypeError) as exc:
         return jsonify({"ok": False, "error": f"saved settings are invalid: {exc}"}), 400
+    if not config.notifications.enabled_channels():
+        return jsonify({"ok": False, "error": "no notification channel is enabled"}), 400
+
     actor = current_actor()
-    try:
-        Notifier(config).deliver(
-            "Spaceshift test notification", f"Sent by {actor.username} from the dashboard's Settings page."
-        )
-    except NotificationError as exc:
-        record_audit_event(
-            state,
-            AuditEvent(actor, AuditAction.NOTIFICATION_TEST, detail={"ok": False, "error": str(exc)}),
-        )
-        return jsonify({"ok": False, "error": str(exc)}), 502
+    outcome = Notifier(config).deliver(
+        "Spaceshift test notification", f"Sent by {actor.username} from the dashboard's Settings page."
+    )
+    all_ok = all(reason is None or reason.startswith("skipped") for reason in outcome.values())
     record_audit_event(
         state,
-        AuditEvent(
-            actor,
-            AuditAction.NOTIFICATION_TEST,
-            detail={"ok": True, "method": config.notifications.method},
-        ),
+        AuditEvent(actor, AuditAction.NOTIFICATION_TEST, detail={"ok": all_ok, "channels": outcome}),
     )
-    return jsonify({"ok": True, "method": config.notifications.method})
+    return jsonify({"ok": all_ok, "channels": outcome}), (200 if all_ok else 502)
 
 
 def set_app_config_view(state: StateBackend, key: str):

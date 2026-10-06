@@ -38,7 +38,7 @@ def setup_guide_view(state: StateBackend):
     )
     try:
         config = Config.from_dict(apply_db_overrides(_DEFAULT_CONFIG_DICT, state.list_config()))
-        notifications_on = config.notifications.method != "none"
+        notifications_on = bool(config.notifications.enabled_channels())
     except (ValueError, TypeError):
         notifications_on = False
     return render_template(
