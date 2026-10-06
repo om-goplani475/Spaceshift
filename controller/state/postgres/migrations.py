@@ -96,4 +96,17 @@ MIGRATIONS: list[tuple[str, str]] = [
         ALTER TABLE volumes ADD COLUMN volume_type TEXT;
         """,
     ),
+    (
+        "0007_notification_channels",
+        """
+        -- notifications.method (one of none/slack) is replaced by one toggle
+        -- per channel. A saved "slack" becomes slack_enabled=true so existing
+        -- installs keep posting to Slack without an admin touching Settings.
+        INSERT INTO app_config (key, value, updated_at)
+        SELECT 'notifications.slack_enabled', 'true', now()
+        FROM app_config WHERE key = 'notifications.method' AND value = 'slack'
+        ON CONFLICT (key) DO NOTHING;
+        DELETE FROM app_config WHERE key = 'notifications.method';
+        """,
+    ),
 ]

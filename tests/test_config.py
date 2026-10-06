@@ -148,21 +148,25 @@ def test_defaults_come_from_nowhere_but_the_dataclasses():
     assert config.dry_run is True
     assert config.default_threshold_percent == 80
     assert config.scheduler.interval_seconds == 300
-    assert config.notifications.method == "none" and config.notifications.slack_channel_id is None
+    assert config.notifications.enabled_channels() == []
+    assert config.notifications.slack_channel_id is None
 
 
 def test_notification_settings_are_live_editable_and_validated():
-    assert "notifications.method" in DB_CONFIG_KEYS and "notifications.slack_channel_id" in DB_CONFIG_KEYS
+    assert "notifications.slack_enabled" in DB_CONFIG_KEYS and "notifications.slack_channel_id" in DB_CONFIG_KEYS
     config = Config.from_dict(
         apply_db_overrides(
-            {"notifications": {}}, {"notifications.method": "slack", "notifications.slack_channel_id": "C012ABC"}
+            {"notifications": {}}, {"notifications.slack_enabled": "true", "notifications.slack_channel_id": "C012ABC"}
         )
     )
-    assert config.notifications.method == "slack" and config.notifications.slack_channel_id == "C012ABC"
-    with pytest.raises(ValueError, match="notifications.method must be one of"):
-        Config.from_dict({"notifications": {"method": "email"}})
+    assert config.notifications.enabled_channels() == ["slack"]
+    assert config.notifications.slack_channel_id == "C012ABC"
+    with pytest.raises(ValueError, match="slack_enabled must be true or false"):
+        Config.from_dict({"notifications": {"slack_enabled": "yes"}})
     with pytest.raises(ValueError, match="slack_channel_id is not set"):
-        Config.from_dict({"notifications": {"method": "slack"}})
+        Config.from_dict({"notifications": {"slack_enabled": True}})
+    with pytest.raises(ValueError, match="telegram_chat_id is not set"):
+        Config.from_dict({"notifications": {"telegram_enabled": True}})
     # an emptied Settings field means unset, and a numeric-looking id stays a string
     assert Config.from_dict({"notifications": {"slack_channel_id": ""}}).notifications.slack_channel_id is None
     assert Config.from_dict({"notifications": {"slack_channel_id": 123}}).notifications.slack_channel_id == "123"

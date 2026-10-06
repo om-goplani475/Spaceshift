@@ -659,3 +659,29 @@ def test_prune_audit_log_records_itself(postgres_state):
     assert postgres_state.prune_audit_log(datetime.now(UTC) + timedelta(seconds=1), audit=AuditActor.system()) == 1
     (row,) = postgres_state.list_audit(AuditFilters(), limit=10)
     assert row.action == "audit.prune" and row.actor_type == "system" and row.detail["deleted"] == 1
+
+
+def test_0007_migrates_a_saved_slack_method_to_the_slack_toggle(postgres_state):
+    from controller.state.postgres.migrations import MIGRATIONS
+
+    migration_sql = dict(MIGRATIONS)["0007_notification_channels"]
+    with postgres_state._cursor(commit=True) as cur:
+        cur.execute("DELETE FROM app_config WHERE key LIKE 'notifications.%'")
+        cur.execute("INSERT INTO app_config (key, value, updated_at) VALUES ('notifications.method', 'slack', now())")
+        cur.execute(migration_sql)
+
+    assert postgres_state.get_config("notifications.slack_enabled") == "true"
+    assert postgres_state.get_config("notifications.method") is None
+
+
+def test_0007_leaves_a_none_method_without_enabling_anything(postgres_state):
+    from controller.state.postgres.migrations import MIGRATIONS
+
+    migration_sql = dict(MIGRATIONS)["0007_notification_channels"]
+    with postgres_state._cursor(commit=True) as cur:
+        cur.execute("DELETE FROM app_config WHERE key LIKE 'notifications.%'")
+        cur.execute("INSERT INTO app_config (key, value, updated_at) VALUES ('notifications.method', 'none', now())")
+        cur.execute(migration_sql)
+
+    assert postgres_state.get_config("notifications.slack_enabled") is None
+    assert postgres_state.get_config("notifications.method") is None

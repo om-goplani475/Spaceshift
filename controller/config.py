@@ -19,8 +19,6 @@ from controller.state.base import StateBackend
 
 logger = logging.getLogger(__name__)
 
-VALID_NOTIFICATION_METHODS = ("none", "slack")
-
 
 def _require_int(label: str, value: Any, *, minimum: int, maximum: int | None = None) -> None:
     """Validate an integer field, rejecting bool (a subclass of int in
@@ -68,8 +66,13 @@ DB_CONFIG_KEYS: dict[str, tuple[str, ...]] = {
     "resize.extend_retry.backoff_seconds": ("resize", "extend_retry", "backoff_seconds"),
     "resize.stale_lock_timeout_minutes": ("resize", "stale_lock_timeout_minutes"),
     "dry_run": ("dry_run",),
-    "notifications.method": ("notifications", "method"),
+    "notifications.slack_enabled": ("notifications", "slack_enabled"),
+    "notifications.discord_enabled": ("notifications", "discord_enabled"),
+    "notifications.teams_enabled": ("notifications", "teams_enabled"),
+    "notifications.telegram_enabled": ("notifications", "telegram_enabled"),
+    "notifications.pagerduty_enabled": ("notifications", "pagerduty_enabled"),
     "notifications.slack_channel_id": ("notifications", "slack_channel_id"),
+    "notifications.telegram_chat_id": ("notifications", "telegram_chat_id"),
     "discovery.honor_resource_tags": ("discovery", "honor_resource_tags"),
 }
 
@@ -126,20 +129,44 @@ class ResizeConfig:
 
 @dataclass
 class NotificationsConfig:
-    # The Slack bot token is deliberately not here: it's a secret, so it
-    # comes from SPACESHIFT_SLACK_BOT_TOKEN in the environment.
-    method: str = "none"
+    # Each toggle only chooses whether a channel is used. Its secret (bot
+    # token, webhook URL, routing key) is deliberately not here - it comes
+    # from SPACESHIFT_*_ environment variables, see controller/channels.py.
+    slack_enabled: bool = False
+    discord_enabled: bool = False
+    teams_enabled: bool = False
+    telegram_enabled: bool = False
+    pagerduty_enabled: bool = False
     slack_channel_id: str | None = None
+    telegram_chat_id: str | None = None
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> NotificationsConfig:
         d = cls()
-        channel = data.get("slack_channel_id", d.slack_channel_id)
         return cls(
-            method=data.get("method", d.method),
+            slack_enabled=data.get("slack_enabled", d.slack_enabled),
+            discord_enabled=data.get("discord_enabled", d.discord_enabled),
+            teams_enabled=data.get("teams_enabled", d.teams_enabled),
+            telegram_enabled=data.get("telegram_enabled", d.telegram_enabled),
+            pagerduty_enabled=data.get("pagerduty_enabled", d.pagerduty_enabled),
             # An empty Settings field means "unset", not the string "".
-            slack_channel_id=str(channel) if channel not in (None, "") else None,
+            slack_channel_id=_optional_str(data.get("slack_channel_id")),
+            telegram_chat_id=_optional_str(data.get("telegram_chat_id")),
         )
+
+    def enabled_channels(self) -> list[str]:
+        toggles = {
+            "slack": self.slack_enabled,
+            "discord": self.discord_enabled,
+            "teams": self.teams_enabled,
+            "telegram": self.telegram_enabled,
+            "pagerduty": self.pagerduty_enabled,
+        }
+        return [name for name, on in toggles.items() if on]
+
+
+def _optional_str(value: Any) -> str | None:
+    return str(value) if value not in (None, "") else None
 
 
 @dataclass
@@ -176,13 +203,13 @@ class Config:
             raise ValueError(
                 f"discovery.honor_resource_tags must be true or false, got {self.discovery.honor_resource_tags!r}"
             )
-        if self.notifications.method not in VALID_NOTIFICATION_METHODS:
-            raise ValueError(
-                f"notifications.method must be one of {list(VALID_NOTIFICATION_METHODS)}, "
-                f"got {self.notifications.method!r}"
-            )
-        if self.notifications.method == "slack" and not self.notifications.slack_channel_id:
-            raise ValueError("notifications.method is slack but notifications.slack_channel_id is not set")
+        for channel in ("slack", "discord", "teams", "telegram", "pagerduty"):
+            if not isinstance(getattr(self.notifications, f"{channel}_enabled"), bool):
+                raise ValueError(f"notifications.{channel}_enabled must be true or false")
+        if self.notifications.slack_enabled and not self.notifications.slack_channel_id:
+            raise ValueError("notifications.slack_enabled is on but notifications.slack_channel_id is not set")
+        if self.notifications.telegram_enabled and not self.notifications.telegram_chat_id:
+            raise ValueError("notifications.telegram_enabled is on but notifications.telegram_chat_id is not set")
         _require_int("default_threshold_percent", self.default_threshold_percent, minimum=0)
         if self.default_threshold_percent > 100:
             raise ValueError(
