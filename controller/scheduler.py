@@ -114,6 +114,12 @@ class Scheduler:
         # different accounts' instance IDs ever collide.
         self._ssm_not_ready_alerted: set[tuple[str, str]] = set()
 
+        # Same in-memory dedup trade-off, for the size-ceiling alert -
+        # volume_id alone, since it's already globally unique. Cleared by
+        # start_resize() itself once a volume no longer exceeds its
+        # ceiling (admin raised it, or the override changed).
+        self._ceiling_alerted: set[str] = set()
+
         # Set once the verify-request poll starts failing, so a Postgres
         # outage logs one traceback instead of one every _VERIFY_POLL_SECONDS
         # for the rest of the interval - see _sleep_servicing_verify_requests.
@@ -354,6 +360,7 @@ class Scheduler:
                         account_name,
                         region,
                         max_size_gb=volume.max_size_gb,
+                        ceiling_alerted=self._ceiling_alerted,
                     )
                 except ModifyVolumeError as exc:
                     # Already alerted and recorded as MODIFY_FAILED inside

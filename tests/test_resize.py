@@ -87,6 +87,27 @@ def test_start_resize_size_ceiling_guard(aws, state, notifier):
     assert state.get(volume_id) is None
 
 
+def test_start_resize_ceiling_alert_fires_once_until_it_clears(aws, state, notifier):
+    ec2 = boto3.client("ec2", region_name="us-east-1")
+    volume_id = ec2.create_volume(AvailabilityZone="us-east-1a", Size=100)["VolumeId"]
+    over_ceiling = Config.from_dict({"dry_run": False, "resize": {"max_volume_size_gb": 10}})
+    under_ceiling = Config.from_dict({"dry_run": True, "resize": {"max_volume_size_gb": 500}})
+    sent = []
+    notifier.send = lambda subject, *a, **k: sent.append(subject)
+    alerted: set[str] = set()
+
+    start_resize(ec2, state, notifier, over_ceiling, volume_id, "i-1", 100, ceiling_alerted=alerted)
+    start_resize(ec2, state, notifier, over_ceiling, volume_id, "i-1", 100, ceiling_alerted=alerted)
+    assert sent == ["EBS volume needs manual review"]  # second call didn't re-alert
+
+    # The ceiling clears (raised, or the volume no longer needs to grow
+    # past it) - a later cycle still over threshold must be able to alert
+    # again if it goes back over.
+    start_resize(ec2, state, notifier, under_ceiling, volume_id, "i-1", 100, ceiling_alerted=alerted)
+    start_resize(ec2, state, notifier, over_ceiling, volume_id, "i-1", 100, ceiling_alerted=alerted)
+    assert sent == ["EBS volume needs manual review", "EBS volume needs manual review"]
+
+
 def test_start_resize_honors_a_per_resource_max_size_gb_override(aws, state, notifier):
     # The global ceiling (500GB) would allow this resize; a tighter
     # per-resource max_size_gb (resolved by discovery.py's fallback chain

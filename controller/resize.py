@@ -65,6 +65,7 @@ def start_resize(
     account_name: str = "",
     region: str = "",
     max_size_gb: int | None = None,
+    ceiling_alerted: set[str] | None = None,
 ) -> bool:
     """Attempt to start the AWS-side resize for volume_id.
 
@@ -73,6 +74,15 @@ def start_resize(
     config.resize.max_volume_size_gb) - defaults to the global config value
     directly when not given, so every existing caller that only cares about
     the global ceiling is unaffected.
+
+    ceiling_alerted is an optional caller-owned dedup set (the scheduler
+    passes its own, kept for the life of the process): without it, hitting
+    the ceiling alerts every single cycle for as long as the volume stays
+    over it. With it, a volume_id already in the set is skipped silently,
+    and passes the ceiling check are what clears it again - so raising the
+    ceiling (or the volume no longer needing to grow past it) naturally
+    re-arms the alert. None (the default) preserves the old always-alert
+    behavior, for direct/test callers that don't care.
 
     Returns True if a resize was started (or dry-run logged), False if
     skipped for an expected reason (already in flight, at the size
@@ -84,15 +94,20 @@ def start_resize(
     target_size_gb = compute_target_size_gb(current_size_gb, config.resize.growth_increment_percent)
 
     if target_size_gb > effective_max_size_gb:
-        notifier.send(
-            "EBS volume needs manual review",
-            f"Volume {volume_id} on {instance_id} would grow to {target_size_gb}GB, exceeding "
-            f"the configured max size ({effective_max_size_gb}GB). "
-            f"Auto-resize has stopped for this volume - investigate before raising the ceiling.",
-            severity=SEVERITY_CRITICAL,
-            dedup_key=f"ceiling:{volume_id}",
-        )
+        if ceiling_alerted is None or volume_id not in ceiling_alerted:
+            notifier.send(
+                "EBS volume needs manual review",
+                f"Volume {volume_id} on {instance_id} would grow to {target_size_gb}GB, exceeding "
+                f"the configured max size ({effective_max_size_gb}GB). "
+                f"Auto-resize has stopped for this volume - investigate before raising the ceiling.",
+                severity=SEVERITY_CRITICAL,
+                dedup_key=f"ceiling:{volume_id}",
+            )
+            if ceiling_alerted is not None:
+                ceiling_alerted.add(volume_id)
         return False
+    if ceiling_alerted is not None:
+        ceiling_alerted.discard(volume_id)
 
     if config.dry_run:
         logger.info(
