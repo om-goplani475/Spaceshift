@@ -115,6 +115,19 @@ class PostgresAuditMixin(AuditStateContract):
         except (psycopg2.OperationalError, psycopg2.InterfaceError):
             broken = True
             raise
+        except BaseException:
+            # Covers GeneratorExit specifically: a client aborting an
+            # in-progress CSV download closes this generator mid-`yield`,
+            # which raises GeneratorExit here - a BaseException the
+            # OperationalError/InterfaceError clause above doesn't catch,
+            # so the rollback above was skipped on this path. Belt and
+            # suspenders: psycopg2.pool's own putconn() already rolls
+            # back (or closes) a non-idle connection before reuse, so
+            # this isn't masking a reachable pool-corruption bug - it
+            # just matches _cursor()'s own explicit pattern elsewhere in
+            # this file instead of relying on that pool-internal detail.
+            conn.rollback()
+            raise
         finally:
             self._pool.putconn(conn, close=broken)
 

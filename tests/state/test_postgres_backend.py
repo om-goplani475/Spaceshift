@@ -685,3 +685,38 @@ def test_0007_leaves_a_none_method_without_enabling_anything(postgres_state):
 
     assert postgres_state.get_config("notifications.slack_enabled") is None
     assert postgres_state.get_config("notifications.method") is None
+
+
+def test_iter_audit_does_not_raise_or_break_the_pool_when_closed_early(postgres_state):
+    """A client aborting a CSV download (closed tab, timeout) closes
+    iter_audit's generator mid-yield via GeneratorExit - a BaseException
+    the old `except (OperationalError, InterfaceError)` clause didn't
+    catch, so the explicit conn.rollback() this function does on its
+    normal exit path was skipped on this path.
+
+    Verified directly against pg_stat_activity that this is in fact
+    harmless in practice: psycopg2.pool.AbstractConnectionPool._putconn()
+    already rolls back (or outright closes) any non-idle connection
+    before it can be reused, regardless of what this function itself
+    does. The explicit rollback added here is kept anyway, to match
+    _cursor()'s own pattern elsewhere in this file and not rely on an
+    undocumented detail of the pool implementation - but it is belt and
+    suspenders, not a fix for a reachable connection-pool corruption."""
+    from controller.audit import AuditActor, AuditFilters
+
+    postgres_state.upsert_volume("prod", "vol-1", "i-1", "us-east-1", 100, "/dev/xvdf")
+    postgres_state.set_volume_autoresize("vol-1", True, audit=AuditActor.user(1, "alice", "10.0.0.1"))
+    postgres_state.set_volume_autoresize("vol-1", False, audit=AuditActor.user(1, "alice", "10.0.0.1"))
+
+    gen = postgres_state.iter_audit(AuditFilters())
+    next(gen)  # start the named cursor's transaction, yield one row
+    gen.close()  # simulates Flask closing the generator on client disconnect
+
+    # The pool must still be fully usable afterward.
+    assert postgres_state.list_volumes(region="us-east-1") != []
+    with postgres_state._cursor() as cur:
+        cur.execute(
+            "SELECT count(*) FROM pg_stat_activity WHERE state = 'idle in transaction' AND pid != pg_backend_pid()"
+        )
+        (idle_in_transaction,) = cur.fetchone()
+    assert idle_in_transaction == 0

@@ -80,8 +80,15 @@ class Notifier:
             try:
                 self._senders()[name](subject, message, dedup_key)
                 results[name] = None
-            except NotificationError as exc:
-                results[name] = exc
+            except Exception as exc:
+                # Deliberately broad, not just NotificationError: a
+                # malformed-but-JSON-looking response body raises
+                # json.JSONDecodeError, and other network errors (e.g.
+                # ssl.SSLError) aren't wrapped by channels.py either - any
+                # of those used to abort this loop entirely, silently
+                # skipping every channel after the failing one, including
+                # a critical PagerDuty page.
+                results[name] = exc if isinstance(exc, NotificationError) else NotificationError(str(exc))
         return results
 
     def _senders(self) -> dict[str, Callable[[str, str, str | None], None]]:

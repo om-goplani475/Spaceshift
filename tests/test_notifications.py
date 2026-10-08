@@ -96,6 +96,45 @@ def test_one_failing_channel_does_not_stop_the_others(env, urls, caplog):
     assert "notification via discord not delivered" in caplog.text
 
 
+class _BadBodyResponse(_FakeResponse):
+    """A response whose body starts with '{' (so _post_json tries to parse
+    it) but isn't valid JSON - json.loads() raises JSONDecodeError, not
+    NotificationError."""
+
+    def __init__(self) -> None:
+        self._body = b"{not valid json"
+
+
+def test_an_unexpected_exception_from_one_channel_does_not_abort_the_others(env, urls, caplog):
+    """channels.py only documents raising NotificationError, but
+    _post_json's json.loads(body) can raise JSONDecodeError on a
+    malformed-but-'{'-prefixed response, and other network errors (e.g.
+    ssl.SSLError) aren't wrapped either - either used to propagate straight
+    out of the fan-out loop and abort delivery to every channel after the
+    failing one, including a critical PagerDuty page."""
+    urls.state["response_for"] = lambda req: (
+        _BadBodyResponse() if "discord.example" in req.full_url else _FakeResponse({"ok": True})
+    )
+
+    Notifier(_all_channels_config(pagerduty_enabled=False)).send("subject", "message")
+
+    assert len(_to(urls.calls, "teams.example")) == 1
+    assert len(_to(urls.calls, "slack.com")) == 1
+    assert len(_to(urls.calls, "telegram")) == 1
+    assert "notification via discord not delivered" in caplog.text
+
+
+def test_deliver_reports_a_non_notification_error_too(env, urls):
+    urls.state["response_for"] = lambda req: _BadBodyResponse()
+    config = _all_channels_config(
+        slack_enabled=False, teams_enabled=False, telegram_enabled=False, pagerduty_enabled=False
+    )
+
+    outcome = Notifier(config).deliver("subject", "message")
+
+    assert outcome["discord"] is not None  # reported, not raised
+
+
 def test_pagerduty_fires_only_for_critical_with_its_dedup_key(env, urls):
     notifier = Notifier(
         _all_channels_config(slack_enabled=False, discord_enabled=False, teams_enabled=False, telegram_enabled=False)
