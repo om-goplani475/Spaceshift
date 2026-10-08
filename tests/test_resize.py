@@ -13,7 +13,6 @@ from controller.resize import (
     ExtendFailedError,
     InvalidDeviceNameError,
     ModifyVolumeError,
-    _split_device,
     attempt_extend,
     compute_target_size_gb,
     find_modification,
@@ -24,25 +23,13 @@ from controller.state.base import ResizeRecord, ResizeStatus
 from tests.helpers import FakeConnector
 
 
+def _lsblk_row(name: str, type_: str, mountpoint: str = "", pkname: str = "") -> str:
+    return f'NAME="{name}" TYPE="{type_}" MOUNTPOINT="{mountpoint}" PKNAME="{pkname}"'
+
+
 def test_compute_target_size_gb():
     assert compute_target_size_gb(100, 20) == 120
     assert compute_target_size_gb(1, 20) == 2  # ceil + min-1GB floor
-
-
-@pytest.mark.parametrize(
-    "device,expected",
-    [
-        ("/dev/xvdf1", ("/dev/xvdf", 1)),
-        ("/dev/nvme1n1p2", ("/dev/nvme1n1", 2)),
-    ],
-)
-def test_split_device(device, expected):
-    assert _split_device(device) == expected
-
-
-def test_split_device_rejects_unparseable_path():
-    with pytest.raises(InvalidDeviceNameError):
-        _split_device("/dev/mapper/vg-lv")
 
 
 # --- start_resize ---------------------------------------------------------
@@ -259,14 +246,18 @@ def test_attempt_extend_success_ext4(state, notifier):
 
     connector = FakeConnector(
         [
+            CommandResult(0, _lsblk_row("/dev/xvdf1", "part", "/data", pkname="/dev/xvdf") + "\n", ""),  # lsblk
             CommandResult(0, "", ""),  # growpart
             CommandResult(0, "ext4\n", ""),  # blkid
             CommandResult(0, "", ""),  # resize2fs
         ]
     )
-    attempt_extend(connector, state, notifier, live_config, target, "vol-x", "/dev/xvdf1")
+    attempt_extend(connector, state, notifier, live_config, target, "vol-x", "/dev/xvdf")
 
     assert state.get("vol-x").status == ResizeStatus.EXTEND_COMPLETED
+    assert connector.calls[1] == "growpart /dev/xvdf 1"
+    assert connector.calls[2] == "blkid -o value -s TYPE /dev/xvdf1"
+    assert connector.calls[3] == "resize2fs /dev/xvdf1"
 
 
 def test_attempt_extend_success_xfs(state, notifier):
@@ -276,15 +267,17 @@ def test_attempt_extend_success_xfs(state, notifier):
 
     connector = FakeConnector(
         [
+            CommandResult(0, _lsblk_row("/dev/nvme1n1p2", "part", "/data", pkname="/dev/nvme1n1") + "\n", ""),  # lsblk
             CommandResult(0, "", ""),  # growpart
             CommandResult(0, "xfs\n", ""),  # blkid
-            CommandResult(0, "/data\n", ""),  # find_mount_point's lsblk
             CommandResult(0, "", ""),  # xfs_growfs
         ]
     )
-    attempt_extend(connector, state, notifier, live_config, target, "vol-y", "/dev/nvme1n1p2")
+    attempt_extend(connector, state, notifier, live_config, target, "vol-y", "/dev/nvme1n1")
 
     assert state.get("vol-y").status == ResizeStatus.EXTEND_COMPLETED
+    assert connector.calls[1] == "growpart /dev/nvme1n1 2"
+    assert connector.calls[-1] == "xfs_growfs /data"
 
 
 def test_xfs_growfs_quotes_hostile_mount_point(state, notifier):
@@ -297,16 +290,69 @@ def test_xfs_growfs_quotes_hostile_mount_point(state, notifier):
 
     connector = FakeConnector(
         [
+            CommandResult(0, _lsblk_row("/dev/xvdf1", "part", "/data; rm -rf /", pkname="/dev/xvdf") + "\n", ""),
             CommandResult(0, "", ""),
             CommandResult(0, "xfs\n", ""),
-            CommandResult(0, "/data; rm -rf /\n", ""),
             CommandResult(0, "", ""),
         ]
     )
-    attempt_extend(connector, state, notifier, live_config, target, "vol-1", "/dev/xvdf1")
+    attempt_extend(connector, state, notifier, live_config, target, "vol-1", "/dev/xvdf")
 
     assert connector.calls[-1] == "xfs_growfs '/data; rm -rf /'"
     assert state.get("vol-1").status == ResizeStatus.EXTEND_COMPLETED
+
+
+def test_attempt_extend_on_an_unpartitioned_volume_skips_growpart(state, notifier):
+    """A data volume formatted directly (mkfs.ext4 /dev/xvdf, no partition
+    table) - growpart doesn't apply, and must not be called at all."""
+    target = ConnectionTarget(instance_id="i-1")
+    live_config = Config.from_dict({"dry_run": False})
+    state.create_if_absent("vol-u", "i-1", 100, 120)
+
+    connector = FakeConnector(
+        [
+            CommandResult(0, _lsblk_row("/dev/xvdf", "disk", "/data") + "\n", ""),  # lsblk
+            CommandResult(0, "ext4\n", ""),  # blkid
+            CommandResult(0, "", ""),  # resize2fs
+        ]
+    )
+    attempt_extend(connector, state, notifier, live_config, target, "vol-u", "/dev/xvdf")
+
+    assert state.get("vol-u").status == ResizeStatus.EXTEND_COMPLETED
+    assert "growpart" not in " ".join(connector.calls)
+    assert connector.calls[1] == "blkid -o value -s TYPE /dev/xvdf"
+    assert connector.calls[2] == "resize2fs /dev/xvdf"
+
+
+def test_attempt_extend_root_disk_grows_the_root_partition_not_the_esp(state, notifier):
+    """The reported AL2023 bug, exercised end to end through
+    attempt_extend: growpart and the filesystem resize must target the
+    partition mounted at /, not /boot/efi."""
+    target = ConnectionTarget(instance_id="i-1")
+    live_config = Config.from_dict({"dry_run": False})
+    state.create_if_absent("vol-root", "i-1", 8, 16)
+
+    lsblk_output = "\n".join(
+        [
+            _lsblk_row("/dev/xvda", "disk"),
+            _lsblk_row("/dev/xvda1", "part", "/boot/efi", pkname="/dev/xvda"),
+            _lsblk_row("/dev/xvda2", "part", "/", pkname="/dev/xvda"),
+        ]
+    )
+    connector = FakeConnector(
+        [
+            CommandResult(0, lsblk_output + "\n", ""),
+            CommandResult(0, "", ""),  # growpart
+            CommandResult(0, "xfs\n", ""),  # blkid
+            CommandResult(0, "", ""),  # xfs_growfs
+        ]
+    )
+    attempt_extend(connector, state, notifier, live_config, target, "vol-root", "/dev/xvda")
+
+    assert state.get("vol-root").status == ResizeStatus.EXTEND_COMPLETED
+    assert connector.calls[1] == "growpart /dev/xvda 2"
+    assert connector.calls[2] == "blkid -o value -s TYPE /dev/xvda2"
+    assert connector.calls[-1] == "xfs_growfs /"
 
 
 def test_attempt_extend_exhausts_retries_to_terminal(state, notifier):
@@ -315,8 +361,13 @@ def test_attempt_extend_exhausts_retries_to_terminal(state, notifier):
     state.create_if_absent("vol-z", "i-1", 100, 120)
 
     for _ in range(live_config.resize.extend_retry.max_attempts):
-        connector = FakeConnector([CommandResult(1, "", "growpart: boom")])
-        attempt_extend(connector, state, notifier, live_config, target, "vol-z", "/dev/xvdf1")
+        connector = FakeConnector(
+            [
+                CommandResult(0, _lsblk_row("/dev/xvdf1", "part", "/data", pkname="/dev/xvdf") + "\n", ""),
+                CommandResult(1, "", "growpart: boom"),
+            ]
+        )
+        attempt_extend(connector, state, notifier, live_config, target, "vol-z", "/dev/xvdf")
 
     record = state.get("vol-z")
     assert record.status == ResizeStatus.EXTEND_FAILED_NEEDS_ATTENTION
@@ -340,19 +391,15 @@ def test_attempt_extend_respects_dry_run_even_with_existing_row(state, notifier)
     assert state.get("vol-1").status == ResizeStatus.MODIFY_COMPLETED  # untouched
 
 
-def test_attempt_extend_wraps_xfs_mount_lookup_failure_as_retryable(state, notifier):
+def test_attempt_extend_wraps_a_failed_resolution_as_retryable(state, notifier):
+    """A transient lsblk failure while resolving the mount target (e.g. a
+    flaky SSM round trip) is retried, not an immediate terminal failure."""
     target = ConnectionTarget(instance_id="i-1")
     live_config = Config.from_dict({"dry_run": False})
     state.create_if_absent("vol-w", "i-1", 100, 120)
 
-    connector = FakeConnector(
-        [
-            CommandResult(0, "", ""),
-            CommandResult(0, "xfs\n", ""),
-            CommandResult(1, "", "lsblk: no such device"),
-        ]
-    )
-    attempt_extend(connector, state, notifier, live_config, target, "vol-w", "/dev/xvdf1")
+    connector = FakeConnector([CommandResult(1, "", "lsblk: no such device")])
+    attempt_extend(connector, state, notifier, live_config, target, "vol-w", "/dev/xvdf")
 
     record = state.get("vol-w")
     assert record.status == ResizeStatus.EXTEND_FAILED
@@ -363,6 +410,7 @@ def test_attempt_extend_unsupported_filesystem_raises():
     target = ConnectionTarget(instance_id="i-1")
     connector = FakeConnector(
         [
+            CommandResult(0, _lsblk_row("/dev/xvdf1", "part", "/data", pkname="/dev/xvdf") + "\n", ""),
             CommandResult(0, "", ""),
             CommandResult(0, "btrfs\n", ""),
         ]
@@ -370,7 +418,19 @@ def test_attempt_extend_unsupported_filesystem_raises():
     from controller.resize import _extend_filesystem
 
     with pytest.raises(ExtendFailedError, match="Unsupported filesystem"):
-        _extend_filesystem(connector, target, "/dev/xvdf1")
+        _extend_filesystem(connector, target, "/dev/xvdf")
+
+
+def test_extend_filesystem_rejects_invalid_device_path_before_any_command_runs():
+    from controller.resize import _extend_filesystem
+
+    target = ConnectionTarget(instance_id="i-1")
+    connector = FakeConnector([])
+
+    with pytest.raises(InvalidDeviceNameError):
+        _extend_filesystem(connector, target, "/dev/xvdf; rm -rf /")
+
+    assert connector.calls == []
 
 
 def test_should_retry_extend_now():
@@ -384,9 +444,3 @@ def test_should_retry_extend_now():
 
     old_failed = ResizeRecord("v", "i", ResizeStatus.EXTEND_FAILED, 100, 120, 1, now, now - dt.timedelta(seconds=120))
     assert should_retry_extend_now(old_failed, 60) is True
-
-
-@pytest.mark.parametrize("device", ["/dev/xvdf1\n", "/dev/nvme0n1p1\n"])
-def test_split_device_rejects_trailing_newline(device):
-    with pytest.raises(InvalidDeviceNameError):
-        _split_device(device)

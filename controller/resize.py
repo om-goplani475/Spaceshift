@@ -12,14 +12,13 @@ from __future__ import annotations
 
 import logging
 import math
-import re
 import shlex
 import time
 from datetime import UTC, datetime, timedelta
 
 from controller.config import Config
 from controller.connections.base import ConnectionTarget, Connector
-from controller.disk_check import DEVICE_PATTERN, DiskCheckError, find_mount_point
+from controller.disk_check import DEVICE_PATTERN, DiskCheckError, resolve_block_target
 from controller.notifications import SEVERITY_CRITICAL, Notifier
 from controller.state.base import ResizeRecord, ResizeStatus, StateBackend
 
@@ -40,9 +39,6 @@ _MODIFY_POLL_TIMEOUT_SECONDS = 900
 # "completed" can lag by hours on large volumes and is irrelevant to the
 # filesystem extend step.
 SIZE_AVAILABLE_STATES = frozenset({"optimizing", "completed"})
-
-_XVD_PATTERN = re.compile(r"^(?P<disk>/dev/xvd[a-z]+)(?P<partition>\d+)\Z")
-_NVME_PATTERN = re.compile(r"^(?P<disk>/dev/nvme\d+n\d+)p(?P<partition>\d+)\Z")
 
 
 class InvalidDeviceNameError(ValueError):
@@ -262,22 +258,38 @@ def _extend_filesystem(connector: Connector, target: ConnectionTarget, device_na
     if not DEVICE_PATTERN.match(device_name):
         raise InvalidDeviceNameError(f"Refusing to use unexpected device path: {device_name!r}")
 
-    disk, partition = _split_device(device_name)
+    # Resolved first, before growpart: AWS only ever reports the disk
+    # (e.g. /dev/xvda), never the partition that actually holds the
+    # filesystem, so growpart's target has to come from what's actually
+    # mounted on the instance, not from parsing the AWS string.
+    try:
+        block_target = resolve_block_target(connector, target, device_name)
+    except DiskCheckError as exc:
+        raise ExtendFailedError(str(exc)) from exc
 
-    growpart_result = connector.run_command(target, f"growpart {shlex.quote(disk)} {partition}", timeout_seconds=60)
-    if not growpart_result.succeeded and "NOCHANGE" not in growpart_result.stdout:
-        raise ExtendFailedError(f"growpart failed on {target.instance_id} for {device_name}: {growpart_result.stderr}")
+    if block_target.growpart_disk is not None:
+        growpart_result = connector.run_command(
+            target,
+            f"growpart {shlex.quote(block_target.growpart_disk)} {block_target.growpart_partition}",
+            timeout_seconds=60,
+        )
+        if not growpart_result.succeeded and "NOCHANGE" not in growpart_result.stdout:
+            raise ExtendFailedError(
+                f"growpart failed on {target.instance_id} for {device_name}: {growpart_result.stderr}"
+            )
+    # else: no partition table - the whole-disk device already grew when
+    # AWS resized the volume, nothing for growpart to do.
 
-    fs_type = _detect_filesystem_type(connector, target, device_name)
+    fs_type = _detect_filesystem_type(connector, target, block_target.filesystem_device)
 
     if fs_type == "ext4":
-        resize_result = connector.run_command(target, f"resize2fs {shlex.quote(device_name)}", timeout_seconds=120)
+        resize_result = connector.run_command(
+            target, f"resize2fs {shlex.quote(block_target.filesystem_device)}", timeout_seconds=120
+        )
     elif fs_type == "xfs":
-        try:
-            mount_point = find_mount_point(connector, target, device_name)
-        except DiskCheckError as exc:
-            raise ExtendFailedError(str(exc)) from exc
-        resize_result = connector.run_command(target, f"xfs_growfs {shlex.quote(mount_point)}", timeout_seconds=120)
+        resize_result = connector.run_command(
+            target, f"xfs_growfs {shlex.quote(block_target.mount_point)}", timeout_seconds=120
+        )
     else:
         raise ExtendFailedError(f"Unsupported filesystem type {fs_type!r} on {device_name} ({target.instance_id})")
 
@@ -287,16 +299,10 @@ def _extend_filesystem(connector: Connector, target: ConnectionTarget, device_na
         )
 
 
-def _detect_filesystem_type(connector: Connector, target: ConnectionTarget, device_name: str) -> str:
-    result = connector.run_command(target, f"blkid -o value -s TYPE {shlex.quote(device_name)}", timeout_seconds=30)
+def _detect_filesystem_type(connector: Connector, target: ConnectionTarget, filesystem_device: str) -> str:
+    result = connector.run_command(
+        target, f"blkid -o value -s TYPE {shlex.quote(filesystem_device)}", timeout_seconds=30
+    )
     if not result.succeeded:
-        raise ExtendFailedError(f"blkid failed on {target.instance_id} for {device_name}: {result.stderr}")
+        raise ExtendFailedError(f"blkid failed on {target.instance_id} for {filesystem_device}: {result.stderr}")
     return result.stdout.strip()
-
-
-def _split_device(device_name: str) -> tuple[str, int]:
-    for pattern in (_XVD_PATTERN, _NVME_PATTERN):
-        match = pattern.match(device_name)
-        if match:
-            return match.group("disk"), int(match.group("partition"))
-    raise InvalidDeviceNameError(f"Could not parse disk/partition from device path: {device_name!r}")
