@@ -25,6 +25,7 @@ _DECISION_BADGES = {
     "ssm_not_ready": "badge-amber",
     "resize_skipped": "badge-amber",
     "resize_failed": "badge-red",
+    "modify_in_progress": "badge-amber",
 }
 
 # What each scan_log.decision value means in plain English - shown as a
@@ -40,6 +41,7 @@ _DECISION_HINTS: dict[str, str] = {
     "needs_attention": "The filesystem extend failed too many times and needs manual review.",
     "extend_retry_waiting": "The AWS resize succeeded; waiting out the backoff before the next extend retry.",
     "extend_retry_attempted": "Retried the OS-side filesystem extend after an earlier AWS resize.",
+    "modify_in_progress": "The AWS-side resize was requested; waiting for AWS to report the new size usable.",
 }
 
 

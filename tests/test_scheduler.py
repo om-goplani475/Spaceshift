@@ -8,6 +8,7 @@ from unittest.mock import MagicMock, patch
 import boto3
 import pytest
 
+from controller.config import Config
 from controller.discovery import EligibleVolume
 from controller.disk_check import DiskUsage
 from controller.resize import ModifyVolumeError
@@ -107,6 +108,98 @@ def test_ssm_not_ready_alerts_once_across_ticks(scheduler, volume, state):
         check.assert_not_called()
 
     assert sent == ["Instance not ready for SSM"]
+
+
+def test_ssm_not_ready_with_no_pending_resize_does_not_increment_anything(scheduler, volume, state):
+    """A volume that's simply not discovered/reachable yet, with no resize
+    ever requested, must not be treated as a failed extend attempt."""
+    with (
+        patch("controller.scheduler.is_ssm_ready", return_value=False),
+        patch("controller.scheduler.record_extend_failure") as fail,
+    ):
+        scheduler._process_volume(_ACCOUNT, MagicMock(), MagicMock(), MagicMock(), volume, "us-east-1")
+
+    fail.assert_not_called()
+    assert state.get("vol-1") is None
+
+
+def test_ssm_not_ready_with_a_pending_resize_escalates_after_max_attempts(state, notifier):
+    """A terminated instance after a successful AWS-side resize used to be
+    a silent dead end: _process_volume returned before ever looking at
+    the pending resize record, so EXTEND_FAILED_NEEDS_ATTENTION (the only
+    path that pages anyone) was never reached."""
+    # backoff_seconds=0 so each loop iteration is immediately eligible -
+    # should_retry_extend_now's real backoff pacing is covered elsewhere
+    # (test_should_retry_extend_now); this test is about escalation count.
+    zero_backoff = Config.from_dict({"resize": {"extend_retry": {"backoff_seconds": 0}}})
+    scheduler = _scheduler_with(state, notifier, zero_backoff, (_ACCOUNT, ["us-east-1"]))
+    volume = EligibleVolume(
+        volume_id="vol-1",
+        instance_id="i-1",
+        device_name="/dev/xvdf",
+        size_gb=100,
+        threshold_percent=80,
+        max_size_gb=500,
+    )
+    state.create_if_absent("vol-1", "i-1", 100, 120)
+    state.update_status("vol-1", ResizeStatus.MODIFY_COMPLETED)
+    sent = []
+    scheduler._notifier.send = lambda subject, *a, **k: sent.append(subject)
+
+    with patch("controller.scheduler.is_ssm_ready", return_value=False):
+        for _ in range(zero_backoff.resize.extend_retry.max_attempts):
+            scheduler._process_volume(_ACCOUNT, MagicMock(), MagicMock(), MagicMock(), volume, "us-east-1")
+
+    record = state.get("vol-1")
+    assert record.status == ResizeStatus.EXTEND_FAILED_NEEDS_ATTENTION
+    assert record.extend_attempts == zero_backoff.resize.extend_retry.max_attempts
+    assert "EBS auto-resize needs attention" in sent
+
+
+# --- MODIFY_REQUESTED: non-blocking readiness check --------------------------
+
+
+def test_modify_requested_advances_to_extend_in_the_same_pass_once_ready(scheduler, volume, state):
+    state.create_if_absent("vol-1", "i-1", 100, 120)  # defaults to MODIFY_REQUESTED
+
+    with (
+        patch("controller.scheduler.is_ssm_ready", return_value=True),
+        patch("controller.scheduler.is_modification_ready", return_value=True),
+        patch("controller.scheduler.attempt_extend") as extend,
+    ):
+        scheduler._process_volume(_ACCOUNT, MagicMock(), MagicMock(), MagicMock(), volume, "us-east-1")
+        extend.assert_called_once()
+
+    assert state.get("vol-1").status == ResizeStatus.MODIFY_COMPLETED
+    assert state.list_scans()[0].decision == "extend_retry_attempted"
+
+
+def test_modify_requested_waits_without_blocking_when_not_yet_ready(scheduler, volume, state):
+    state.create_if_absent("vol-1", "i-1", 100, 120)
+
+    with (
+        patch("controller.scheduler.is_ssm_ready", return_value=True),
+        patch("controller.scheduler.is_modification_ready", return_value=False),
+        patch("controller.scheduler.attempt_extend") as extend,
+    ):
+        scheduler._process_volume(_ACCOUNT, MagicMock(), MagicMock(), MagicMock(), volume, "us-east-1")
+        extend.assert_not_called()
+
+    assert state.get("vol-1").status == ResizeStatus.MODIFY_REQUESTED
+    assert state.list_scans()[0].decision == "modify_in_progress"
+
+
+def test_modify_requested_marks_modify_failed_when_aws_reports_failed(scheduler, volume, state):
+    state.create_if_absent("vol-1", "i-1", 100, 120)
+
+    with (
+        patch("controller.scheduler.is_ssm_ready", return_value=True),
+        patch("controller.scheduler.is_modification_ready", side_effect=RuntimeError("AWS reported failed")),
+    ):
+        scheduler._process_volume(_ACCOUNT, MagicMock(), MagicMock(), MagicMock(), volume, "us-east-1")
+
+    assert state.get("vol-1").status == ResizeStatus.MODIFY_FAILED
+    assert state.list_scans()[0].decision == "resize_failed"
 
 
 # --- scan log -----------------------------------------------------------------

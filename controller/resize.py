@@ -13,7 +13,6 @@ from __future__ import annotations
 import logging
 import math
 import shlex
-import time
 from datetime import UTC, datetime, timedelta
 
 from controller.config import Config
@@ -31,9 +30,6 @@ logger = logging.getLogger(__name__)
 _MODIFICATION_WINDOW = timedelta(hours=24)
 _MAX_MODIFICATIONS_PER_WINDOW = 4
 _MODIFICATION_COOLDOWN = timedelta(hours=6)
-
-_MODIFY_POLL_INTERVAL_SECONDS = 15
-_MODIFY_POLL_TIMEOUT_SECONDS = 900
 
 # The new capacity is usable by the OS as soon as AWS reports "optimizing";
 # "completed" can lag by hours on large volumes and is irrelevant to the
@@ -161,8 +157,14 @@ def start_resize(
         raise ModifyVolumeError(f"modify-volume rejected for {volume_id}: {exc}") from exc
 
     state.record_modification(volume_id, datetime.now(UTC))
-    _wait_for_new_size_available(ec2_client, volume_id, target_size_gb)
-    state.update_status(volume_id, ResizeStatus.MODIFY_COMPLETED)
+    # Row stays at MODIFY_REQUESTED (create_if_absent's default) - no
+    # synchronous wait for AWS to report the new size usable. That used to
+    # block this worker thread for up to 15 minutes, inside the same small
+    # pool that also runs every other volume's disk check in this region;
+    # a batch of simultaneous resizes could stall unrelated monitoring for
+    # the rest of the tick. The scheduler now checks is_modification_ready()
+    # once per cycle for MODIFY_REQUESTED rows instead - same polling-via-
+    # cycle pattern EXTEND_FAILED retries already use.
     return True
 
 
@@ -197,20 +199,15 @@ def attempt_extend(
 
     try:
         _extend_filesystem(connector, target, device_name)
-    except (InvalidDeviceNameError, ExtendFailedError) as exc:
-        attempts = state.increment_extend_attempts(volume_id)
-        if attempts >= config.resize.extend_retry.max_attempts:
-            state.update_status(volume_id, ResizeStatus.EXTEND_FAILED_NEEDS_ATTENTION)
-            notifier.send(
-                "EBS auto-resize needs attention",
-                f"Volume {volume_id} on {target.instance_id}: filesystem extend failed after "
-                f"{attempts} attempts ({exc}). AWS-side resize succeeded; OS-side extend needs "
-                f"manual follow-up.",
-                severity=SEVERITY_CRITICAL,
-                dedup_key=f"needs-attention:{volume_id}",
-            )
-        else:
-            state.update_status(volume_id, ResizeStatus.EXTEND_FAILED)
+    except Exception as exc:
+        # Deliberately broad: a flaky SSM round trip raises a bare
+        # TimeoutError (connections/ssm_connector.py), and throttling
+        # raises botocore's ClientError - neither is InvalidDeviceNameError
+        # or ExtendFailedError, and either used to slip past this function
+        # uncaught into the scheduler's last-resort handler, which never
+        # calls increment_extend_attempts() - a stuck extend retried
+        # forever with no backoff and never escalated.
+        record_extend_failure(state, notifier, config, volume_id, target.instance_id, exc)
         return
 
     state.update_status(volume_id, ResizeStatus.EXTEND_COMPLETED)
@@ -258,22 +255,52 @@ def find_modification(modifications: list[dict], target_size_gb: int, requested_
     return None
 
 
-def _wait_for_new_size_available(ec2_client, volume_id: str, target_size_gb: int) -> None:
-    requested_at = datetime.now(UTC)
-    deadline = time.monotonic() + _MODIFY_POLL_TIMEOUT_SECONDS
-    while time.monotonic() < deadline:
-        response = ec2_client.describe_volumes_modifications(VolumeIds=[volume_id])
-        modification = find_modification(response.get("VolumesModifications", []), target_size_gb, requested_at)
-        if modification is not None:
-            modification_state = modification["ModificationState"]
-            if modification_state in SIZE_AVAILABLE_STATES:
-                return
-            if modification_state == "failed":
-                raise RuntimeError(f"AWS reported modify-volume failed for {volume_id}")
-        time.sleep(_MODIFY_POLL_INTERVAL_SECONDS)
-    raise TimeoutError(
-        f"modify-volume for {volume_id} was not reported as optimizing/completed within {_MODIFY_POLL_TIMEOUT_SECONDS}s"
-    )
+def is_modification_ready(ec2_client, volume_id: str, target_size_gb: int, requested_at: datetime) -> bool:
+    """One non-blocking check of whether volume_id's modify-volume request
+    has reached a state the OS can use. True once AWS reports
+    optimizing/completed; False if it's still modifying, or AWS has no
+    matching record of it yet (e.g. the request was just made and hasn't
+    shown up in the API yet). Raises RuntimeError if AWS reported the
+    modification failed.
+
+    Deliberately a single check, not a poll loop - a caller that needs to
+    keep checking does so on its own cadence (the scheduler's per-cycle
+    loop calls this once per MODIFY_REQUESTED row per cycle) rather than
+    blocking a worker thread here.
+    """
+    response = ec2_client.describe_volumes_modifications(VolumeIds=[volume_id])
+    modification = find_modification(response.get("VolumesModifications", []), target_size_gb, requested_at)
+    if modification is None:
+        return False
+    modification_state = modification["ModificationState"]
+    if modification_state in SIZE_AVAILABLE_STATES:
+        return True
+    if modification_state == "failed":
+        raise RuntimeError(f"AWS reported modify-volume failed for {volume_id}")
+    return False
+
+
+def record_extend_failure(
+    state: StateBackend, notifier: Notifier, config: Config, volume_id: str, instance_id: str, reason: object
+) -> None:
+    """Shared by attempt_extend()'s own failures and the scheduler's
+    SSM-not-ready path when a resize is already pending on that same
+    instance - both are "couldn't make progress on this extend" and
+    should count toward the same attempts/backoff/escalation, not two
+    separate, uncoordinated trackers."""
+    attempts = state.increment_extend_attempts(volume_id)
+    if attempts >= config.resize.extend_retry.max_attempts:
+        state.update_status(volume_id, ResizeStatus.EXTEND_FAILED_NEEDS_ATTENTION)
+        notifier.send(
+            "EBS auto-resize needs attention",
+            f"Volume {volume_id} on {instance_id}: filesystem extend failed after "
+            f"{attempts} attempts ({reason}). AWS-side resize succeeded; OS-side extend needs "
+            f"manual follow-up.",
+            severity=SEVERITY_CRITICAL,
+            dedup_key=f"needs-attention:{volume_id}",
+        )
+    else:
+        state.update_status(volume_id, ResizeStatus.EXTEND_FAILED)
 
 
 def _extend_filesystem(connector: Connector, target: ConnectionTarget, device_name: str) -> None:

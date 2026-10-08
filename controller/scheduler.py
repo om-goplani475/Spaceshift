@@ -30,6 +30,8 @@ from controller.resize import (
     ModifyVolumeError,
     attempt_extend,
     find_modification,
+    is_modification_ready,
+    record_extend_failure,
     should_retry_extend_now,
     start_resize,
 )
@@ -284,12 +286,39 @@ class Scheduler:
         # Each volume gets its own try/except so one bad volume can never
         # pause fleet-wide monitoring (fault isolation).
         try:
+            record = self._state.get(volume.volume_id)
+
             target = self._resolve_target(account_name, ssm, volume.instance_id)
             if target is None:
                 self._record_scan(account_name, volume, region, "ssm_not_ready")
-                return  # SSM not ready yet; already alerted/logged inside _resolve_target
+                # A resize may already be done (or in flight) on this same
+                # unreachable instance - if it never comes back, nothing
+                # else would ever escalate that, so it counts toward the
+                # same attempts/backoff/escalation a failed extend command
+                # does, not a second, uncoordinated tracker. The generic
+                # "not ready for SSM" alert above is non-critical and
+                # deduped per (account, instance) for the life of the
+                # process; this is what actually pages someone eventually.
+                pending = (
+                    ResizeStatus.MODIFY_REQUESTED,
+                    ResizeStatus.MODIFY_COMPLETED,
+                    ResizeStatus.EXTEND_FAILED,
+                )
+                if record is not None and record.status in pending:
+                    if should_retry_extend_now(record, self._config.resize.extend_retry.backoff_seconds):
+                        record_extend_failure(
+                            self._state,
+                            self._notifier,
+                            self._config,
+                            volume.volume_id,
+                            volume.instance_id,
+                            "instance not reachable via SSM",
+                        )
+                return
 
-            record = self._state.get(volume.volume_id)
+            if record is not None and record.status == ResizeStatus.MODIFY_REQUESTED:
+                self._advance_pending_modification(ec2, account_name, volume, region, connector, target, record)
+                return
 
             if record is not None and record.status in (ResizeStatus.MODIFY_COMPLETED, ResizeStatus.EXTEND_FAILED):
                 if should_retry_extend_now(record, self._config.resize.extend_retry.backoff_seconds):
@@ -344,6 +373,41 @@ class Scheduler:
                 self._record_scan(account_name, volume, region, "below_threshold", percent_used=usage.percent_used)
         except Exception:
             logger.exception("Error processing volume %s (instance %s)", volume.volume_id, volume.instance_id)
+
+    def _advance_pending_modification(
+        self,
+        ec2,
+        account_name: str,
+        volume: EligibleVolume,
+        region: str,
+        connector: Connector,
+        target: ConnectionTarget,
+        record,
+    ) -> None:
+        """One non-blocking check of a MODIFY_REQUESTED row - replaces the
+        old synchronous wait inside start_resize(), which used to block a
+        worker thread for up to 15 minutes right after calling
+        modify_volume, inside the same small pool that also runs every
+        other volume's disk check in this region. Not ready yet just means
+        try again next cycle, same as EXTEND_FAILED's own backoff/retry."""
+        try:
+            ready = is_modification_ready(ec2, volume.volume_id, record.to_size_gb, record.created_at)
+        except RuntimeError:
+            # AWS itself reported the modify-volume request failed - not
+            # an extend problem, the AWS-side resize never completed.
+            # MODIFY_FAILED is terminal, so a later cycle (still over
+            # threshold) retries the whole resize from scratch.
+            self._state.update_status(volume.volume_id, ResizeStatus.MODIFY_FAILED)
+            self._record_scan(account_name, volume, region, "resize_failed")
+            return
+        if not ready:
+            self._record_scan(account_name, volume, region, "modify_in_progress")
+            return
+        self._state.update_status(volume.volume_id, ResizeStatus.MODIFY_COMPLETED)
+        self._record_scan(account_name, volume, region, "extend_retry_attempted")
+        attempt_extend(
+            connector, self._state, self._notifier, self._config, target, volume.volume_id, volume.device_name
+        )
 
     def _record_scan(
         self, account_name: str, volume: EligibleVolume, region: str, decision: str, percent_used: float | None = None

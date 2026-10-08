@@ -16,6 +16,7 @@ from controller.resize import (
     attempt_extend,
     compute_target_size_gb,
     find_modification,
+    is_modification_ready,
     should_retry_extend_now,
     start_resize,
 )
@@ -55,7 +56,10 @@ def test_start_resize_live_flow(aws, state, notifier):
 
     assert started is True
     record = state.get(volume_id)
-    assert record.status == ResizeStatus.MODIFY_COMPLETED
+    # Stays MODIFY_REQUESTED - start_resize() no longer blocks waiting for
+    # AWS to report the new size usable; the scheduler checks that
+    # non-blockingly on a later cycle (see test_scheduler.py).
+    assert record.status == ResizeStatus.MODIFY_REQUESTED
     assert record.to_size_gb == 120
 
 
@@ -172,7 +176,7 @@ def test_start_resize_succeeds_after_an_earlier_modify_failed(aws, state, notifi
     started = start_resize(ec2, state, notifier, config, volume_id, "i-1", 100)
 
     assert started is True
-    assert state.get(volume_id).status == ResizeStatus.MODIFY_COMPLETED
+    assert state.get(volume_id).status == ResizeStatus.MODIFY_REQUESTED
 
 
 def test_start_resize_respects_six_hour_cooldown(state, notifier):
@@ -233,24 +237,65 @@ def test_start_resize_skips_on_an_out_of_band_aws_modification(state, notifier):
     ec2.modify_volume.assert_not_called()
 
 
-def test_start_resize_treats_optimizing_as_size_available(state, notifier):
-    # The new capacity is usable at "optimizing"; "completed" can lag by
-    # hours on large volumes. Waiting for it stalled the extend step (and a
-    # worker thread) for the whole 15-minute poll window, then timed out.
+def test_start_resize_does_not_block_waiting_for_the_new_size(state, notifier):
+    # start_resize() used to poll describe_volumes_modifications in a
+    # sleep loop for up to 15 minutes right after modify_volume, blocking
+    # whatever worker thread called it. It must return as soon as
+    # modify_volume succeeds - the scheduler checks readiness separately,
+    # non-blockingly, on a later cycle (see is_modification_ready and
+    # test_scheduler.py's MODIFY_REQUESTED handling).
     config = Config.from_dict({"dry_run": False})
     ec2 = MagicMock()
-    ec2.describe_volumes_modifications.side_effect = [
-        {"VolumesModifications": []},  # pre-flight out-of-band check
-        {
-            "VolumesModifications": [
-                {"ModificationState": "optimizing", "TargetSize": 120, "StartTime": dt.datetime.now(dt.UTC)}
-            ]
-        },
-    ]
+    ec2.describe_volumes_modifications.return_value = {"VolumesModifications": []}
 
     assert start_resize(ec2, state, notifier, config, "vol-1", "i-1", 100) is True
-    assert state.get("vol-1").status == ResizeStatus.MODIFY_COMPLETED
-    assert ec2.describe_volumes_modifications.call_count == 2  # pre-flight check + one poll, no further polling
+    assert state.get("vol-1").status == ResizeStatus.MODIFY_REQUESTED
+    ec2.modify_volume.assert_called_once_with(VolumeId="vol-1", Size=120)
+    # Exactly one call: the pre-flight out-of-band-modification check.
+    # No poll loop.
+    assert ec2.describe_volumes_modifications.call_count == 1
+
+
+# --- is_modification_ready --------------------------------------------------
+
+
+def test_is_modification_ready_true_once_optimizing():
+    now = dt.datetime.now(dt.UTC)
+    ec2 = MagicMock()
+    ec2.describe_volumes_modifications.return_value = {
+        "VolumesModifications": [{"ModificationState": "optimizing", "TargetSize": 120, "StartTime": now}]
+    }
+
+    assert is_modification_ready(ec2, "vol-1", 120, now) is True
+
+
+def test_is_modification_ready_false_while_still_modifying():
+    now = dt.datetime.now(dt.UTC)
+    ec2 = MagicMock()
+    ec2.describe_volumes_modifications.return_value = {
+        "VolumesModifications": [{"ModificationState": "modifying", "TargetSize": 120, "StartTime": now}]
+    }
+
+    assert is_modification_ready(ec2, "vol-1", 120, now) is False
+
+
+def test_is_modification_ready_false_when_aws_has_no_record_of_it_yet():
+    now = dt.datetime.now(dt.UTC)
+    ec2 = MagicMock()
+    ec2.describe_volumes_modifications.return_value = {"VolumesModifications": []}
+
+    assert is_modification_ready(ec2, "vol-1", 120, now) is False
+
+
+def test_is_modification_ready_raises_when_aws_reports_failed():
+    now = dt.datetime.now(dt.UTC)
+    ec2 = MagicMock()
+    ec2.describe_volumes_modifications.return_value = {
+        "VolumesModifications": [{"ModificationState": "failed", "TargetSize": 120, "StartTime": now}]
+    }
+
+    with pytest.raises(RuntimeError, match="failed"):
+        is_modification_ready(ec2, "vol-1", 120, now)
 
 
 # --- find_modification -----------------------------------------------------
@@ -438,6 +483,26 @@ def test_attempt_extend_wraps_a_failed_resolution_as_retryable(state, notifier):
     attempt_extend(connector, state, notifier, live_config, target, "vol-w", "/dev/xvdf")
 
     record = state.get("vol-w")
+    assert record.status == ResizeStatus.EXTEND_FAILED
+    assert record.extend_attempts == 1
+
+
+def test_attempt_extend_counts_an_ssm_timeout_as_a_failed_attempt(state, notifier):
+    """connections/ssm_connector.py raises a bare TimeoutError, not
+    ExtendFailedError - it used to slip past attempt_extend's except
+    clause uncaught, so increment_extend_attempts() was never called and
+    a stuck extend retried forever with no backoff and no escalation."""
+    target = ConnectionTarget(instance_id="i-1")
+    live_config = Config.from_dict({"dry_run": False})
+    state.create_if_absent("vol-t", "i-1", 100, 120)
+
+    class TimingOutConnector(FakeConnector):
+        def run_command(self, target, command, timeout_seconds=120):
+            raise TimeoutError("SSM command did not complete in time")
+
+    attempt_extend(TimingOutConnector([]), state, notifier, live_config, target, "vol-t", "/dev/xvdf")
+
+    record = state.get("vol-t")
     assert record.status == ResizeStatus.EXTEND_FAILED
     assert record.extend_attempts == 1
 
