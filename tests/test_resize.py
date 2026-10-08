@@ -122,6 +122,10 @@ def test_start_resize_modification_limit_guard(aws, state, notifier):
 def _rejecting_ec2(code: str = "VolumeModificationRateExceeded"):
     ec2 = MagicMock()
     ec2.modify_volume.side_effect = ClientError({"Error": {"Code": code, "Message": "nope"}}, "ModifyVolume")
+    # No out-of-band modification per AWS - otherwise the new pre-flight
+    # cooldown check (see test_start_resize_skips_on_an_out_of_band_aws_modification)
+    # would block before ever reaching modify_volume.
+    ec2.describe_volumes_modifications.return_value = {"VolumesModifications": []}
     return ec2
 
 
@@ -189,15 +193,44 @@ def test_start_resize_respects_six_hour_cooldown(state, notifier):
 def test_start_resize_allows_modification_after_cooldown(state, notifier):
     config = Config.from_dict({"dry_run": False})
     ec2 = MagicMock()
-    ec2.describe_volumes_modifications.return_value = {
-        "VolumesModifications": [
-            {"ModificationState": "optimizing", "TargetSize": 120, "StartTime": dt.datetime.now(dt.UTC)}
-        ]
-    }
+    # First call is the new pre-flight out-of-band check (nothing per
+    # AWS); second is _wait_for_new_size_available's poll after our own
+    # modify_volume call.
+    ec2.describe_volumes_modifications.side_effect = [
+        {"VolumesModifications": []},
+        {
+            "VolumesModifications": [
+                {"ModificationState": "optimizing", "TargetSize": 120, "StartTime": dt.datetime.now(dt.UTC)}
+            ]
+        },
+    ]
     state.record_modification("vol-1", dt.datetime.now(dt.UTC) - dt.timedelta(hours=7))
 
     assert start_resize(ec2, state, notifier, config, "vol-1", "i-1", 100) is True
     ec2.modify_volume.assert_called_once_with(VolumeId="vol-1", Size=120)
+
+
+def test_start_resize_skips_on_an_out_of_band_aws_modification(state, notifier):
+    """A Console/Terraform resize Spaceshift never recorded locally still
+    has to block a new modify_volume call - AWS's cooldown is server-side
+    and doesn't care who asked for the earlier modification."""
+    config = Config.from_dict({"dry_run": False})
+    ec2 = MagicMock()
+    ec2.describe_volumes_modifications.return_value = {
+        "VolumesModifications": [
+            {
+                "ModificationState": "completed",
+                "TargetSize": 150,
+                "StartTime": dt.datetime.now(dt.UTC) - dt.timedelta(hours=1),
+            }
+        ]
+    }
+
+    result = start_resize(ec2, state, notifier, config, "vol-1", "i-1", 100)
+
+    assert result is False
+    assert state.get("vol-1") is None
+    ec2.modify_volume.assert_not_called()
 
 
 def test_start_resize_treats_optimizing_as_size_available(state, notifier):
@@ -206,15 +239,18 @@ def test_start_resize_treats_optimizing_as_size_available(state, notifier):
     # worker thread) for the whole 15-minute poll window, then timed out.
     config = Config.from_dict({"dry_run": False})
     ec2 = MagicMock()
-    ec2.describe_volumes_modifications.return_value = {
-        "VolumesModifications": [
-            {"ModificationState": "optimizing", "TargetSize": 120, "StartTime": dt.datetime.now(dt.UTC)}
-        ]
-    }
+    ec2.describe_volumes_modifications.side_effect = [
+        {"VolumesModifications": []},  # pre-flight out-of-band check
+        {
+            "VolumesModifications": [
+                {"ModificationState": "optimizing", "TargetSize": 120, "StartTime": dt.datetime.now(dt.UTC)}
+            ]
+        },
+    ]
 
     assert start_resize(ec2, state, notifier, config, "vol-1", "i-1", 100) is True
     assert state.get("vol-1").status == ResizeStatus.MODIFY_COMPLETED
-    assert ec2.describe_volumes_modifications.call_count == 1  # no polling needed
+    assert ec2.describe_volumes_modifications.call_count == 2  # pre-flight check + one poll, no further polling
 
 
 # --- find_modification -----------------------------------------------------

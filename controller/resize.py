@@ -123,6 +123,19 @@ def start_resize(
             _MODIFICATION_COOLDOWN,
         )
         return False
+    # state.modification_count_since only knows about resizes Spaceshift
+    # itself made - a volume resized via the AWS Console or Terraform in
+    # the same window is invisible to it, and AWS's real cooldown applies
+    # regardless of who requested the earlier modification. Asking AWS
+    # directly closes that gap.
+    last_modified_at = _last_modification_start(ec2_client, volume_id)
+    if last_modified_at is not None and now - last_modified_at < _MODIFICATION_COOLDOWN:
+        logger.warning(
+            "%s was modified less than %s ago per AWS (possibly outside Spaceshift); skipping",
+            volume_id,
+            _MODIFICATION_COOLDOWN,
+        )
+        return False
 
     previous = state.get(volume_id)
     record = state.create_if_absent(volume_id, instance_id, current_size_gb, target_size_gb, account_name, region)
@@ -213,6 +226,15 @@ def should_retry_extend_now(record: ResizeRecord, backoff_seconds: int) -> bool:
         return True  # e.g. MODIFY_COMPLETED rows are always ready for their first extend attempt
     next_attempt_at = record.updated_at + timedelta(seconds=backoff_seconds)
     return datetime.now(UTC) >= next_attempt_at
+
+
+def _last_modification_start(ec2_client, volume_id: str) -> datetime | None:
+    """The most recent modification's start time per AWS, regardless of
+    who requested it or whether it succeeded - None if AWS has no record
+    of one at all."""
+    response = ec2_client.describe_volumes_modifications(VolumeIds=[volume_id])
+    starts = [m["StartTime"] for m in response.get("VolumesModifications", []) if m.get("StartTime") is not None]
+    return max(starts) if starts else None
 
 
 def find_modification(modifications: list[dict], target_size_gb: int, requested_at: datetime) -> dict | None:
