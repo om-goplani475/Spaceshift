@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- A volume that had never been modified failed every cycle with `InvalidVolumeModification.NotFound` from the out-of-band modification check, so it could never be resized. AWS's "no modification on record" answer is now treated as "not modified recently".
+
 ### Known issues
 - Volume-to-device resolution relies on the attach-time device name. `/dev/sd*` names, unpartitioned volumes, and root volumes with an EFI partition are not handled correctly (see README "Known limitation"). Tracked for a future release; needs validation on real Nitro/Xen, AL2023/Ubuntu instances.
 

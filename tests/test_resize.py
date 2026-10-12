@@ -277,6 +277,33 @@ def test_start_resize_does_not_block_waiting_for_the_new_size(state, notifier):
     assert ec2.describe_volumes_modifications.call_count == 1
 
 
+def test_start_resize_proceeds_when_aws_has_no_modification_record(state, notifier):
+    # AWS answers describe_volumes_modifications for a never-modified
+    # volume with InvalidVolumeModification.NotFound, not an empty list.
+    config = Config.from_dict({"dry_run": False})
+    ec2 = MagicMock()
+    ec2.describe_volumes_modifications.side_effect = ClientError(
+        {"Error": {"Code": "InvalidVolumeModification.NotFound", "Message": "does not exist"}},
+        "DescribeVolumesModifications",
+    )
+
+    assert start_resize(ec2, state, notifier, config, "vol-1", "i-1", 100) is True
+    ec2.modify_volume.assert_called_once_with(VolumeId="vol-1", Size=120)
+
+
+def test_start_resize_still_raises_on_other_describe_errors(state, notifier):
+    config = Config.from_dict({"dry_run": False})
+    ec2 = MagicMock()
+    ec2.describe_volumes_modifications.side_effect = ClientError(
+        {"Error": {"Code": "UnauthorizedOperation", "Message": "denied"}},
+        "DescribeVolumesModifications",
+    )
+
+    with pytest.raises(ClientError):
+        start_resize(ec2, state, notifier, config, "vol-1", "i-1", 100)
+    ec2.modify_volume.assert_not_called()
+
+
 # --- is_modification_ready --------------------------------------------------
 
 

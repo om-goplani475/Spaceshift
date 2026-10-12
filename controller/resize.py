@@ -15,6 +15,8 @@ import math
 import shlex
 from datetime import UTC, datetime, timedelta
 
+from botocore.exceptions import ClientError
+
 from controller.config import Config
 from controller.connections.base import ConnectionTarget, Connector
 from controller.disk_check import DEVICE_PATTERN, DiskCheckError, resolve_block_target
@@ -244,7 +246,14 @@ def _last_modification_start(ec2_client, volume_id: str) -> datetime | None:
     """The most recent modification's start time per AWS, regardless of
     who requested it or whether it succeeded - None if AWS has no record
     of one at all."""
-    response = ec2_client.describe_volumes_modifications(VolumeIds=[volume_id])
+    try:
+        response = ec2_client.describe_volumes_modifications(VolumeIds=[volume_id])
+    except ClientError as exc:
+        # A volume that has never been modified has no record at all, and
+        # AWS reports that as an error rather than an empty list.
+        if exc.response.get("Error", {}).get("Code") == "InvalidVolumeModification.NotFound":
+            return None
+        raise
     starts = [m["StartTime"] for m in response.get("VolumesModifications", []) if m.get("StartTime") is not None]
     return max(starts) if starts else None
 
