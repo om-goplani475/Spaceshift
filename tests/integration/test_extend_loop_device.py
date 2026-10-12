@@ -20,6 +20,7 @@ import re
 import shutil
 import stat
 import subprocess
+import time
 from collections.abc import Iterator
 from pathlib import Path
 
@@ -59,13 +60,31 @@ def _run(*args: str) -> str:
     return subprocess.run(args, check=True, capture_output=True, text=True).stdout
 
 
+def _wait_for(condition, what: str, timeout: float = 10.0) -> None:
+    deadline = time.monotonic() + timeout
+    while not condition():
+        if time.monotonic() > deadline:
+            raise TimeoutError(f"timed out waiting for {what}")
+        time.sleep(0.05)
+
+
 def _ensure_device_node(path: str) -> None:
-    """Containers have no udev, so a loop device's partition node is never
-    created in /dev; make it from sysfs. A no-op on a normal host."""
-    if os.path.exists(path):
-        return
-    major, minor = Path(f"/sys/class/block/{os.path.basename(path)}/dev").read_text().strip().split(":")
-    os.mknod(path, 0o660 | stat.S_IFBLK, os.makedev(int(major), int(minor)))
+    """Wait for a loop device's partition to appear, then make sure it has a
+    /dev node. losetup --partscan returns before the kernel has finished
+    scanning (the sysfs entry can lag by a moment), and a container has no
+    udev to create the node at all - so wait for sysfs, give udev a short
+    window to make the node, and mknod it from sysfs if it never does."""
+    sysfs = Path(f"/sys/class/block/{os.path.basename(path)}/dev")
+    _wait_for(sysfs.exists, f"{sysfs}")
+    for _ in range(40):
+        if os.path.exists(path):
+            return
+        time.sleep(0.05)
+    major, minor = sysfs.read_text().strip().split(":")
+    try:
+        os.mknod(path, 0o660 | stat.S_IFBLK, os.makedev(int(major), int(minor)))
+    except FileExistsError:  # udev got there between the check and here
+        pass
 
 
 @pytest.fixture(params=sorted(_FS_TOOLS))
