@@ -7,8 +7,9 @@ command strings against a real kernel block device, grown the way an EBS
 resize grows one: the backing size changes, then the partition and
 filesystem are extended.
 
-Needs root, loop devices, and the util-linux/cloud-utils/e2fsprogs tools,
-so they skip themselves anywhere else (a normal `pytest` run included).
+Needs root, loop devices, and the util-linux/cloud-utils tools (plus
+e2fsprogs / xfsprogs for the filesystem under test), so they skip
+themselves anywhere else (a normal `pytest` run included).
 CI runs them with sudo - see .github/workflows/ci.yml.
 """
 
@@ -31,14 +32,18 @@ from controller.disk_check import resolve_block_target
 from controller.resize import attempt_extend
 from controller.state.base import ResizeStatus
 
-_TOOLS = ["losetup", "lsblk", "sfdisk", "growpart", "blkid", "mkfs.ext4", "resize2fs", "mount", "umount"]
+_TOOLS = ["losetup", "lsblk", "sfdisk", "growpart", "blkid", "mount", "umount"]
+# Per filesystem: the mkfs and the grow tool the controller runs for it.
+_FS_TOOLS = {"ext4": ("mkfs.ext4", "resize2fs"), "xfs": ("mkfs.xfs", "xfs_growfs")}
 _MIB = 1024 * 1024
-_START_SIZE = 64 * _MIB
-_GROWN_SIZE = 160 * _MIB
+# xfs refuses to be made smaller than 300 MiB; the files are sparse, so the
+# size costs nothing.
+_START_SIZE = 320 * _MIB
+_GROWN_SIZE = 640 * _MIB
 
 pytestmark = pytest.mark.skipif(
     os.geteuid() != 0 or any(shutil.which(tool) is None for tool in _TOOLS),
-    reason="needs root and losetup/lsblk/sfdisk/growpart/mkfs.ext4/resize2fs",
+    reason="needs root and losetup/lsblk/sfdisk/growpart",
 )
 
 
@@ -63,10 +68,14 @@ def _ensure_device_node(path: str) -> None:
     os.mknod(path, 0o660 | stat.S_IFBLK, os.makedev(int(major), int(minor)))
 
 
-@pytest.fixture
-def loop_volume(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[tuple[str, Path, Path]]:
+@pytest.fixture(params=sorted(_FS_TOOLS))
+def loop_volume(request, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[tuple[str, Path, Path]]:
     """A partitioned, mounted loop device standing in for an attached EBS volume.
     Yields (device, mount_point, backing_file)."""
+    fs_type = request.param
+    missing = [tool for tool in _FS_TOOLS[fs_type] if shutil.which(tool) is None]
+    if missing:
+        pytest.skip(f"{fs_type} tools not installed: {', '.join(missing)}")
     backing = tmp_path / "disk.img"
     mount_point = tmp_path / "mnt"
     mount_point.mkdir()
@@ -80,7 +89,7 @@ def loop_volume(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[tup
     mounted = False
     try:
         _ensure_device_node(f"{device}p1")
-        _run("mkfs.ext4", "-q", f"{device}p1")
+        _run(f"mkfs.{fs_type}", "-q", f"{device}p1")
         _run("mount", f"{device}p1", str(mount_point))
         mounted = True
         # DEVICE_PATTERN only admits what AWS reports (sd*/xvd*/nvme*).
@@ -131,7 +140,7 @@ def test_attempt_extend_grows_a_real_partition_and_filesystem(loop_volume, state
 
     assert state.get("vol-0123abc").status == ResizeStatus.EXTEND_COMPLETED
     after = _filesystem_bytes(mount_point)
-    assert after > before + 50 * _MIB
+    assert after > before + 200 * _MIB
 
 
 def test_a_second_extend_with_nothing_left_to_grow_still_succeeds(loop_volume, state, notifier):

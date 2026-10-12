@@ -80,7 +80,7 @@ jobs:
           cache: pip
           cache-dependency-path: requirements-dev.txt
       - run: pip install -r requirements-dev.txt
-      - run: sudo apt-get update && sudo apt-get install -y cloud-guest-utils e2fsprogs util-linux
+      - run: sudo apt-get update && sudo apt-get install -y cloud-guest-utils e2fsprogs xfsprogs util-linux
       # sudo resets PATH, which would hide the pip-installed pytest.
       - run: sudo env "PATH=$PATH" python -m pytest tests/integration -v
 
