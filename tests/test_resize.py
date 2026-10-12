@@ -520,6 +520,45 @@ def test_attempt_extend_respects_dry_run_even_with_existing_row(state, notifier)
     assert state.get("vol-1").status == ResizeStatus.MODIFY_COMPLETED  # untouched
 
 
+def test_attempt_extend_accepts_growpart_nochange_on_stderr(state, notifier):
+    target = ConnectionTarget(instance_id="i-1")
+    live_config = Config.from_dict({"dry_run": False})
+    state.create_if_absent("vol-n", "i-1", 100, 120)
+    connector = FakeConnector(
+        [
+            CommandResult(0, _lsblk_row("/dev/xvdf1", "part", "/data", pkname="/dev/xvdf") + "\n", ""),
+            CommandResult(1, "", "NOCHANGE: partition 1 is size 1. it cannot be grown"),  # growpart
+            CommandResult(0, "ext4\n", ""),  # blkid
+            CommandResult(0, "", ""),  # resize2fs
+        ]
+    )
+    attempt_extend(connector, state, notifier, live_config, target, "vol-n", "/dev/xvdf")
+
+    assert state.get("vol-n").status == ResizeStatus.EXTEND_COMPLETED
+
+
+def test_start_resize_and_is_modification_ready_treat_notfound_as_no_record():
+    not_found = ClientError(
+        {"Error": {"Code": "InvalidVolumeModification.NotFound", "Message": "x"}}, "DescribeVolumesModifications"
+    )
+    ec2 = MagicMock()
+    ec2.describe_volumes_modifications.side_effect = not_found
+
+    assert is_modification_ready(ec2, "vol-1", 120, dt.datetime.now(dt.UTC)) is False
+
+
+def test_attempt_extend_logs_the_failure(state, notifier, caplog):
+    target = ConnectionTarget(instance_id="i-1")
+    live_config = Config.from_dict({"dry_run": False})
+    state.create_if_absent("vol-l", "i-1", 100, 120)
+
+    connector = FakeConnector([CommandResult(1, "", "lsblk: no such device")])
+    attempt_extend(connector, state, notifier, live_config, target, "vol-l", "/dev/xvdf")
+
+    assert "Filesystem extend failed for vol-l" in caplog.text
+    assert "lsblk: no such device" in caplog.text
+
+
 def test_attempt_extend_wraps_a_failed_resolution_as_retryable(state, notifier):
     """A transient lsblk failure while resolving the mount target (e.g. a
     flaky SSM round trip) is retried, not an immediate terminal failure."""

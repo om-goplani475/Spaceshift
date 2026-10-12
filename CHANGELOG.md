@@ -8,6 +8,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- On Nitro instances the volume is now located through `/dev/disk/by-id/nvme-Amazon_Elastic_Block_Store_<volume id>` first, falling back to the attach-time device name. Ubuntu/Debian don't create the `/dev/sda1`-style symlink, so every disk check for those instances failed.
+- `InvalidVolumeModification.NotFound` is now treated as "no modification on record" in stale-row recovery and the readiness check too, not just the pre-resize cooldown check. A stale row from a crash before `modify-volume` is now released instead of erroring every cycle.
+- `growpart`'s NOCHANGE is accepted on either stdout or stderr. Reaching `EXTEND_FAILED_NEEDS_ATTENTION` is now logged as well as notified.
+- The OS-side extend always failed on real instances: `lsblk` was run without `-p`, so it returned bare names (`xvda1`) that `growpart`, `blkid` and `resize2fs` couldn't resolve. It now returns full `/dev/...` paths.
+- A failed filesystem extend is now logged with its traceback; before, it was only recorded in state, so the controller logs showed nothing.
 - A volume that had never been modified failed every cycle with `InvalidVolumeModification.NotFound` from the out-of-band modification check, so it could never be resized. AWS's "no modification on record" answer is now treated as "not modified recently".
 
 ### Known issues

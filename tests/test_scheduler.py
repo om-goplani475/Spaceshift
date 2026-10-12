@@ -593,6 +593,22 @@ def test_recover_stale_row_with_no_aws_modification_releases_the_row(aws, schedu
     assert state.create_if_absent(volume_id, "i-1", 100, 120) is not None  # a new attempt is allowed
 
 
+def test_recover_stale_row_handles_real_awss_notfound_for_a_never_modified_volume(scheduler, state):
+    # moto returns an empty list here; real AWS raises
+    # InvalidVolumeModification.NotFound, which used to leave the row stuck.
+    from botocore.exceptions import ClientError
+
+    ec2 = MagicMock()
+    ec2.describe_volumes_modifications.side_effect = ClientError(
+        {"Error": {"Code": "InvalidVolumeModification.NotFound", "Message": "x"}}, "DescribeVolumesModifications"
+    )
+    state.create_if_absent("vol-nf", "i-1", 100, 120)
+
+    scheduler._recover_stale_row(ec2, state.get("vol-nf"))
+
+    assert state.get("vol-nf").status == ResizeStatus.MODIFY_FAILED
+
+
 def test_recover_stale_rows_only_probes_its_own_account_and_region(scheduler, state):
     # A stale row belonging to a different account/region must never be
     # probed with this region's ec2 client - that client is authenticated

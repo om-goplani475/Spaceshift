@@ -23,6 +23,8 @@ DEVICE_PATTERN = re.compile(r"^/dev/(sd|xvd|nvme)[a-z0-9]+\Z")
 
 _ROOT_MOUNT_POINT = "/"
 
+_VOLUME_ID_PATTERN = re.compile(r"^vol-[0-9a-f]+\Z")
+
 
 class InvalidDeviceNameError(ValueError):
     pass
@@ -58,7 +60,9 @@ class BlockTarget:
     growpart_partition: int | None
 
 
-def check_disk_usage(connector: Connector, target: ConnectionTarget, device_name: str) -> DiskUsage:
+def check_disk_usage(
+    connector: Connector, target: ConnectionTarget, device_name: str, volume_id: str | None = None
+) -> DiskUsage:
     """Return current disk usage for `device_name` on `target`.
 
     `device_name` comes from AWS's own Attachments response (discovery.py),
@@ -69,13 +73,15 @@ def check_disk_usage(connector: Connector, target: ConnectionTarget, device_name
     if not DEVICE_PATTERN.match(device_name):
         raise InvalidDeviceNameError(f"Refusing to use unexpected device path: {device_name!r}")
 
-    block_target = resolve_block_target(connector, target, device_name)
+    block_target = resolve_block_target(connector, target, device_name, volume_id)
     percent_used = _read_percent_used(connector, target, block_target.mount_point)
 
     return DiskUsage(device_name=device_name, mount_point=block_target.mount_point, percent_used=percent_used)
 
 
-def resolve_block_target(connector: Connector, target: ConnectionTarget, device_name: str) -> BlockTarget:
+def resolve_block_target(
+    connector: Connector, target: ConnectionTarget, device_name: str, volume_id: str | None = None
+) -> BlockTarget:
     """Resolve `device_name` (the AWS attachment's disk-level device, e.g.
     /dev/xvda) to what's actually mounted on the instance.
 
@@ -88,8 +94,15 @@ def resolve_block_target(connector: Connector, target: ConnectionTarget, device_
     so / is preferred deterministically rather than guessed at (e.g. by
     "largest partition", which has no principled answer for a genuinely
     ambiguous disk). Anything else raises rather than picking silently.
+
+    When volume_id is given, the volume's NVMe by-id link is preferred
+    over `device_name`: on Nitro instances the attach-time name
+    (/dev/sda1, /dev/xvdf) only exists as a udev symlink on some distros
+    (Amazon Linux yes, Ubuntu/Debian often not), while the by-id link is
+    derived from the volume ID itself. `device_name` remains the fallback
+    for Xen instances, which have no NVMe by-id link.
     """
-    rows = _lsblk_rows(connector, target, device_name)
+    rows = _lsblk_rows(connector, target, device_name, volume_id)
     mounted = [r for r in rows if r.get("MOUNTPOINT")]
 
     if not mounted:
@@ -112,7 +125,7 @@ def resolve_block_target(connector: Connector, target: ConnectionTarget, device_
         # device, so there's nothing for growpart to resize.
         return BlockTarget(
             mount_point=row["MOUNTPOINT"],
-            filesystem_device=device_name,
+            filesystem_device=row["NAME"],
             growpart_disk=None,
             growpart_partition=None,
         )
@@ -140,10 +153,21 @@ def _read_percent_used(connector: Connector, target: ConnectionTarget, mount_poi
         raise DiskCheckError(f"Could not parse df output on {target.instance_id}: {result.stdout!r}") from exc
 
 
-def _lsblk_rows(connector: Connector, target: ConnectionTarget, device_name: str) -> list[dict[str, str]]:
+def _lsblk_rows(
+    connector: Connector, target: ConnectionTarget, device_name: str, volume_id: str | None = None
+) -> list[dict[str, str]]:
     # -P (key="value" pairs) is parsed per-field, unlike the plain -o
-    # columns form - robust to a MOUNTPOINT containing a space.
-    command = f"lsblk -P -b -o NAME,TYPE,MOUNTPOINT,PKNAME {shlex.quote(device_name)}"
+    # columns form - robust to a MOUNTPOINT containing a space. -p makes
+    # NAME/PKNAME full /dev paths: without it lsblk prints bare names
+    # ("xvda1"), which growpart/resize2fs/blkid then can't resolve.
+    lsblk = "lsblk -P -p -b -o NAME,TYPE,MOUNTPOINT,PKNAME"
+    if volume_id is not None and _VOLUME_ID_PATTERN.match(volume_id):
+        # The by-id serial is the volume ID without its dash. readlink -e
+        # fails if the link is missing, so `||` falls back to device_name.
+        by_id = f"/dev/disk/by-id/nvme-Amazon_Elastic_Block_Store_{volume_id.replace('-', '')}"
+        command = f'dev=$(readlink -e {shlex.quote(by_id)} || echo {shlex.quote(device_name)}); {lsblk} "$dev"'
+    else:
+        command = f"{lsblk} {shlex.quote(device_name)}"
     result = connector.run_command(target, command, timeout_seconds=30)
     if not result.succeeded:
         raise DiskCheckError(f"lsblk failed on {target.instance_id} for {device_name}: {result.stderr}")

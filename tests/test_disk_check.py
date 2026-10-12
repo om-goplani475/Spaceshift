@@ -45,7 +45,7 @@ def test_commands_sent_are_the_expected_fixed_templates():
     target = ConnectionTarget(instance_id="i-1")
     check_disk_usage(connector, target, "/dev/xvdf")
 
-    assert connector.calls[0] == "lsblk -P -b -o NAME,TYPE,MOUNTPOINT,PKNAME /dev/xvdf"
+    assert connector.calls[0] == "lsblk -P -p -b -o NAME,TYPE,MOUNTPOINT,PKNAME /dev/xvdf"
     assert connector.calls[1] == "df --output=pcent /data | tail -n 1"
 
 
@@ -220,3 +220,34 @@ def test_lsblk_failure_raises_disk_check_error():
 
     with pytest.raises(DiskCheckError, match="lsblk failed"):
         resolve_block_target(connector, target, "/dev/xvdf")
+
+
+def test_volume_id_makes_lsblk_prefer_the_nvme_by_id_link_and_fall_back_to_device_name():
+    connector = FakeConnector(
+        [
+            CommandResult(0, _lsblk_row("/dev/nvme1n1", "disk", "/data") + "\n", ""),
+            CommandResult(0, "10%\n", ""),
+        ]
+    )
+    check_disk_usage(connector, ConnectionTarget(instance_id="i-1"), "/dev/sdf", "vol-0abc123")
+
+    assert connector.calls[0] == (
+        "dev=$(readlink -e /dev/disk/by-id/nvme-Amazon_Elastic_Block_Store_vol0abc123 || echo /dev/sdf); "
+        'lsblk -P -p -b -o NAME,TYPE,MOUNTPOINT,PKNAME "$dev"'
+    )
+
+
+def test_a_malformed_volume_id_is_ignored_not_interpolated():
+    connector = FakeConnector(
+        [CommandResult(0, _lsblk_row("/dev/xvdf", "disk", "/data") + "\n", ""), CommandResult(0, "1%\n", "")]
+    )
+    check_disk_usage(connector, ConnectionTarget(instance_id="i-1"), "/dev/xvdf", "vol-1; rm -rf /")
+
+    assert connector.calls[0] == "lsblk -P -p -b -o NAME,TYPE,MOUNTPOINT,PKNAME /dev/xvdf"
+
+
+def test_whole_disk_filesystem_uses_the_resolved_device_not_the_attach_name():
+    connector = FakeConnector([CommandResult(0, _lsblk_row("/dev/nvme1n1", "disk", "/data") + "\n", "")])
+    block = resolve_block_target(connector, ConnectionTarget(instance_id="i-1"), "/dev/sdf", "vol-0abc123")
+
+    assert block.filesystem_device == "/dev/nvme1n1"

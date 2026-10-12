@@ -215,7 +215,7 @@ def attempt_extend(
         return
 
     try:
-        _extend_filesystem(connector, target, device_name)
+        _extend_filesystem(connector, target, device_name, volume_id)
     except Exception as exc:
         # Deliberately broad: a flaky SSM round trip raises a bare
         # TimeoutError (connections/ssm_connector.py), and throttling
@@ -224,6 +224,9 @@ def attempt_extend(
         # uncaught into the scheduler's last-resort handler, which never
         # calls increment_extend_attempts() - a stuck extend retried
         # forever with no backoff and never escalated.
+        logger.exception(
+            "Filesystem extend failed for %s on %s (device %s)", volume_id, target.instance_id, device_name
+        )
         record_extend_failure(state, notifier, config, volume_id, target.instance_id, exc)
         return
 
@@ -242,19 +245,29 @@ def should_retry_extend_now(record: ResizeRecord, backoff_seconds: int) -> bool:
     return datetime.now(UTC) >= next_attempt_at
 
 
+def describe_modifications(ec2_client, volume_id: str) -> list[dict]:
+    """describe_volumes_modifications for one volume, as a list.
+
+    A volume with no modification on record (never modified, or one AWS
+    hasn't surfaced yet right after modify-volume) is reported as an
+    InvalidVolumeModification.NotFound error rather than an empty list;
+    that is normalised to [] here so every caller sees the same thing.
+    """
+    try:
+        response = ec2_client.describe_volumes_modifications(VolumeIds=[volume_id])
+    except ClientError as exc:
+        if exc.response.get("Error", {}).get("Code") == "InvalidVolumeModification.NotFound":
+            return []
+        raise
+    return response.get("VolumesModifications", [])
+
+
 def _last_modification_start(ec2_client, volume_id: str) -> datetime | None:
     """The most recent modification's start time per AWS, regardless of
     who requested it or whether it succeeded - None if AWS has no record
     of one at all."""
-    try:
-        response = ec2_client.describe_volumes_modifications(VolumeIds=[volume_id])
-    except ClientError as exc:
-        # A volume that has never been modified has no record at all, and
-        # AWS reports that as an error rather than an empty list.
-        if exc.response.get("Error", {}).get("Code") == "InvalidVolumeModification.NotFound":
-            return None
-        raise
-    starts = [m["StartTime"] for m in response.get("VolumesModifications", []) if m.get("StartTime") is not None]
+    modifications = describe_modifications(ec2_client, volume_id)
+    starts = [m["StartTime"] for m in modifications if m.get("StartTime") is not None]
     return max(starts) if starts else None
 
 
@@ -292,8 +305,7 @@ def is_modification_ready(ec2_client, volume_id: str, target_size_gb: int, reque
     loop calls this once per MODIFY_REQUESTED row per cycle) rather than
     blocking a worker thread here.
     """
-    response = ec2_client.describe_volumes_modifications(VolumeIds=[volume_id])
-    modification = find_modification(response.get("VolumesModifications", []), target_size_gb, requested_at)
+    modification = find_modification(describe_modifications(ec2_client, volume_id), target_size_gb, requested_at)
     if modification is None:
         return False
     modification_state = modification["ModificationState"]
@@ -315,6 +327,13 @@ def record_extend_failure(
     attempts = state.increment_extend_attempts(volume_id)
     if attempts >= config.resize.extend_retry.max_attempts:
         state.update_status(volume_id, ResizeStatus.EXTEND_FAILED_NEEDS_ATTENTION)
+        logger.error(
+            "%s on %s: filesystem extend failed after %d attempts (%s) - needs manual follow-up",
+            volume_id,
+            instance_id,
+            attempts,
+            reason,
+        )
         notifier.send(
             "EBS auto-resize needs attention",
             f"Volume {volume_id} on {instance_id}: filesystem extend failed after "
@@ -327,7 +346,9 @@ def record_extend_failure(
         state.update_status(volume_id, ResizeStatus.EXTEND_FAILED)
 
 
-def _extend_filesystem(connector: Connector, target: ConnectionTarget, device_name: str) -> None:
+def _extend_filesystem(
+    connector: Connector, target: ConnectionTarget, device_name: str, volume_id: str | None = None
+) -> None:
     if not DEVICE_PATTERN.match(device_name):
         raise InvalidDeviceNameError(f"Refusing to use unexpected device path: {device_name!r}")
 
@@ -336,7 +357,7 @@ def _extend_filesystem(connector: Connector, target: ConnectionTarget, device_na
     # filesystem, so growpart's target has to come from what's actually
     # mounted on the instance, not from parsing the AWS string.
     try:
-        block_target = resolve_block_target(connector, target, device_name)
+        block_target = resolve_block_target(connector, target, device_name, volume_id)
     except DiskCheckError as exc:
         raise ExtendFailedError(str(exc)) from exc
 
@@ -346,7 +367,11 @@ def _extend_filesystem(connector: Connector, target: ConnectionTarget, device_na
             f"growpart {shlex.quote(block_target.growpart_disk)} {block_target.growpart_partition}",
             timeout_seconds=60,
         )
-        if not growpart_result.succeeded and "NOCHANGE" not in growpart_result.stdout:
+        # NOCHANGE ("already at max size", e.g. a retry after a partial
+        # success) is not a failure; which stream it lands on varies by
+        # cloud-utils version.
+        growpart_output = growpart_result.stdout + growpart_result.stderr
+        if not growpart_result.succeeded and "NOCHANGE" not in growpart_output:
             raise ExtendFailedError(
                 f"growpart failed on {target.instance_id} for {device_name}: {growpart_result.stderr}"
             )

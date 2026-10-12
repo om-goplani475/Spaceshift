@@ -29,6 +29,7 @@ from controller.resize import (
     SIZE_AVAILABLE_STATES,
     ModifyVolumeError,
     attempt_extend,
+    describe_modifications,
     find_modification,
     is_modification_ready,
     record_extend_failure,
@@ -393,7 +394,7 @@ class Scheduler:
                 self._record_scan(account_name, volume, region, "needs_attention")
                 return  # already alerted; needs a human, not another tick
 
-            usage = check_disk_usage(connector, target, volume.device_name)
+            usage = check_disk_usage(connector, target, volume.device_name, volume.volume_id)
             if usage.percent_used >= volume.threshold_percent:
                 try:
                     started = start_resize(
@@ -525,8 +526,9 @@ class Scheduler:
         # The controller may have crashed mid-resize; ask AWS what actually
         # happened instead of blindly retrying or leaving the row stuck
         # forever (stale in-progress row recovery).
-        response = ec2.describe_volumes_modifications(VolumeIds=[record.volume_id])
-        modification = find_modification(response.get("VolumesModifications", []), record.to_size_gb, record.created_at)
+        modification = find_modification(
+            describe_modifications(ec2, record.volume_id), record.to_size_gb, record.created_at
+        )
         if modification is None:
             # AWS has no modification matching this row, so modify-volume
             # never went through (the process died before the call, or the
