@@ -12,7 +12,7 @@
       "Resource": "*"
     },
     {
-      "Sid": "ModifyAnyVolumeEligibilityEnforcedByAppOnly",
+      "Sid": "Modifnpm install --package-lock-onlyyAnyVolumeEligibilityEnforcedByAppOnly",
       "Effect": "Allow",
       "Action": "ec2:ModifyVolume",
       "Resource": "arn:aws:ec2:*:*:volume/*"
