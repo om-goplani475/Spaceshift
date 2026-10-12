@@ -609,6 +609,92 @@ def test_recover_stale_row_handles_real_awss_notfound_for_a_never_modified_volum
     assert state.get("vol-nf").status == ResizeStatus.MODIFY_FAILED
 
 
+def _aws_error(code: str, operation: str = "DescribeVolumesModifications"):
+    from botocore.exceptions import ClientError
+
+    return ClientError({"Error": {"Code": code, "Message": "x"}}, operation)
+
+
+@pytest.mark.parametrize("status", [ResizeStatus.MODIFY_COMPLETED, ResizeStatus.EXTEND_FAILED])
+def test_recover_stale_row_leaves_a_confirmed_resize_alone_when_aws_no_longer_lists_it(scheduler, state, status):
+    # AWS only reports a volume's *most recent* modification. Once someone
+    # else (Terraform, the console) modifies the volume again, or the record
+    # ages out, ours no longer matches - but for these rows AWS already
+    # confirmed the resize, so "no match" must not be read as "modify-volume
+    # never went through". Marking it MODIFY_FAILED made the next cycle
+    # resize the volume again while its filesystem was never extended.
+    ec2 = MagicMock()
+    ec2.describe_volumes_modifications.return_value = {
+        "VolumesModifications": [
+            {"TargetSize": 500, "ModificationState": "completed", "StartTime": dt.datetime.now(dt.UTC)}
+        ]
+    }
+    state.create_if_absent("vol-c", "i-1", 100, 120)
+    state.update_status("vol-c", status)
+
+    scheduler._recover_stale_row(ec2, state.get("vol-c"))
+
+    assert state.get("vol-c").status == status
+
+
+def test_recover_stale_rows_does_not_probe_aws_for_rows_that_are_not_waiting_on_modify_volume(scheduler, state):
+    ec2 = MagicMock()
+    state.create_if_absent("vol-c", "i-1", 100, 120, account_name=_ACCOUNT, region="us-east-1")
+    state.update_status("vol-c", ResizeStatus.MODIFY_COMPLETED)
+    scheduler._config = replace(
+        scheduler._config, resize=replace(scheduler._config.resize, stale_lock_timeout_minutes=1)
+    )
+    with patch("controller.scheduler.datetime") as fake:
+        fake.now.return_value = dt.datetime.now(dt.UTC) + dt.timedelta(hours=2)
+        scheduler._recover_stale_rows(ec2, _ACCOUNT, "us-east-1")
+
+    ec2.describe_volumes_modifications.assert_not_called()
+
+
+def test_recover_stale_row_where_aws_reports_the_modification_failed_releases_it_for_a_retry(scheduler, state):
+    ec2 = MagicMock()
+    ec2.describe_volumes_modifications.return_value = {
+        "VolumesModifications": [
+            {"TargetSize": 120, "ModificationState": "failed", "StartTime": dt.datetime.now(dt.UTC)}
+        ]
+    }
+    state.create_if_absent("vol-f", "i-1", 100, 120)
+
+    scheduler._recover_stale_row(ec2, state.get("vol-f"))
+
+    # The volume never grew, so there is nothing to extend and nothing a
+    # person has to fix: MODIFY_FAILED lets a later cycle try again.
+    assert state.get("vol-f").status == ResizeStatus.MODIFY_FAILED
+
+
+def test_recover_stale_row_for_a_deleted_volume_releases_the_row(scheduler, state):
+    # The volume was deleted mid-resize: AWS answers InvalidVolume.NotFound.
+    # That used to raise out of recovery every cycle, forever.
+    ec2 = MagicMock()
+    ec2.describe_volumes_modifications.side_effect = _aws_error("InvalidVolume.NotFound")
+    state.create_if_absent("vol-gone", "i-1", 100, 120)
+
+    scheduler._recover_stale_row(ec2, state.get("vol-gone"))
+
+    assert state.get("vol-gone").status == ResizeStatus.MODIFY_FAILED
+
+
+@pytest.mark.parametrize("code", ["RequestLimitExceeded", "UnauthorizedOperation"])
+def test_recover_stale_row_leaves_the_row_alone_on_other_aws_errors(scheduler, state, code):
+    # Throttling or an IAM gap says nothing about what happened to the
+    # modification - the row must stay as it is and the error must surface.
+    from botocore.exceptions import ClientError
+
+    ec2 = MagicMock()
+    ec2.describe_volumes_modifications.side_effect = _aws_error(code)
+    state.create_if_absent("vol-x", "i-1", 100, 120)
+
+    with pytest.raises(ClientError):
+        scheduler._recover_stale_row(ec2, state.get("vol-x"))
+
+    assert state.get("vol-x").status == ResizeStatus.MODIFY_REQUESTED
+
+
 def test_recover_stale_rows_only_probes_its_own_account_and_region(scheduler, state):
     # A stale row belonging to a different account/region must never be
     # probed with this region's ec2 client - that client is authenticated

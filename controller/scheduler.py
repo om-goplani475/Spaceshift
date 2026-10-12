@@ -17,6 +17,8 @@ from dataclasses import asdict, dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
+from botocore.exceptions import ClientError
+
 from controller.audit import AuditActor
 from controller.aws_session import RETRY_CONFIG, build_account_session, build_base_session
 from controller.config import Config, refresh_config_from_db
@@ -24,7 +26,7 @@ from controller.connections.base import ConnectionTarget, Connector
 from controller.connections.ssm_connector import SsmConnector
 from controller.discovery import EligibleVolume, discover_eligible_volumes, is_ssm_ready
 from controller.disk_check import check_disk_usage
-from controller.notifications import SEVERITY_CRITICAL, Notifier
+from controller.notifications import Notifier
 from controller.resize import (
     SIZE_AVAILABLE_STATES,
     ModifyVolumeError,
@@ -517,6 +519,14 @@ class Scheduler:
         # NotFound for it, a false "no matching modification" at worst.
         cutoff = datetime.now(UTC) - timedelta(minutes=self._config.resize.stale_lock_timeout_minutes)
         for record in self._state.list_stale(cutoff, account_name=account_name, region=region):
+            if record.status != ResizeStatus.MODIFY_REQUESTED:
+                # Only a modify-volume AWS hasn't confirmed yet can be
+                # orphaned by a crash. Later states were reached *because*
+                # AWS confirmed it, and a row legitimately sits there for
+                # hours (instance stopped, SSM down) - probing AWS for each
+                # such row every cycle is wasted calls, and see
+                # _recover_stale_row for why a "no match" there is unsafe.
+                continue
             try:
                 self._recover_stale_row(ec2, record)
             except Exception:
@@ -526,9 +536,24 @@ class Scheduler:
         # The controller may have crashed mid-resize; ask AWS what actually
         # happened instead of blindly retrying or leaving the row stuck
         # forever (stale in-progress row recovery).
-        modification = find_modification(
-            describe_modifications(ec2, record.volume_id), record.to_size_gb, record.created_at
-        )
+        if record.status != ResizeStatus.MODIFY_REQUESTED:
+            # AWS reports only a volume's *most recent* modification, so for
+            # a row it already confirmed (MODIFY_COMPLETED, EXTEND_FAILED) a
+            # missing match means someone modified the volume again or the
+            # record aged out - not that the request never went through.
+            # Treating it as the latter would mark the row MODIFY_FAILED and
+            # start another resize on a volume whose filesystem was never
+            # extended.
+            return
+        try:
+            modifications = describe_modifications(ec2, record.volume_id)
+        except ClientError as exc:
+            if exc.response.get("Error", {}).get("Code") != "InvalidVolume.NotFound":
+                raise  # throttling, IAM: says nothing about the modification; leave the row as it is
+            logger.warning("%s: volume no longer exists - releasing its stale %s row", record.volume_id, record.status)
+            self._state.update_status(record.volume_id, ResizeStatus.MODIFY_FAILED)
+            return
+        modification = find_modification(modifications, record.to_size_gb, record.created_at)
         if modification is None:
             # AWS has no modification matching this row, so modify-volume
             # never went through (the process died before the call, or the
@@ -544,17 +569,16 @@ class Scheduler:
             return
 
         modification_state = modification["ModificationState"]
-        if modification_state in SIZE_AVAILABLE_STATES and record.status == ResizeStatus.MODIFY_REQUESTED:
+        if modification_state in SIZE_AVAILABLE_STATES:
             self._state.update_status(record.volume_id, ResizeStatus.MODIFY_COMPLETED)
         elif modification_state == "failed":
-            self._state.update_status(record.volume_id, ResizeStatus.EXTEND_FAILED_NEEDS_ATTENTION)
-            self._notifier.send(
-                "EBS auto-resize needs attention",
-                f"Volume {record.volume_id}: AWS reported the modify-volume request failed "
-                f"after the controller restarted mid-resize.",
-                severity=SEVERITY_CRITICAL,
-                dedup_key=f"needs-attention:{record.volume_id}",
-            )
+            # Same as _advance_pending_modification: AWS says the request
+            # failed, so the volume did not grow and there is nothing for
+            # the OS-side extend to do. EXTEND_FAILED_NEEDS_ATTENTION would
+            # be wrong here - its "Retry extend" would run against a volume
+            # that never got bigger and report success.
+            logger.warning("%s: AWS reported the modify-volume request failed - releasing the row", record.volume_id)
+            self._state.update_status(record.volume_id, ResizeStatus.MODIFY_FAILED)
         # else: still "modifying" per AWS - leave the row as-is for the next check.
 
 

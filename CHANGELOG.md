@@ -12,6 +12,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - README "What it supports" and "Tested on" tables; `docs/SETUP.md` section 10 on troubleshooting a resize.
 
 ### Fixed
+- Stale-row recovery (after a controller restart) could start a second resize on a volume whose first one AWS had already confirmed. AWS only reports a volume's most recent modification, so once the volume was modified again, or the record aged out, a `MODIFY_COMPLETED` or `EXTEND_FAILED` row looked like "modify-volume never happened" and was released. Recovery now only looks at rows still waiting on AWS (`MODIFY_REQUESTED`), which also stops it calling AWS every cycle for rows that sit legitimately (instance stopped, SSM down).
+- Recovery now handles a deleted volume (`InvalidVolume.NotFound`, previously an error every cycle forever) and treats an AWS-reported failed modification as `MODIFY_FAILED` like the live path does, instead of `EXTEND_FAILED_NEEDS_ATTENTION`, whose Retry extend would have run against a volume that never grew.
 - The loop-device integration tests no longer race `losetup --partscan` (the partition's sysfs entry can lag behind it), which failed one CI run.
 - Upgraded `urllib3` to 2.8.0 and `Werkzeug` to 3.1.9 for four published advisories that failed the `pip-audit` CI job.
 - `docs/iam-policy.json` had a corrupted statement `Sid` (`Modifnpm install --package-lock-onlyyAny...`), which IAM rejects: a `Sid` may contain only letters and digits. Restored to `ModifyAnyVolumeEligibilityEnforcedByAppOnly`.
