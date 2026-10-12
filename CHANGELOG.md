@@ -7,7 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- README "What it supports" and "Tested on" tables; `docs/SETUP.md` section 10 on recovering a volume stuck in `EXTEND_FAILED_NEEDS_ATTENTION`.
+
 ### Fixed
+- The loop-device integration tests no longer race `losetup --partscan` (the partition's sysfs entry can lag behind it), which failed one CI run.
+- Upgraded `urllib3` to 2.8.0 and `Werkzeug` to 3.1.9 for four published advisories that failed the `pip-audit` CI job.
+- `docs/iam-policy.json` had a corrupted statement `Sid` (`Modifnpm install --package-lock-onlyyAny...`), which IAM rejects: a `Sid` may contain only letters and digits. Restored to `ModifyAnyVolumeEligibilityEnforcedByAppOnly`.
 - A mount point containing a double quote or backslash (or a space, on older util-linux) was passed to `df` and `xfs_growfs` with `lsblk`'s `\xHH` escapes still in it, naming a path that doesn't exist. The escapes are now decoded.
 - On Nitro instances the volume is now located through `/dev/disk/by-id/nvme-Amazon_Elastic_Block_Store_<volume id>` first, falling back to the attach-time device name. Ubuntu/Debian don't create the `/dev/sda1`-style symlink, so every disk check for those instances failed.
 - `InvalidVolumeModification.NotFound` is now treated as "no modification on record" in stale-row recovery and the readiness check too, not just the pre-resize cooldown check. A stale row from a crash before `modify-volume` is now released instead of erroring every cycle.
@@ -17,7 +23,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - A volume that had never been modified failed every cycle with `InvalidVolumeModification.NotFound` from the out-of-band modification check, so it could never be resized. AWS's "no modification on record" answer is now treated as "not modified recently".
 
 ### Known issues
-- Volume-to-device resolution relies on the attach-time device name. `/dev/sd*` names, unpartitioned volumes, and root volumes with an EFI partition are not handled correctly (see README "Known limitation"). Tracked for a future release; needs validation on real Nitro/Xen, AL2023/Ubuntu instances.
+- LVM, software RAID and encrypted volumes are not supported; they fail with an error that names the device instead of being guessed at. Ubuntu/Debian on Nitro rely on the by-id lookup, which has not been verified on a real instance yet.
 
 ### Changed
 - **Breaking:** `config.yaml` is no longer read. Re-enter accounts on the Accounts page; move the Slack bot token to `SPACESHIFT_SLACK_BOT_TOKEN` and static AWS keys to `AWS_ACCESS_KEY_ID`/`AWS_SECRET_ACCESS_KEY` in `.env`; set the notification method and channel on the Settings page. `credentials.mode` is gone (boto3's own chain: instance role, else the env keys). `notifications.method: email` (never implemented) is gone. A stray `config.yaml` only produces a startup warning.

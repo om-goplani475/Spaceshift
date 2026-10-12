@@ -17,9 +17,27 @@ Resizing an EBS volume is a two-step process (grow the volume via the EC2 API, t
 3. **Resize** - if usage crosses the threshold, calls `modify-volume`, waits for AWS to complete it, then runs `growpart` + `resize2fs`/`xfs_growfs` remotely to actually extend the filesystem.
 4. **State tracking** - every resize attempt is tracked through a state machine in Postgres (its own container, started alongside the controller) so partial failures retry safely, duplicate triggers are prevented, and AWS's limits (4 modifications per 24h, and a 6-hour cooldown between modifications of the same volume) are respected.
 
-v1 supports **Amazon Linux + Ubuntu, ext4 + XFS**. LVM-based volumes are out of scope for now.
+## What it supports
 
-**Known limitation - device naming.** The controller identifies a volume on the instance by the device name AWS reports at attach time (`/dev/xvdf`, `/dev/xvdf1`, `/dev/nvme1n1p1`). That works for partitioned volumes attached under `xvd*`/`nvme*` names, which is the setup it has been run against. It does **not** yet handle volumes attached as `/dev/sd*` (Ubuntu root disks, most marketplace AMIs), unpartitioned volumes with a filesystem directly on the disk, or root volumes with a separate EFI partition - those are either skipped or, in the EFI case, measured on the wrong partition. The fix (resolving the OS device from the volume ID's serial instead of the attach-time name) is designed but needs real-instance validation across Nitro/Xen and AL2023/Ubuntu; see [CHANGELOG.md](CHANGELOG.md). Until then, keep `dry_run` on and check the **Volumes** page shows the mount point you expect before enabling live mode.
+| | Supported | Not supported (yet) |
+|---|---|---|
+| Filesystem | ext4, XFS | Btrfs, ZFS |
+| Layout | A partitioned volume (GPT verified live and in CI), or a filesystem directly on the whole disk (covered by unit tests only) | LVM, software RAID, encrypted (LUKS) volumes - these are expected to fail with an error that names the device, never to be guessed at |
+| Instance type | Nitro (NVMe) - verified live. Xen uses the attach-name fallback; not verified | - |
+| Access | SSM Send-Command | SSH |
+
+The controller finds a volume on the instance by its volume ID, through `/dev/disk/by-id/nvme-Amazon_Elastic_Block_Store_<id>`, and falls back to the device name AWS reports at attach time (`/dev/xvdf`, `/dev/sda1`) when that link doesn't exist. A root disk with several partitions (for example `/boot/efi` and `/`) is measured and extended on `/`. A *data* disk with several mounted partitions and none of them `/` is refused rather than guessed at.
+
+### Tested on
+
+| OS | Filesystems | How it was checked |
+|---|---|---|
+| Amazon Linux 2023 on EC2 (Nitro) | ext4 | Live: a real 8 GB to 10 GB resize, partition and filesystem both extended |
+| Any Linux with `losetup`, `growpart`, `resize2fs`, `xfs_growfs` | ext4, XFS | CI, on every change: `tests/integration/` runs the controller's real commands against a loop device, including mount points with awkward characters and the retry-after-partial-success case |
+
+Ubuntu and Debian on Nitro are expected to work (that is what the by-id lookup is for) but are not yet listed here as verified. If you run it on another distribution or instance type, please open an issue with the result so this table can grow.
+
+Keep `dry_run` on (its default) and check the **Volumes** page shows the mount point you expect before enabling live mode.
 
 ## Quickstart
 

@@ -324,3 +324,36 @@ curl -s -b jar "http://localhost:8089/api/audit?actor=alice&action=config.set&li
 8. At least one volume or instance's `autoresize` column set to `true` (1.3) - confirm the next cycle's dry-run output matches what you expect.
 9. Slack: `SPACESHIFT_SLACK_BOT_TOKEN` in `.env`, then the Slack toggle + channel ID on the Settings page and a test message (2). Other channels work the same way: secret in `.env`, toggle on the Settings page.
 10. Only then, turn `dry_run` off on the Settings page (5).
+
+## 10. Troubleshooting a resize
+
+Each resize is one row in the `resize_state` table, and the **Instances** and **Volumes** pages show its status. Failures are also in the controller's logs (`docker compose logs controller`): a failed extend logs its traceback and the command's stderr.
+
+| Status | Meaning | What to do |
+|---|---|---|
+| `MODIFY_REQUESTED` | `modify-volume` was accepted; the controller is waiting for AWS to report the new size usable | Nothing. Checked every cycle. |
+| `MODIFY_COMPLETED` | AWS finished; the OS-side extend is next | Nothing. |
+| `EXTEND_FAILED` | The OS-side extend failed and will be retried, up to `resize.extend_retry.max_attempts`, at least `backoff_seconds` apart | Read the log line for the reason (see below). |
+| `MODIFY_FAILED` | AWS rejected or failed the modification; nothing changed on the volume | Nothing. A later cycle retries, subject to AWS's limits. |
+| `EXTEND_FAILED_NEEDS_ATTENTION` | The extend failed `max_attempts` times. **The volume is already bigger on the AWS side; the filesystem on the instance is not.** A critical alert was sent. | See below. |
+
+### Recovering from `EXTEND_FAILED_NEEDS_ATTENTION`
+
+The controller deliberately stops touching a volume in this state - it never calls `modify-volume` again for it, because the AWS-side resize already happened. It also stays in this state until a person clears it; there is no dashboard button for that yet.
+
+1. Find the reason in the logs: `docker compose logs controller | grep <volume-id>`. Common ones: the instance is not reachable via SSM, `growpart` or `resize2fs` is not installed (`cloud-guest-utils`, `e2fsprogs`/`xfsprogs`), or the layout is unsupported (LVM, encrypted).
+2. Fix the cause, then either let the controller retry the extend or do it yourself.
+   - **Let the controller retry** (it resets the attempt counter and re-runs only the OS-side step):
+     ```bash
+     docker compose exec postgres psql -U ebs_auto_resize -d ebs_auto_resize -c \
+       "UPDATE resize_state SET status='MODIFY_COMPLETED', extend_attempts=0, updated_at=now() \
+        WHERE volume_id='vol-0123456789abcdef0' AND status='EXTEND_FAILED_NEEDS_ATTENTION'"
+     ```
+   - **Extend by hand** on the instance (`growpart /dev/<disk> <partition>`, then `resize2fs /dev/<partition>` or `xfs_growfs <mount point>`), and once `df` shows the new size, release the volume so it is monitored again:
+     ```bash
+     docker compose exec postgres psql -U ebs_auto_resize -d ebs_auto_resize -c \
+       "DELETE FROM resize_state WHERE volume_id='vol-0123456789abcdef0' AND status='EXTEND_FAILED_NEEDS_ATTENTION'"
+     ```
+     Only do this after the filesystem is extended. If it is not, the volume is still full, and the next cycle will start another resize (AWS allows one modification per volume every 6 hours).
+
+Running these changes controller state directly, so do it in a maintenance window if the controller is mid-cycle on that volume.
