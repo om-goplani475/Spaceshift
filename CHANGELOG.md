@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- A mount point containing a double quote or backslash (or a space, on older util-linux) was passed to `df` and `xfs_growfs` with `lsblk`'s `\xHH` escapes still in it, naming a path that doesn't exist. The escapes are now decoded.
 - On Nitro instances the volume is now located through `/dev/disk/by-id/nvme-Amazon_Elastic_Block_Store_<volume id>` first, falling back to the attach-time device name. Ubuntu/Debian don't create the `/dev/sda1`-style symlink, so every disk check for those instances failed.
 - `InvalidVolumeModification.NotFound` is now treated as "no modification on record" in stale-row recovery and the readiness check too, not just the pre-resize cooldown check. A stale row from a crash before `modify-volume` is now released instead of erroring every cycle.
 - `growpart`'s NOCHANGE is accepted on either stdout or stderr. Reaching `EXTEND_FAILED_NEEDS_ATTENTION` is now logged as well as notified.

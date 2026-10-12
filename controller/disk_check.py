@@ -23,6 +23,10 @@ DEVICE_PATTERN = re.compile(r"^/dev/(sd|xvd|nvme)[a-z0-9]+\Z")
 
 _ROOT_MOUNT_POINT = "/"
 
+# lsblk prints characters it considers unsafe in a value (a double quote, a
+# backslash, and on older util-linux a space) as \xHH, even with -P.
+_LSBLK_ESCAPE = re.compile(r"\\x([0-9a-fA-F]{2})")
+
 _VOLUME_ID_PATTERN = re.compile(r"^vol-[0-9a-f]+\Z")
 
 
@@ -157,7 +161,8 @@ def _lsblk_rows(
     connector: Connector, target: ConnectionTarget, device_name: str, volume_id: str | None = None
 ) -> list[dict[str, str]]:
     # -P (key="value" pairs) is parsed per-field, unlike the plain -o
-    # columns form - robust to a MOUNTPOINT containing a space. -p makes
+    # columns form - robust to a MOUNTPOINT containing a space (the \xHH
+    # escapes lsblk applies to other characters are decoded below). -p makes
     # NAME/PKNAME full /dev paths: without it lsblk prints bare names
     # ("xvda1"), which growpart/resize2fs/blkid then can't resolve.
     lsblk = "lsblk -P -p -b -o NAME,TYPE,MOUNTPOINT,PKNAME"
@@ -179,7 +184,7 @@ def _lsblk_rows(
         fields = {}
         for token in shlex.split(line):
             key, _, value = token.partition("=")
-            fields[key] = value
+            fields[key] = _LSBLK_ESCAPE.sub(lambda m: chr(int(m.group(1), 16)), value)
         rows.append(fields)
     return rows
 

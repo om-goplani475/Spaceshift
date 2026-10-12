@@ -165,3 +165,35 @@ def test_a_second_extend_with_nothing_left_to_grow_still_succeeds(loop_volume, s
     attempt_extend(*args)
 
     assert state.get("vol-0123abc").status == ResizeStatus.EXTEND_COMPLETED
+
+
+def test_a_mount_point_with_awkward_characters_is_resolved_and_extended(loop_volume, state, notifier):
+    """lsblk escapes some characters (\x22 for a quote, \x5c for a backslash);
+    the controller has to hand df/xfs_growfs the real path."""
+    device, mount_point, backing = loop_volume
+    awkward = mount_point.parent / 'my "data"\\dir'
+    awkward.mkdir()
+    _run("umount", str(mount_point))
+    _run("mount", f"{device}p1", str(awkward))
+    before = _filesystem_bytes(awkward)
+    state.create_if_absent("vol-0123abc", "i-local", 1, 2)
+    with backing.open("r+b") as f:
+        f.truncate(_GROWN_SIZE)
+    _run("losetup", "--set-capacity", device)
+
+    block = resolve_block_target(LocalConnector(), ConnectionTarget(instance_id="i-local"), device)
+    attempt_extend(
+        LocalConnector(),
+        state,
+        notifier,
+        Config.from_dict({"dry_run": False}),
+        ConnectionTarget(instance_id="i-local"),
+        "vol-0123abc",
+        device,
+    )
+
+    assert block.mount_point == str(awkward)
+    assert state.get("vol-0123abc").status == ResizeStatus.EXTEND_COMPLETED
+    assert _filesystem_bytes(awkward) > before + 200 * _MIB
+    _run("umount", str(awkward))
+    _run("mount", f"{device}p1", str(mount_point))  # so the fixture's teardown unmounts what it expects

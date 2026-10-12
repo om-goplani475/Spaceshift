@@ -251,3 +251,19 @@ def test_whole_disk_filesystem_uses_the_resolved_device_not_the_attach_name():
     block = resolve_block_target(connector, ConnectionTarget(instance_id="i-1"), "/dev/sdf", "vol-0abc123")
 
     assert block.filesystem_device == "/dev/nvme1n1"
+
+
+def test_lsblk_hex_escapes_in_a_mount_point_are_decoded():
+    # lsblk -P writes " and \ as \x22 and \x5c (and, on older util-linux, a
+    # space as \x20). Left undecoded they reached df/xfs_growfs as literal
+    # text, naming a path that doesn't exist.
+    connector = FakeConnector(
+        [
+            CommandResult(0, _lsblk_row("/dev/xvdf", "disk", r"/mnt/my\x20q\x22uote\x5cdir") + "\n", ""),
+            CommandResult(0, "10%\n", ""),
+        ]
+    )
+    usage = check_disk_usage(connector, ConnectionTarget(instance_id="i-1"), "/dev/xvdf")
+
+    assert usage.mount_point == '/mnt/my q"uote\\dir'
+    assert connector.calls[1] == "df --output=pcent '/mnt/my q\"uote\\dir' | tail -n 1"
