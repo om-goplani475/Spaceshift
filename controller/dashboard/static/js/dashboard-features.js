@@ -118,12 +118,12 @@ function wireBatchActions() {
       if (!selected.length) return;
       const table = selected[0].closest("table");
       if (!table) return;
-      const headerCells = Array.from(table.tHead.rows[0].cells).filter(c => !c.classList.contains("select-col"));
+      const headerCells = Array.from(table.tHead.rows[0].cells).filter(c => !c.classList.contains("select-col") && !c.classList.contains("action-col"));
       const headers = headerCells.map(th => th.textContent.trim()).filter(h => h.toLowerCase() !== "autoresize");
 
       const rowsData = selected.map(function (cb) {
         const row = cb.closest("tr");
-        const dataCells = Array.from(row.cells).filter(c => !c.classList.contains("select-col"));
+        const dataCells = Array.from(row.cells).filter(c => !c.classList.contains("select-col") && !c.classList.contains("action-col"));
         return headers.map((h, i) => '"' + (dataCells[i] ? dataCells[i].textContent.trim().replace(/"/g, '""') : "") + '"');
       });
 
@@ -485,3 +485,8 @@ function wireNotificationTestButton() {
   });
 }
 
+// A form with data-confirm asks first (inline onsubmit is blocked by the CSP).
+document.addEventListener("submit", function (e) {
+  const message = e.target.dataset ? e.target.dataset.confirm : null;
+  if (message && !window.confirm(message)) e.preventDefault();
+});

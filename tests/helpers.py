@@ -115,6 +115,46 @@ class InMemoryStateBackend(StateBackend):
             record = self._records[volume_id]
             self._records[volume_id] = replace(record, status=status, updated_at=datetime.now(UTC))
 
+    def retry_extend(self, volume_id: str, audit: AuditActor) -> bool:
+        with self._lock:
+            record = self._records.get(volume_id)
+            if record is None or record.status != ResizeStatus.EXTEND_FAILED_NEEDS_ATTENTION:
+                return False
+            self._append_audit(
+                AuditEvent(
+                    actor=audit,
+                    action=AuditAction.RESIZE_RETRY_EXTEND,
+                    target_type="volume",
+                    target_id=volume_id,
+                    account_name=record.account_name or None,
+                    before={"status": record.status.value, "extend_attempts": record.extend_attempts},
+                    after={"status": ResizeStatus.MODIFY_COMPLETED.value, "extend_attempts": 0},
+                )
+            )
+            self._records[volume_id] = replace(
+                record, status=ResizeStatus.MODIFY_COMPLETED, extend_attempts=0, updated_at=datetime.now(UTC)
+            )
+            return True
+
+    def mark_resolved(self, volume_id: str, audit: AuditActor) -> bool:
+        with self._lock:
+            record = self._records.get(volume_id)
+            if record is None or record.status != ResizeStatus.EXTEND_FAILED_NEEDS_ATTENTION:
+                return False
+            self._append_audit(
+                AuditEvent(
+                    actor=audit,
+                    action=AuditAction.RESIZE_MARK_RESOLVED,
+                    target_type="volume",
+                    target_id=volume_id,
+                    account_name=record.account_name or None,
+                    before={"status": record.status.value, "extend_attempts": record.extend_attempts},
+                    after={"status": None},
+                )
+            )
+            del self._records[volume_id]
+            return True
+
     def increment_extend_attempts(self, volume_id: str) -> int:
         with self._lock:
             record = self._records[volume_id]

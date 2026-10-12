@@ -7,10 +7,11 @@ from __future__ import annotations
 
 from decimal import Decimal
 
-from flask import render_template
+from flask import g, render_template
 
 from controller.dashboard._common import _SCAN_LIST_LIMIT, _readable
 from controller.dashboard.config_support import _effective_default_threshold, _effective_dry_run
+from controller.dashboard.rbac import Role, role_at_least
 from controller.pricing import CostEstimator
 from controller.state.base import TERMINAL_STATUSES, ResizeRecord, ResizeStatus, StateBackend, VolumeRecord
 
@@ -188,9 +189,19 @@ def overview_view(state: StateBackend, cost_estimator: CostEstimator):
         for r in records
         if (delta := _resize_cost_delta(r, volume_lookup, cost_estimator)) is not None
     }
+    scope = g.scope
+    # Who may act on a stuck row is decided here, from the same scope the
+    # POST route enforces - the button is a convenience, never the control.
+    recoverable = {
+        r.volume_id
+        for r in records
+        if r.status == ResizeStatus.EXTEND_FAILED_NEEDS_ATTENTION
+        and role_at_least(scope.role_for(r.account_name), Role.OPERATOR)
+    }
     return render_template(
         "overview.html",
         records=records,
+        recoverable=recoverable,
         scans=scans,
         scan_limit=_SCAN_LIST_LIMIT,
         stats=_compute_stats(records, scans, volume_rows),

@@ -630,3 +630,6 @@ th.sort-desc::after {
   gap: 5px;
 }
 
+.action-col { white-space: nowrap; }
+.row-actions { display: flex; gap: var(--sp-2); }
+.row-actions form { margin: 0; }

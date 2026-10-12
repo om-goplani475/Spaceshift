@@ -114,7 +114,7 @@
     <table id="resize-table">
       <thead><tr>
         <th>Volume</th><th>Instance</th><th>Status</th><th class="num">Size</th>
-        <th class="num">Extend attempts</th><th>Updated</th>
+        <th class="num">Extend attempts</th><th>Updated</th>{% if recoverable %}<th class="action-col">Recover</th>{% endif %}
       </tr></thead>
       <tbody id="resize-tbody">
       {% for r in records %}
@@ -125,9 +125,26 @@
         <td class="num">{{ r.from_size_gb }} GB &rarr; {{ r.to_size_gb }} GB{% if r.volume_id in resize_cost_deltas %} <span class="cost-delta">{{ resize_cost_deltas[r.volume_id] }}</span>{% endif %}</td>
         <td class="num">{{ r.extend_attempts }}</td>
         <td class="ts" data-ts="{{ r.updated_at.isoformat() }}"></td>
+        {% if recoverable %}
+        <td class="action-col">
+          {% if r.volume_id in recoverable %}
+          <div class="row-actions">
+            <form method="post" action="{{ url_for('resizes.retry_extend', volume_id=r.volume_id) }}">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+              <button type="submit" class="btn" title="Re-run only the filesystem extend on the instance. Run this after fixing what broke it.">Retry extend</button>
+            </form>
+            <form method="post" action="{{ url_for('resizes.mark_resolved', volume_id=r.volume_id) }}"
+                  data-confirm="Only do this if you have already extended the filesystem on the instance by hand. If you have not, the volume is still full and a new resize will start. Continue?">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+              <button type="submit" class="btn btn-quiet" title="You extended the filesystem yourself - stop tracking this failure.">Mark resolved</button>
+            </form>
+          </div>
+          {% endif %}
+        </td>
+        {% endif %}
       </tr>
       {% else %}
-      {{ empty_row(6, "No resize activity yet.", "Resizes appear here once a watched volume crosses its threshold.") }}
+      {{ empty_row(7 if recoverable else 6, "No resize activity yet.", "Resizes appear here once a watched volume crosses its threshold.") }}
       {% endfor %}
       </tbody>
     </table>

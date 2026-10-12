@@ -211,6 +211,7 @@ Every user holds a **role per AWS account** (the names on the Accounts page, 1.4
 |---|---|---|---|
 | See the account's instances, volumes, scans, resizes and audit rows | ✓ | ✓ | ✓ (every account) |
 | Toggle autoresize in the account | | ✓ | ✓ |
+| Retry or mark resolved a stuck resize in the account (section 10) | | ✓ | ✓ |
 | Settings page, `/api/config` | | | ✓ |
 | Users page, roles | | | ✓ |
 | Audit rows that aren't about one account (settings, other users, pruning) | | | ✓ |
@@ -290,7 +291,7 @@ Every action a person takes is recorded in the `audit_log` table and shown on th
 
 | Recorded | Actions |
 |---|---|
-| Dashboard changes | `instance.autoresize`, `volume.autoresize`, `config.set` (every setting, including this log's own retention) |
+| Dashboard changes | `instance.autoresize`, `volume.autoresize`, `resize.retry_extend`, `resize.mark_resolved`, `config.set` (every setting, including this log's own retention) |
 | Sign-ins | `auth.login`, `auth.login_failed`, `auth.lockout` (once, when a lockout starts), `auth.logout`, `auth.setup_token_rejected`, `user.setup` |
 | CLI (`controller.dashboard.users`) | `user.create`, `user.password_reset`, `user.unlock`, `user.deactivate` - recorded as actor `cli` with the command name; the container has no login, so attribute CLI use through your host's shell/SSH audit |
 | Housekeeping | `audit.prune`, written by the scheduler only when the retention prune deleted something, with the count |
@@ -339,21 +340,11 @@ Each resize is one row in the `resize_state` table, and the **Instances** and **
 
 ### Recovering from `EXTEND_FAILED_NEEDS_ATTENTION`
 
-The controller deliberately stops touching a volume in this state - it never calls `modify-volume` again for it, because the AWS-side resize already happened. It also stays in this state until a person clears it; there is no dashboard button for that yet.
+The controller deliberately stops touching a volume in this state - it never calls `modify-volume` again for it, because the AWS-side resize already happened. It stays there until a person decides, from the **Recover** column of the Overview page's *Resize activity* table (operator on the volume's AWS account, or admin):
 
 1. Find the reason in the logs: `docker compose logs controller | grep <volume-id>`. Common ones: the instance is not reachable via SSM, `growpart` or `resize2fs` is not installed (`cloud-guest-utils`, `e2fsprogs`/`xfsprogs`), or the layout is unsupported (LVM, encrypted).
-2. Fix the cause, then either let the controller retry the extend or do it yourself.
-   - **Let the controller retry** (it resets the attempt counter and re-runs only the OS-side step):
-     ```bash
-     docker compose exec postgres psql -U ebs_auto_resize -d ebs_auto_resize -c \
-       "UPDATE resize_state SET status='MODIFY_COMPLETED', extend_attempts=0, updated_at=now() \
-        WHERE volume_id='vol-0123456789abcdef0' AND status='EXTEND_FAILED_NEEDS_ATTENTION'"
-     ```
-   - **Extend by hand** on the instance (`growpart /dev/<disk> <partition>`, then `resize2fs /dev/<partition>` or `xfs_growfs <mount point>`), and once `df` shows the new size, release the volume so it is monitored again:
-     ```bash
-     docker compose exec postgres psql -U ebs_auto_resize -d ebs_auto_resize -c \
-       "DELETE FROM resize_state WHERE volume_id='vol-0123456789abcdef0' AND status='EXTEND_FAILED_NEEDS_ATTENTION'"
-     ```
-     Only do this after the filesystem is extended. If it is not, the volume is still full, and the next cycle will start another resize (AWS allows one modification per volume every 6 hours).
+2. Fix the cause, then pick one:
+   - **Retry extend** - resets the attempt counter and has the controller re-run only the OS-side step on its next cycle.
+   - **Mark resolved** - for when you extended the filesystem by hand (`growpart /dev/<disk> <partition>`, then `resize2fs /dev/<partition>` or `xfs_growfs <mount point>`). It stops tracking the failure so the volume is monitored normally again. Only use it once `df` shows the new size: if the filesystem is still full, the next cycle starts another resize (AWS allows one modification per volume every 6 hours).
 
-Running these changes controller state directly, so do it in a maintenance window if the controller is mid-cycle on that volume.
+Both are recorded in the audit log (`resize.retry_extend`, `resize.mark_resolved`) with the previous status and attempt count, and both only act on a volume that is still in this state, so a stale page or a double click does nothing.

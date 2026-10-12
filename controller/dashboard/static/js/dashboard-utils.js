@@ -397,8 +397,8 @@ function wireRowDrawer(tableId) {
     if (e.target.closest("input, select, button, a, label, .btn-inline-copy")) return;
     const row = e.target.closest("tbody tr");
     if (!row || !table.contains(row) || row.classList.contains("empty-row")) return;
-    const headerCells = Array.from(table.tHead.rows[0].cells).filter(c => !c.classList.contains("select-col"));
-    const dataCells = Array.from(row.cells).filter(c => !c.classList.contains("select-col"));
+    const headerCells = Array.from(table.tHead.rows[0].cells).filter(c => !c.classList.contains("select-col") && !c.classList.contains("action-col"));
+    const dataCells = Array.from(row.cells).filter(c => !c.classList.contains("select-col") && !c.classList.contains("action-col"));
     const headers = headerCells.map(th => th.textContent.trim());
     const idCell = dataCells[0];
     const id = (idCell && idCell.dataset.id) || (idCell && idCell.textContent.trim());

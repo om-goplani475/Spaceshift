@@ -6,6 +6,10 @@ import abc
 import enum
 from dataclasses import dataclass
 from datetime import datetime
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from controller.audit import AuditActor
 
 
 class ResizeStatus(enum.StrEnum):
@@ -76,6 +80,28 @@ class ResizeStateContract(abc.ABC):
     @abc.abstractmethod
     def update_status(self, volume_id: str, status: ResizeStatus) -> None:
         """Transition volume_id's record to a new status."""
+
+    @abc.abstractmethod
+    def retry_extend(self, volume_id: str, audit: AuditActor) -> bool:
+        """Put a volume stuck in EXTEND_FAILED_NEEDS_ATTENTION back to
+        MODIFY_COMPLETED with its attempt counter reset, so the controller
+        re-runs only the OS-side extend. Never touches the AWS side.
+
+        True if it did; False if there is no such row or it is not (any
+        longer) in EXTEND_FAILED_NEEDS_ATTENTION - nothing is changed then,
+        so a stale page or a double click is harmless. The RESIZE_RETRY_EXTEND
+        audit row is written in the same transaction as the change.
+        """
+
+    @abc.abstractmethod
+    def mark_resolved(self, volume_id: str, audit: AuditActor) -> bool:
+        """Release a volume stuck in EXTEND_FAILED_NEEDS_ATTENTION after a
+        person extended its filesystem by hand: deletes the row so the
+        volume is monitored normally again. Same return value, guard and
+        audit behaviour as retry_extend (RESIZE_MARK_RESOLVED).
+
+        The modification history is kept, so AWS's cooldown still applies.
+        """
 
     @abc.abstractmethod
     def increment_extend_attempts(self, volume_id: str) -> int:

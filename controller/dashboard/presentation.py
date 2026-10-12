@@ -48,6 +48,8 @@ _DECISION_HINTS: dict[str, str] = {
 _AUDIT_LABELS = {
     AuditAction.INSTANCE_AUTORESIZE: "Autoresize toggled (instance)",
     AuditAction.VOLUME_AUTORESIZE: "Autoresize toggled (volume)",
+    AuditAction.RESIZE_RETRY_EXTEND: "Extend retry requested",
+    AuditAction.RESIZE_MARK_RESOLVED: "Stuck resize marked resolved",
     AuditAction.CONFIG_SET: "Setting changed",
     AuditAction.USER_SETUP: "First admin set up",
     AuditAction.USER_CREATE: "User created",

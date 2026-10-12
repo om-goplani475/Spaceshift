@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
+from controller.audit import AuditAction, AuditActor, AuditEvent
 from controller.state.contracts.resize import ResizeRecord, ResizeStateContract, ResizeStatus
 from controller.state.postgres._core import _TERMINAL_STATUS_VALUES, _scope_clause
 
@@ -75,6 +76,66 @@ class PostgresResizeMixin(ResizeStateContract):
                 "UPDATE resize_state SET status = %s, updated_at = %s WHERE volume_id = %s",
                 (status.value, datetime.now(UTC), volume_id),
             )
+
+    def retry_extend(self, volume_id: str, audit: AuditActor) -> bool:
+        stuck = ResizeStatus.EXTEND_FAILED_NEEDS_ATTENTION
+        with self._cursor(commit=True) as cur:
+            # The self-join locks the row and hands back what it held, so
+            # the audit row is exact and the status check can't race a
+            # concurrent change; the audit insert shares the COMMIT.
+            cur.execute(
+                """
+                UPDATE resize_state AS t
+                SET status = %s, extend_attempts = 0, updated_at = %s
+                FROM (
+                    SELECT volume_id, extend_attempts, account_name
+                    FROM resize_state WHERE volume_id = %s AND status = %s FOR UPDATE
+                ) AS old
+                WHERE t.volume_id = old.volume_id
+                RETURNING old.extend_attempts, old.account_name
+                """,
+                (ResizeStatus.MODIFY_COMPLETED.value, datetime.now(UTC), volume_id, stuck.value),
+            )
+            row = cur.fetchone()
+            if row is None:
+                return False
+            self._insert_audit(
+                cur,
+                AuditEvent(
+                    actor=audit,
+                    action=AuditAction.RESIZE_RETRY_EXTEND,
+                    target_type="volume",
+                    target_id=volume_id,
+                    account_name=row[1] or None,
+                    before={"status": stuck.value, "extend_attempts": row[0]},
+                    after={"status": ResizeStatus.MODIFY_COMPLETED.value, "extend_attempts": 0},
+                ),
+            )
+            return True
+
+    def mark_resolved(self, volume_id: str, audit: AuditActor) -> bool:
+        stuck = ResizeStatus.EXTEND_FAILED_NEEDS_ATTENTION
+        with self._cursor(commit=True) as cur:
+            cur.execute(
+                "DELETE FROM resize_state WHERE volume_id = %s AND status = %s RETURNING extend_attempts, account_name",
+                (volume_id, stuck.value),
+            )
+            row = cur.fetchone()
+            if row is None:
+                return False
+            self._insert_audit(
+                cur,
+                AuditEvent(
+                    actor=audit,
+                    action=AuditAction.RESIZE_MARK_RESOLVED,
+                    target_type="volume",
+                    target_id=volume_id,
+                    account_name=row[1] or None,
+                    before={"status": stuck.value, "extend_attempts": row[0]},
+                    after={"status": None},
+                ),
+            )
+            return True
 
     def increment_extend_attempts(self, volume_id: str) -> int:
         with self._cursor(commit=True) as cur:

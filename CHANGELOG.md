@@ -8,7 +8,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
-- README "What it supports" and "Tested on" tables; `docs/SETUP.md` section 10 on recovering a volume stuck in `EXTEND_FAILED_NEEDS_ATTENTION`.
+- Overview page: a volume stuck in `EXTEND_FAILED_NEEDS_ATTENTION` now has **Retry extend** and **Mark resolved** buttons (operator on the volume's account, or admin), replacing the manual SQL. Both are audited (`resize.retry_extend`, `resize.mark_resolved`) in the same transaction as the change and are no-ops on a row that is no longer stuck.
+- README "What it supports" and "Tested on" tables; `docs/SETUP.md` section 10 on troubleshooting a resize.
 
 ### Fixed
 - The loop-device integration tests no longer race `losetup --partscan` (the partition's sysfs entry can lag behind it), which failed one CI run.

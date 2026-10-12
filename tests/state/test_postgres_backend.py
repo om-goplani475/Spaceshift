@@ -720,3 +720,36 @@ def test_iter_audit_does_not_raise_or_break_the_pool_when_closed_early(postgres_
         )
         (idle_in_transaction,) = cur.fetchone()
     assert idle_in_transaction == 0
+
+
+def test_retry_extend_and_mark_resolved_are_guarded_and_audited(postgres_state):
+    from controller.audit import AuditAction, AuditActor, AuditFilters
+
+    actor = AuditActor.cli()
+    audit = lambda action: postgres_state.list_audit(AuditFilters(action=action), limit=10)  # noqa: E731
+
+    # Not stuck (or absent): nothing changes, nothing is written.
+    postgres_state.create_if_absent("vol-a", "i-1", 100, 120, account_name="dev")
+    assert not postgres_state.retry_extend("vol-a", actor)
+    assert not postgres_state.mark_resolved("vol-a", actor)
+    assert not postgres_state.retry_extend("vol-none", actor)
+    assert postgres_state.get("vol-a").status == ResizeStatus.MODIFY_REQUESTED
+    assert audit(AuditAction.RESIZE_RETRY_EXTEND) == [] and audit(AuditAction.RESIZE_MARK_RESOLVED) == []
+
+    for _ in range(3):
+        postgres_state.increment_extend_attempts("vol-a")
+    postgres_state.update_status("vol-a", ResizeStatus.EXTEND_FAILED_NEEDS_ATTENTION)
+
+    assert postgres_state.retry_extend("vol-a", actor)
+    record = postgres_state.get("vol-a")
+    assert (record.status, record.extend_attempts) == (ResizeStatus.MODIFY_COMPLETED, 0)
+    (row,) = audit(AuditAction.RESIZE_RETRY_EXTEND)
+    assert (row.target_id, row.account_name) == ("vol-a", "dev")
+    assert row.before == {"status": "EXTEND_FAILED_NEEDS_ATTENTION", "extend_attempts": 3}
+    assert not postgres_state.retry_extend("vol-a", actor)  # no longer stuck
+
+    postgres_state.update_status("vol-a", ResizeStatus.EXTEND_FAILED_NEEDS_ATTENTION)
+    assert postgres_state.mark_resolved("vol-a", actor)
+    assert postgres_state.get("vol-a") is None
+    assert len(audit(AuditAction.RESIZE_MARK_RESOLVED)) == 1
+    assert not postgres_state.mark_resolved("vol-a", actor)

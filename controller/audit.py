@@ -50,6 +50,8 @@ class AuditAction(enum.StrEnum):
 
     INSTANCE_AUTORESIZE = "instance.autoresize"
     VOLUME_AUTORESIZE = "volume.autoresize"
+    RESIZE_RETRY_EXTEND = "resize.retry_extend"
+    RESIZE_MARK_RESOLVED = "resize.mark_resolved"
     CONFIG_SET = "config.set"
     USER_SETUP = "user.setup"
     USER_CREATE = "user.create"
