@@ -65,6 +65,25 @@ jobs:
           EBS_AUTO_RESIZE_TEST_POSTGRES_DSN: dbname=testdb user=postgres password=test host=localhost port=5432
         run: pytest -q
 
+  integration:
+    # Real lsblk/growpart/resize2fs against a loop device (tests/integration).
+    # Needs root and loop devices, so it can't ride along in the unit-test
+    # job; GitHub-hosted runners provide both via sudo.
+    needs: lint
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: requirements-dev.txt
+      - run: pip install -r requirements-dev.txt
+      - run: sudo apt-get update && sudo apt-get install -y cloud-guest-utils e2fsprogs util-linux
+      # sudo resets PATH, which would hide the pip-installed pytest.
+      - run: sudo env "PATH=$PATH" python -m pytest tests/integration -v
+
   audit:
     needs: lint
     runs-on: ubuntu-latest

@@ -28,6 +28,12 @@ EBS_AUTO_RESIZE_TEST_POSTGRES_DSN="dbname=testdb user=postgres password=test hos
 docker rm -f spaceshift-test-pg
 ```
 
+The loop-device integration tests (`tests/integration/`) run the real `lsblk`, `growpart` and `resize2fs` against a loop device. They need root, so a normal `pytest` skips them; CI runs them with sudo. Locally, from a clone with `cloud-guest-utils` and `e2fsprogs` installed:
+
+```bash
+sudo env "PATH=$PATH" python -m pytest tests/integration -v
+```
+
 `tests/` mirrors `controller/`'s package layout - `tests/connections/` and `tests/state/` for the `connections/` and `state/` subpackages, flat files for everything else.
 
 ## Code style
