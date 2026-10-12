@@ -66,6 +66,13 @@ _LOGIN_ATTEMPT_RETENTION = timedelta(days=7)
 # this is one refresh away.
 _VERIFY_POLL_SECONDS = 5
 
+# An instance that's merely still booting routinely takes a few minutes
+# for its SSM Agent to register - this is the grace period before "not
+# reachable via SSM" on a pending resize starts counting toward
+# EXTEND_FAILED_NEEDS_ATTENTION escalation, so a normal boot doesn't page
+# someone indistinguishably from an instance that's gone for good.
+_SSM_UNREACHABLE_GRACE = timedelta(minutes=10)
+
 
 @dataclass
 class _AccountClients:
@@ -119,6 +126,14 @@ class Scheduler:
         # start_resize() itself once a volume no longer exceeds its
         # ceiling (admin raised it, or the override changed).
         self._ceiling_alerted: set[str] = set()
+
+        # When a pending resize's instance first becomes SSM-unreachable -
+        # keyed by volume_id, cleared once it's reachable again. Gates
+        # _SSM_UNREACHABLE_GRACE before the first occurrence counts as an
+        # extend-failure attempt, so an instance that's merely still
+        # booting (SSM Agent routinely takes a few minutes to register)
+        # isn't indistinguishable from one that's gone for good.
+        self._ssm_unreachable_since: dict[str, datetime] = {}
 
         # Set once the verify-request poll starts failing, so a Postgres
         # outage logs one traceback instead of one every _VERIFY_POLL_SECONDS
@@ -235,6 +250,7 @@ class Scheduler:
                 failed += 1
 
         self._prune()
+        self._prune_alert_dedup_sets()
         if accounts and failed == len(accounts):
             raise TickFailed(f"every enabled account failed this cycle ({failed})")
 
@@ -286,6 +302,29 @@ class Scheduler:
             now - timedelta(days=self._config.scheduler.audit_log_retention_days), audit=AuditActor.system()
         )
 
+    def _prune_alert_dedup_sets(self) -> None:
+        """The in-memory alert-dedup sets/maps are only ever cleared on
+        their own "condition resolved normally" path - a resource that's
+        deleted (or replaced, e.g. ASG/Karpenter churn) while still
+        flagged never clears, so on a long-running process with enough
+        churn these grow unboundedly. is_stale (set by mark_stale once
+        discovery stops seeing a resource) is the same signal the rest of
+        the app already uses for "this is gone" - reused here instead of
+        a second tracking mechanism."""
+        for key in list(self._ssm_not_ready_alerted):
+            _, instance_id = key
+            instance = self._state.get_instance(instance_id)
+            if instance is None or instance.is_stale:
+                self._ssm_not_ready_alerted.discard(key)
+        for volume_id in list(self._ceiling_alerted):
+            volume = self._state.get_volume(volume_id)
+            if volume is None or volume.is_stale:
+                self._ceiling_alerted.discard(volume_id)
+        for volume_id in list(self._ssm_unreachable_since):
+            volume = self._state.get_volume(volume_id)
+            if volume is None or volume.is_stale:
+                self._ssm_unreachable_since.pop(volume_id, None)
+
     def _process_volume(
         self, account_name: str, ec2, ssm, connector: Connector, volume: EligibleVolume, region: str
     ) -> None:
@@ -304,14 +343,19 @@ class Scheduler:
                 # does, not a second, uncoordinated tracker. The generic
                 # "not ready for SSM" alert above is non-critical and
                 # deduped per (account, instance) for the life of the
-                # process; this is what actually pages someone eventually.
+                # process; this is what actually pages someone eventually -
+                # but only after _SSM_UNREACHABLE_GRACE, so an instance
+                # that's merely still booting isn't treated the same as
+                # one that's gone for good from the very first cycle.
                 pending = (
                     ResizeStatus.MODIFY_REQUESTED,
                     ResizeStatus.MODIFY_COMPLETED,
                     ResizeStatus.EXTEND_FAILED,
                 )
                 if record is not None and record.status in pending:
-                    if should_retry_extend_now(record, self._config.resize.extend_retry.backoff_seconds):
+                    first_unreachable_at = self._ssm_unreachable_since.setdefault(volume.volume_id, datetime.now(UTC))
+                    past_grace = datetime.now(UTC) - first_unreachable_at >= _SSM_UNREACHABLE_GRACE
+                    if past_grace and should_retry_extend_now(record, self._config.resize.extend_retry.backoff_seconds):
                         record_extend_failure(
                             self._state,
                             self._notifier,
@@ -320,7 +364,10 @@ class Scheduler:
                             volume.instance_id,
                             "instance not reachable via SSM",
                         )
+                else:
+                    self._ssm_unreachable_since.pop(volume.volume_id, None)
                 return
+            self._ssm_unreachable_since.pop(volume.volume_id, None)
 
             if record is not None and record.status == ResizeStatus.MODIFY_REQUESTED:
                 self._advance_pending_modification(ec2, account_name, volume, region, connector, target, record)
@@ -406,6 +453,20 @@ class Scheduler:
             # threshold) retries the whole resize from scratch.
             self._state.update_status(volume.volume_id, ResizeStatus.MODIFY_FAILED)
             self._record_scan(account_name, volume, region, "resize_failed")
+            return
+        except Exception as exc:
+            # Anything else (throttling, an IAM gap on
+            # describe_volumes_modifications) isn't AWS reporting failure -
+            # it's "couldn't find out yet". Without this, it fell through
+            # to _process_volume's generic handler, which just logs a
+            # traceback every cycle forever - never counted toward
+            # attempts/escalation, so a persistent IAM/throttle issue
+            # never pages anyone to go fix it.
+            if should_retry_extend_now(record, self._config.resize.extend_retry.backoff_seconds):
+                record_extend_failure(
+                    self._state, self._notifier, self._config, volume.volume_id, record.instance_id, exc
+                )
+            self._record_scan(account_name, volume, region, "modify_in_progress")
             return
         if not ready:
             self._record_scan(account_name, volume, region, "modify_in_progress")

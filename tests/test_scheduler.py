@@ -146,7 +146,12 @@ def test_ssm_not_ready_with_a_pending_resize_escalates_after_max_attempts(state,
     sent = []
     scheduler._notifier.send = lambda subject, *a, **k: sent.append(subject)
 
-    with patch("controller.scheduler.is_ssm_ready", return_value=False):
+    # _SSM_UNREACHABLE_GRACE zeroed too - that grace period is covered on
+    # its own in test_ssm_not_ready_grace_period_before_the_first_escalation.
+    with (
+        patch("controller.scheduler.is_ssm_ready", return_value=False),
+        patch("controller.scheduler._SSM_UNREACHABLE_GRACE", dt.timedelta(0)),
+    ):
         for _ in range(zero_backoff.resize.extend_retry.max_attempts):
             scheduler._process_volume(_ACCOUNT, MagicMock(), MagicMock(), MagicMock(), volume, "us-east-1")
 
@@ -154,6 +159,68 @@ def test_ssm_not_ready_with_a_pending_resize_escalates_after_max_attempts(state,
     assert record.status == ResizeStatus.EXTEND_FAILED_NEEDS_ATTENTION
     assert record.extend_attempts == zero_backoff.resize.extend_retry.max_attempts
     assert "EBS auto-resize needs attention" in sent
+
+
+def test_ssm_not_ready_grace_period_before_the_first_escalation(scheduler, volume, state):
+    """An instance that's merely still booting (SSM Agent routinely takes
+    a few minutes to register) must not be escalated from the very first
+    cycle it's unreachable - that's indistinguishable from one that's
+    gone for good."""
+    state.create_if_absent("vol-1", "i-1", 100, 120)
+    state.update_status("vol-1", ResizeStatus.MODIFY_COMPLETED)
+
+    with (
+        patch("controller.scheduler.is_ssm_ready", return_value=False),
+        patch("controller.scheduler.record_extend_failure") as fail,
+    ):
+        scheduler._process_volume(_ACCOUNT, MagicMock(), MagicMock(), MagicMock(), volume, "us-east-1")
+        fail.assert_not_called()  # still within the grace period
+
+        scheduler._ssm_unreachable_since["vol-1"] -= dt.timedelta(minutes=11)  # simulate the grace period elapsing
+        scheduler._process_volume(_ACCOUNT, MagicMock(), MagicMock(), MagicMock(), volume, "us-east-1")
+        fail.assert_called_once()
+
+    assert state.get("vol-1").status == ResizeStatus.MODIFY_COMPLETED  # record_extend_failure is mocked
+
+
+def test_ssm_unreachable_since_clears_once_the_instance_is_reachable_again(scheduler, volume, state):
+    state.create_if_absent("vol-1", "i-1", 100, 120)
+    state.update_status("vol-1", ResizeStatus.MODIFY_COMPLETED)
+
+    with patch("controller.scheduler.is_ssm_ready", return_value=False):
+        scheduler._process_volume(_ACCOUNT, MagicMock(), MagicMock(), MagicMock(), volume, "us-east-1")
+    assert "vol-1" in scheduler._ssm_unreachable_since
+
+    with (
+        patch("controller.scheduler.is_ssm_ready", return_value=True),
+        patch("controller.scheduler.check_disk_usage", return_value=DiskUsage("/dev/xvdf", "/data", 50)),
+    ):
+        scheduler._process_volume(_ACCOUNT, MagicMock(), MagicMock(), MagicMock(), volume, "us-east-1")
+    assert "vol-1" not in scheduler._ssm_unreachable_since
+
+
+# --- alert-dedup pruning ------------------------------------------------------
+
+
+def test_prune_alert_dedup_sets_drops_stale_or_gone_entries(scheduler, state):
+    state.upsert_instance(_ACCOUNT, "i-gone", "us-east-1", "t3.micro", "running")
+    state.upsert_instance(_ACCOUNT, "i-live", "us-east-1", "t3.micro", "running")
+    state.upsert_volume(_ACCOUNT, "vol-gone", "i-gone", "us-east-1", 100, "/dev/xvdf")
+    state.upsert_volume(_ACCOUNT, "vol-live", "i-live", "us-east-1", 100, "/dev/xvdg")
+    state.mark_stale(_ACCOUNT, "us-east-1", seen_instance_ids={"i-live"}, seen_volume_ids={"vol-live"})
+
+    scheduler._ssm_not_ready_alerted = {(_ACCOUNT, "i-gone"), (_ACCOUNT, "i-live"), (_ACCOUNT, "i-never-existed")}
+    scheduler._ceiling_alerted = {"vol-gone", "vol-live", "vol-never-existed"}
+    scheduler._ssm_unreachable_since = {
+        "vol-gone": dt.datetime.now(dt.UTC),
+        "vol-live": dt.datetime.now(dt.UTC),
+    }
+
+    scheduler._prune_alert_dedup_sets()
+
+    assert scheduler._ssm_not_ready_alerted == {(_ACCOUNT, "i-live")}
+    assert scheduler._ceiling_alerted == {"vol-live"}
+    assert set(scheduler._ssm_unreachable_since) == {"vol-live"}
 
 
 # --- MODIFY_REQUESTED: non-blocking readiness check --------------------------
@@ -200,6 +267,28 @@ def test_modify_requested_marks_modify_failed_when_aws_reports_failed(scheduler,
 
     assert state.get("vol-1").status == ResizeStatus.MODIFY_FAILED
     assert state.list_scans()[0].decision == "resize_failed"
+
+
+def test_modify_requested_counts_an_indeterminate_check_toward_escalation(scheduler, volume, state):
+    """A ClientError (throttling, an IAM gap on describe_volumes_modifications)
+    isn't AWS reporting the modification failed - it's "couldn't find out
+    yet". It must still count toward attempts/escalation, not just log a
+    traceback forever with nothing ever paging anyone."""
+    state.create_if_absent("vol-1", "i-1", 100, 120)
+
+    # ValueError, not RuntimeError - RuntimeError is what AWS-reported-
+    # failed raises (see test_modify_requested_marks_modify_failed_when_aws_reports_failed)
+    # and is handled separately; this isolates the indeterminate-error path.
+    with (
+        patch("controller.scheduler.is_ssm_ready", return_value=True),
+        patch("controller.scheduler.is_modification_ready", side_effect=ValueError("throttled")),
+    ):
+        scheduler._process_volume(_ACCOUNT, MagicMock(), MagicMock(), MagicMock(), volume, "us-east-1")
+
+    record = state.get("vol-1")
+    assert record.status == ResizeStatus.EXTEND_FAILED
+    assert record.extend_attempts == 1
+    assert state.list_scans()[0].decision == "modify_in_progress"
 
 
 # --- scan log -----------------------------------------------------------------
