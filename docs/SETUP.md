@@ -250,7 +250,7 @@ Changing a password, deactivating a user, or `unlock` signs out every existing s
 
 The container speaks plain HTTP. On `localhost` or through an SSH tunnel that's fine. If the dashboard is reachable over a network, put a TLS-terminating proxy in front and set `SPACESHIFT_BEHIND_TLS_PROXY=true`, which (a) marks the session cookie `Secure` so browsers never send it over HTTP and (b) trusts `X-Forwarded-For`/`X-Forwarded-Proto` from exactly one hop, so login rate limiting sees real client addresses instead of the proxy's. Don't set it without the proxy: the cookie is silently dropped over HTTP and login never "takes", and any client could spoof its address with a header.
 
-The compose file publishes the dashboard on `127.0.0.1:8089` only, so the proxy has to run on the same host (or you reach the dashboard through an SSH tunnel). To expose it on another interface, change the `ports:` line in `docker-compose.yml` deliberately - Docker bypasses host firewalls such as ufw.
+The compose file runs an nginx `proxy` container in front of the dashboard (`nginx/default.conf`) and publishes it on `127.0.0.1:8089` only - so the full path is host TLS proxy -> `proxy` container -> dashboard. The container passes `X-Forwarded-For`/`-Proto`/`-Host` through unchanged, which is why the host proxy must set them itself (the nginx snippet below does). Because it publishes on loopback only, the host proxy has to run on the same host (or you reach the dashboard through an SSH tunnel). To expose it on another interface, change the `ports:` line in `docker-compose.yml` deliberately - Docker bypasses host firewalls such as ufw.
 
 A complete `Caddyfile` for it:
 

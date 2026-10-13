@@ -7,8 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- A `proxy` service in `docker-compose.yml` (nginx, config in `nginx/default.conf`): the in-compose second hop between a host TLS proxy and the dashboard. It passes the host proxy's `X-Forwarded-*` headers through untouched, so the app's one-hop `SPACESHIFT_BEHIND_TLS_PROXY` trust and per-address login rate limiting keep seeing the real client.
+
 ### Changed
-- The dashboard's published port is now `127.0.0.1:8089`, not all interfaces. Docker publishes ports past host firewalls, so the old binding exposed plain-HTTP login directly; a reverse proxy on the same host (docs/SETUP.md 7.5) is now the only way in from the network. Anyone reaching the dashboard on `<host>:8089` from another machine needs a proxy or an SSH tunnel.
+- The dashboard container no longer publishes a port; the new `proxy` service publishes `127.0.0.1:8089`, not all interfaces. Docker publishes ports past host firewalls, so the old binding exposed plain-HTTP login directly; a reverse proxy on the same host (docs/SETUP.md 7.5) is now the only way in from the network. Anyone reaching the dashboard on `<host>:8089` from another machine needs a proxy or an SSH tunnel.
 
 ## [0.1.0] - 2026-10-12
 
