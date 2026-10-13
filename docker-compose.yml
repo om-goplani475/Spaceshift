@@ -89,8 +89,11 @@ services:
       # dashboard holds no AWS credentials - account checks run in the
       # controller.
       SPACESHIFT_SLACK_BOT_TOKEN: ${SPACESHIFT_SLACK_BOT_TOKEN:-}
+    # Loopback only: the host's TLS reverse proxy (nginx/Caddy) is the sole
+    # way in. Docker publishes ports past host firewalls (ufw), so a bare
+    # "8089:8080" would expose plain-HTTP login on every interface.
     ports:
-      - "8089:8080"
+      - "127.0.0.1:8089:8080"
     # Overrides the Dockerfile's baked-in HEALTHCHECK, which checks for a
     # heartbeat file only Scheduler.run_forever() ever writes - this
     # service runs the dashboard instead (no scheduler loop), so that file

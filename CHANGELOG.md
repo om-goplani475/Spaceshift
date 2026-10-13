@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- The dashboard's published port is now `127.0.0.1:8089`, not all interfaces. Docker publishes ports past host firewalls, so the old binding exposed plain-HTTP login directly; a reverse proxy on the same host (docs/SETUP.md 7.5) is now the only way in from the network. Anyone reaching the dashboard on `<host>:8089` from another machine needs a proxy or an SSH tunnel.
+
 ## [0.1.0] - 2026-10-12
 
 First public release.
