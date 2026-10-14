@@ -108,24 +108,17 @@
   box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 20%, transparent);
 }
 .limit-input[data-dirty="true"] { border-color: var(--amber); }
+.limit-input[data-error="true"] { border-color: var(--red); }
+.limit-input[data-dirty="true"] ~ .limit-note { color: var(--amber); }
 .limit-input::placeholder { color: var(--text-3); }
-.limit-actions { display: inline-flex; gap: 4px; vertical-align: middle; }
-.limit-actions[hidden] { display: none; }
-.limit-save, .limit-cancel {
-  display: inline-flex; align-items: center; justify-content: center;
-  width: 26px; height: 26px; padding: 0;
-  border-radius: var(--radius);
-  border: 1px solid var(--border-strong);
-  background: var(--surface-2);
-  color: var(--text-2);
-  cursor: pointer;
-  transition: border-color var(--ease), background var(--ease), color var(--ease);
+.limits-bar {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--sp-3);
+  margin-top: var(--sp-3);
 }
-.limit-save svg, .limit-cancel svg { width: 14px; height: 14px; }
-.limit-save { border-color: var(--accent); background: var(--accent); color: #fff; }
-.limit-save:hover { filter: brightness(1.1); }
-.limit-cancel:hover { color: var(--text); border-color: var(--text-3); }
-.limit-save:disabled, .limit-cancel:disabled { opacity: 0.6; cursor: default; }
+.limits-bar .config-status { font-size: var(--text-sm); }
 .limit-input:disabled { opacity: 0.6; }
 .chart-empty { display: flex; align-items: center; justify-content: center; height: 220px; color: var(--text-3); font-size: var(--text-sm); }
 

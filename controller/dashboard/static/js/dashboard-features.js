@@ -377,88 +377,137 @@ function wireAutoresizeToggles(root) {
 }
 
 // Inline per-volume / per-instance limit editor (threshold %, max size GB).
-// Editing only marks the field as changed and reveals its Save / Discard
-// buttons - nothing is sent until Save is pressed (or Enter, the keyboard
-// equivalent); Escape or Discard puts the old value back. Blank means
-// "inherit". The field, JSON key, unit and bounds all come from the input's
-// data-* attributes, set by the limit_cell macro.
+// Editing a field only marks it as changed (amber). Nothing is sent until the
+// Update button under the table is pressed (or Enter, the keyboard
+// equivalent), which saves every changed field at once; Discard changes - or
+// Escape in one field - puts the old values back. Blank means "inherit". The
+// field, JSON key, unit and bounds all come from each input's data-* attributes
+// (set by the limit_cell macro). A field the server rejects stays changed and
+// turns red, with the reason in a toast, so nothing typed is lost.
+function pendingLimitInputs() {
+  return Array.from(document.querySelectorAll('.limit-input[data-dirty="true"]'));
+}
+
+function limitNoteFor(input, savedValue) {
+  return savedValue === "" ? "(" + input.dataset.inheritedSource + ")" : "";
+}
+
+function refreshLimitsBar() {
+  const bar = document.getElementById("limits-bar");
+  if (!bar) return;
+  const count = pendingLimitInputs().length;
+  const summary = document.getElementById("limits-summary");
+  summary.textContent = count === 0 ? "No unsaved changes" : count + " unsaved change" + (count === 1 ? "" : "s");
+  summary.className = "config-status" + (count === 0 ? "" : " dirty");
+  document.getElementById("limits-update-btn").disabled = count === 0;
+  document.getElementById("limits-discard-btn").disabled = count === 0;
+}
+
+function setLimitDirty(input, dirty) {
+  input.dataset.dirty = dirty ? "true" : "false";
+  delete input.dataset.error;
+  input.removeAttribute("title");
+  input.closest("td").querySelector(".limit-note").textContent = dirty ? "(unsaved)" : limitNoteFor(input, input.dataset.saved);
+}
+
+function discardLimit(input) {
+  input.value = input.dataset.saved;
+  setLimitDirty(input, false);
+}
+
+// Saves one changed field; resolves {ok, message} and never rejects.
+function saveLimit(input) {
+  const label = input.dataset.label;
+  const unit = input.dataset.unit;
+  const id = input.dataset.id;
+  const raw = input.value.trim();
+  const limit = raw === "" ? null : Number(raw);
+  const low = Number(input.min);
+  const high = Number(input.max);
+  if (limit !== null && (!Number.isInteger(limit) || limit < low || limit > high)) {
+    return Promise.resolve({ ok: false, message: label + " must be a whole number from " + low + " to " + high + ", or blank to inherit" });
+  }
+  const body = {};
+  body[input.dataset.bodyKey] = limit;
+  return postJSON("/api/" + input.dataset.kind + "/" + encodeURIComponent(id) + "/" + input.dataset.field, body)
+    .then(function (resp) {
+      if (!resp.ok) {
+        // A 400 carries the reason (e.g. a max size below the volume's current size).
+        return resp.json().catch(function () { return {}; }).then(function (data) {
+          return { ok: false, message: resp.status === 400 && data.error ? data.error : "Couldn't update the " + label.toLowerCase() + ". Please try again." };
+        });
+      }
+      input.dataset.saved = input.value = limit === null ? "" : String(limit);
+      const inheritedNote = "(" + input.dataset.inheritedSource + ")";
+      input.closest("td").querySelector(".limit-text").textContent =
+        limit === null ? input.dataset.inherited + unit + " " + inheritedNote : limit + unit;
+      setLimitDirty(input, false);
+      return { ok: true };
+    })
+    .catch(function () {
+      return { ok: false, message: "Couldn't update the " + label.toLowerCase() + ". Please try again." };
+    });
+}
+
+function updateAllLimits() {
+  const inputs = pendingLimitInputs();
+  if (inputs.length === 0) return;
+  const updateBtn = document.getElementById("limits-update-btn");
+  const discardBtn = document.getElementById("limits-discard-btn");
+  const summary = document.getElementById("limits-summary");
+  updateBtn.disabled = discardBtn.disabled = true;
+  inputs.forEach(function (input) { input.disabled = true; });
+  summary.textContent = "Saving…";
+  summary.className = "config-status";
+
+  Promise.all(inputs.map(saveLimit)).then(function (results) {
+    let failed = 0;
+    results.forEach(function (result, i) {
+      inputs[i].disabled = false;
+      if (result.ok) return;
+      failed++;
+      inputs[i].dataset.error = "true";
+      inputs[i].title = result.message;
+      showToast(inputs[i].dataset.id + ": " + result.message, "error");
+    });
+    refreshLimitsBar();
+    if (failed === 0) {
+      summary.textContent = "Updated " + inputs.length + " value" + (inputs.length === 1 ? "" : "s");
+      summary.className = "config-status ok";
+    } else {
+      summary.textContent = "Updated " + (inputs.length - failed) + ", " + failed + " failed - see the red fields";
+      summary.className = "config-status error";
+    }
+  });
+}
+
 function wireLimitInputs(root) {
+  const updateBtn = document.getElementById("limits-update-btn");
+  if (updateBtn && !updateBtn.dataset.wired) {
+    updateBtn.dataset.wired = "1";
+    updateBtn.addEventListener("click", updateAllLimits);
+    document.getElementById("limits-discard-btn").addEventListener("click", function () {
+      pendingLimitInputs().forEach(discardLimit);
+      refreshLimitsBar();
+    });
+  }
   root.querySelectorAll(".limit-input").forEach(function (input) {
     if (input.dataset.wired) return;
     input.dataset.wired = "1";
-    const cell = input.closest("td");
-    const note = cell.querySelector(".limit-note");
-    const actions = cell.querySelector(".limit-actions");
-    const saveBtn = cell.querySelector(".limit-save");
-    const cancelBtn = cell.querySelector(".limit-cancel");
-    const label = input.dataset.label;
-    const unit = input.dataset.unit;
-    const id = input.dataset.id;
-    let saved = input.value;
-
-    function showDirty(dirty) {
-      input.dataset.dirty = dirty ? "true" : "false";
-      actions.hidden = !dirty;
-      note.hidden = dirty;
-    }
-
-    function discard() {
-      input.value = saved;
-      showDirty(false);
-    }
-
-    function save() {
-      const raw = input.value.trim();
-      const limit = raw === "" ? null : Number(raw);
-      const low = Number(input.min);
-      const high = Number(input.max);
-      if (limit !== null && (!Number.isInteger(limit) || limit < low || limit > high)) {
-        showToast(label + " must be a whole number from " + low + " to " + high + ", or blank to inherit", "error");
-        return;
-      }
-      const body = {};
-      body[input.dataset.bodyKey] = limit;
-      input.disabled = saveBtn.disabled = cancelBtn.disabled = true;
-      postJSON("/api/" + input.dataset.kind + "/" + encodeURIComponent(id) + "/" + input.dataset.field, body)
-        .then(function (resp) {
-          if (!resp.ok) {
-            // A 400 carries the reason (e.g. a max size below the volume's current size).
-            return resp.json().catch(function () { return {}; }).then(function (data) {
-              const err = new Error(data.error || "request failed");
-              err.fromServer = resp.status === 400 && Boolean(data.error);
-              throw err;
-            });
-          }
-          saved = input.value = limit === null ? "" : String(limit);
-          const inheritedNote = "(" + input.dataset.inheritedSource + ")";
-          note.textContent = limit === null ? inheritedNote : "";
-          cell.querySelector(".limit-text").textContent =
-            limit === null ? input.dataset.inherited + unit + " " + inheritedNote : limit + unit;
-          showDirty(false);
-          showToast(label + " for " + id + (limit === null ? " cleared" : " set to " + limit + unit), "success");
-        })
-        .catch(function (err) {
-          // The edit stays pending, so nothing typed is lost and it can be corrected.
-          showToast(
-            err.fromServer ? err.message : "Couldn't update the " + label.toLowerCase() + " for " + id + ". Please try again.",
-            "error"
-          );
-        })
-        .finally(function () {
-          input.disabled = saveBtn.disabled = cancelBtn.disabled = false;
-        });
-    }
-
+    input.dataset.saved = input.value;
     input.addEventListener("input", function () {
-      showDirty(input.value.trim() !== saved);
+      setLimitDirty(input, input.value.trim() !== input.dataset.saved);
+      refreshLimitsBar();
     });
     input.addEventListener("keydown", function (e) {
-      if (e.key === "Enter" && input.dataset.dirty === "true") save();
-      if (e.key === "Escape") discard();
+      if (e.key === "Enter") updateAllLimits();
+      if (e.key === "Escape") {
+        discardLimit(input);
+        refreshLimitsBar();
+      }
     });
-    saveBtn.addEventListener("click", save);
-    cancelBtn.addEventListener("click", discard);
   });
+  refreshLimitsBar();
 }
 
 // ---- Settings ----------------------------------------------------------------

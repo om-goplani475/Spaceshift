@@ -31,7 +31,7 @@
 {% endmacro %}
 
 {# One per-resource limit (threshold %, max size GB). Operators on the account get an inline input (blank = inherit,
-   with the inherited value as placeholder) that saves only when its Save button is pressed; everyone else sees plain text. The hidden span carries the effective
+   with the inherited value as placeholder) that is saved only by the page's Update bar; everyone else sees plain text. The hidden span carries the effective
    value as text so sorting, the detail drawer and CSV export read it the same either way. `field` is the URL
    segment (threshold, max-size), `body_key` the JSON key, `unit` what follows the number. #}
 {% macro limit_cell(kind, field, body_key, label, unit, low, high, id, account_name, own, inherited, inherited_source) %}
@@ -45,17 +45,18 @@
        value="{{ own if own is not none }}" placeholder="{{ inherited }}"
        aria-label="{{ label }} for {{ id }} (blank inherits the {{ inherited_source }} value)">
 <span class="eligibility-note limit-note">{% if own is none %}({{ inherited_source }}){% endif %}</span>
-<span class="limit-actions" hidden>
-  <button type="button" class="limit-save" title="Save {{ label | lower }}" aria-label="Save {{ label | lower }} for {{ id }}">
-    <svg class="icon" viewBox="0 0 24 24"><path d="M20 6 9 17l-5-5"/></svg>
-  </button>
-  <button type="button" class="limit-cancel" title="Discard the change" aria-label="Discard the {{ label | lower }} change for {{ id }}">
-    <svg class="icon" viewBox="0 0 24 24"><path d="M18 6 6 18M6 6l12 12"/></svg>
-  </button>
-</span>
 {% else %}
 {{ effective }}{{ unit }}{% if source != "own" %} <span class="eligibility-note">({{ source }})</span>{% endif %}
 {% endif %}
+{% endmacro %}
+
+{# The one Update / Discard bar under a table of limit inputs: edits only mark fields as changed, this saves them all. #}
+{% macro limits_bar() %}
+<div class="limits-bar" id="limits-bar">
+  <span class="config-status" id="limits-summary" aria-live="polite">No unsaved changes</span>
+  <button type="button" class="btn" id="limits-discard-btn" disabled>Discard changes</button>
+  <button type="button" class="btn btn-primary" id="limits-update-btn" disabled>Update</button>
+</div>
 {% endmacro %}
 
 {% macro threshold_cell(kind, id, account_name, own, inherited, inherited_source) %}

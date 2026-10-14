@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% from "_macros.html" import filter_select, autoresize_select, pager, autoresize_switch, threshold_cell, max_size_cell, scan_decision, empty_row, copy_button, search_input with context %}
+{% from "_macros.html" import filter_select, autoresize_select, pager, autoresize_switch, threshold_cell, max_size_cell, limits_bar, scan_decision, empty_row, copy_button, search_input with context %}
 
 {% block title %}Volumes{% endblock %}
 {% block heading %}Volumes{% endblock %}
@@ -115,5 +115,6 @@
     </tbody>
   </table>
 </div>
+{% if can_edit_limits %}{{ limits_bar() }}{% endif %}
 {{ pager("volumes-pager") }}
 {% endblock %}

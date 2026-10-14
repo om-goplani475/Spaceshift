@@ -263,6 +263,7 @@ def instances_view(state: StateBackend):
         instance_regions=sorted({i.region for i in instances}),
         default_threshold=_effective_default_threshold(state),
         default_max_size_gb=_effective_max_volume_size(state),
+        can_edit_limits=any(g.scope.can_operate(i.account_name) for i in instances),
     )
 
 
@@ -272,6 +273,7 @@ def volumes_view(state: StateBackend):
     return render_template(
         "volumes.html",
         volume_rows=_build_volume_rows(state, volumes),
+        can_edit_limits=any(g.scope.can_operate(v.account_name) for v in volumes),
         latest_volume_decisions=_latest_decision_by(scans, lambda s: s.volume_id),
         volume_accounts=sorted({v.account_name for v in volumes}),
         volume_regions=sorted({v.region for v in volumes}),

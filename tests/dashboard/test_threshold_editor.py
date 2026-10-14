@@ -125,18 +125,28 @@ def test_volumes_page_shows_an_editor_with_the_inherited_value_as_placeholder(cl
     assert 'placeholder="70"' in html
 
 
-def test_the_editor_has_hidden_save_and_discard_buttons_so_nothing_saves_on_its_own(client, state, fleet):
-    html = client.get("/volumes").data.decode()
+def test_the_pages_have_one_update_bar_and_no_per_field_save_buttons(client, state, fleet):
+    for path in ("/volumes", "/instances"):
+        html = client.get(path).data.decode()
 
-    assert '<span class="limit-actions" hidden>' in html
-    assert 'class="limit-save"' in html and 'class="limit-cancel"' in html
+        assert 'id="limits-update-btn"' in html and 'id="limits-discard-btn"' in html
+        assert html.count('id="limits-bar"') == 1
+        assert "limit-save" not in html and "limit-cancel" not in html
 
 
-def test_a_viewer_gets_no_save_buttons(app, state, fleet):
+def test_a_viewer_gets_no_inputs_and_no_update_bar(app, state, fleet):
     state.set_volume_threshold("vol-dev", 91)
     client = _client_as(app, state, "vic", {"dev": "viewer"})
 
-    assert "limit-save" not in client.get("/volumes").data.decode()
+    for path in ("/volumes", "/instances"):
+        html = client.get(path).data.decode()
+        assert 'id="limits-bar"' not in html and "limit-input" not in html
+
+
+def test_an_operator_of_only_one_account_still_gets_the_bar(app, state, fleet):
+    client = _client_as(app, state, "olive", {"dev": "operator"})
+
+    assert 'id="limits-update-btn"' in client.get("/volumes").data.decode()
 
 
 def test_volumes_page_shows_the_volumes_own_value(client, state, fleet):
