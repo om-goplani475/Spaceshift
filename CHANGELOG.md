@@ -15,6 +15,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - A `proxy` service in `docker-compose.yml` (nginx, config in `nginx/default.conf`): the in-compose second hop between a host TLS proxy and the dashboard. It passes the host proxy's `X-Forwarded-*` headers through untouched, so the app's one-hop `SPACESHIFT_BEHIND_TLS_PROXY` trust and per-address login rate limiting keep seeing the real client.
 
 ### Fixed
+- Discord, Microsoft Teams, Telegram and PagerDuty alerts could not work under Docker Compose: only the Slack token was passed into the containers, so those channels' secrets in `.env` never reached the controller or the dashboard. All four are now forwarded (and listed in `.env.example`).
 - Settings: the **Update settings** button is now pinned to the bottom of the window (it was only reachable by scrolling to the end of a long page) and says how many edits are waiting. Settings were never saved until it was pressed. The Growth increment description now explains it is a percent of the volume's current size (20%: 100GB → 120GB; 5%: 105GB).
 - Wide tables (Volumes, Instances) no longer show a thick scrollbar on a normal-width screen: the page is a little wider (1520px max), table cells are slightly tighter, and every scrollbar is now thin and theme-colored.
 - Overview: hovering the usage donut no longer shows a colored strip over the legend, and the stray line above the chart is gone. ApexCharts injects its styles at runtime, which the dashboard's CSP blocks; its stylesheet is now served as a static file.

@@ -34,9 +34,15 @@ services:
       # Must match the postgres service's password above - same variable,
       # so the two never disagree without extra config.
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env - see .env.example}
-      # Slack alerts (optional) - the channel and method are set on the
-      # dashboard; only the secret lives here.
+      # Alert channels (all optional) - which are on, and Slack's channel,
+      # are set on the dashboard; only the secrets live here. A variable
+      # compose doesn't list never reaches the container, so every channel's
+      # secret has to be named, on the dashboard too (see below).
       SPACESHIFT_SLACK_BOT_TOKEN: ${SPACESHIFT_SLACK_BOT_TOKEN:-}
+      SPACESHIFT_DISCORD_WEBHOOK_URL: ${SPACESHIFT_DISCORD_WEBHOOK_URL:-}
+      SPACESHIFT_TEAMS_WEBHOOK_URL: ${SPACESHIFT_TEAMS_WEBHOOK_URL:-}
+      SPACESHIFT_TELEGRAM_BOT_TOKEN: ${SPACESHIFT_TELEGRAM_BOT_TOKEN:-}
+      SPACESHIFT_PAGERDUTY_ROUTING_KEY: ${SPACESHIFT_PAGERDUTY_ROUTING_KEY:-}
       # Only when the host has no instance role (see docs/SETUP.md 1.1).
       # Empty values are ignored by boto3's credential chain.
       AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-}
@@ -85,10 +91,14 @@ services:
       # "true" only when an HTTPS reverse proxy sits in front - turns on
       # Secure cookies and trusts X-Forwarded-* from one hop.
       SPACESHIFT_BEHIND_TLS_PROXY: ${SPACESHIFT_BEHIND_TLS_PROXY:-false}
-      # For the Settings page's "Send test notification" button only. The
-      # dashboard holds no AWS credentials - account checks run in the
-      # controller.
+      # For the Settings page's "Send test notification" button, and its
+      # warning when a channel is on without its secret. The dashboard holds
+      # no AWS credentials - account checks run in the controller.
       SPACESHIFT_SLACK_BOT_TOKEN: ${SPACESHIFT_SLACK_BOT_TOKEN:-}
+      SPACESHIFT_DISCORD_WEBHOOK_URL: ${SPACESHIFT_DISCORD_WEBHOOK_URL:-}
+      SPACESHIFT_TEAMS_WEBHOOK_URL: ${SPACESHIFT_TEAMS_WEBHOOK_URL:-}
+      SPACESHIFT_TELEGRAM_BOT_TOKEN: ${SPACESHIFT_TELEGRAM_BOT_TOKEN:-}
+      SPACESHIFT_PAGERDUTY_ROUTING_KEY: ${SPACESHIFT_PAGERDUTY_ROUTING_KEY:-}
     # No published port: the proxy service below is the only way in.
     # Overrides the Dockerfile's baked-in HEALTHCHECK, which checks for a
     # heartbeat file only Scheduler.run_forever() ever writes - this
