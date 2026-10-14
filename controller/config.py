@@ -62,6 +62,7 @@ DB_CONFIG_KEYS: dict[str, tuple[str, ...]] = {
     "scheduler.audit_log_retention_days": ("scheduler", "audit_log_retention_days"),
     "resize.max_volume_size_gb": ("resize", "max_volume_size_gb"),
     "resize.growth_increment_percent": ("resize", "growth_increment_percent"),
+    "resize.max_total_growth_gb": ("resize", "max_total_growth_gb"),
     "resize.extend_retry.max_attempts": ("resize", "extend_retry", "max_attempts"),
     "resize.extend_retry.backoff_seconds": ("resize", "extend_retry", "backoff_seconds"),
     "resize.stale_lock_timeout_minutes": ("resize", "stale_lock_timeout_minutes"),
@@ -113,6 +114,9 @@ class ExtendRetryConfig:
 class ResizeConfig:
     max_volume_size_gb: int = 500
     growth_increment_percent: int = 20
+    # 0 = no limit. Otherwise the most the controller may add to one volume
+    # over its lifetime, across all resizes - see start_resize().
+    max_total_growth_gb: int = 0
     extend_retry: ExtendRetryConfig = field(default_factory=ExtendRetryConfig)
     stale_lock_timeout_minutes: int = 45
 
@@ -122,6 +126,7 @@ class ResizeConfig:
         return cls(
             max_volume_size_gb=data.get("max_volume_size_gb", d.max_volume_size_gb),
             growth_increment_percent=data.get("growth_increment_percent", d.growth_increment_percent),
+            max_total_growth_gb=data.get("max_total_growth_gb", d.max_total_growth_gb),
             extend_retry=ExtendRetryConfig.from_dict(data.get("extend_retry", {})),
             stale_lock_timeout_minutes=data.get("stale_lock_timeout_minutes", d.stale_lock_timeout_minutes),
         )
@@ -232,6 +237,7 @@ class Config:
         )
         _require_int("resize.max_volume_size_gb", self.resize.max_volume_size_gb, minimum=1)
         _require_int("resize.growth_increment_percent", self.resize.growth_increment_percent, minimum=1)
+        _require_int("resize.max_total_growth_gb", self.resize.max_total_growth_gb, minimum=0)
         _require_int("resize.extend_retry.max_attempts", self.resize.extend_retry.max_attempts, minimum=1)
         _require_int("resize.extend_retry.backoff_seconds", self.resize.extend_retry.backoff_seconds, minimum=0)
         _require_int("resize.stale_lock_timeout_minutes", self.resize.stale_lock_timeout_minutes, minimum=1)

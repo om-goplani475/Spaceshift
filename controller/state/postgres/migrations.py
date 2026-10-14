@@ -109,4 +109,14 @@ MIGRATIONS: list[tuple[str, str]] = [
         DELETE FROM app_config WHERE key = 'notifications.method';
         """,
     ),
+    (
+        "0008_modification_added_gb",
+        """
+        -- How many GB each modify-volume call added, so the controller can
+        -- enforce resize.max_total_growth_gb across a volume's whole life.
+        -- Rows from before this migration keep 0: how much they added was
+        -- never recorded, so earlier growth is not counted against the cap.
+        ALTER TABLE modification_history ADD COLUMN added_gb INTEGER NOT NULL DEFAULT 0;
+        """,
+    ),
 ]

@@ -130,6 +130,113 @@ def test_start_resize_defaults_to_the_global_ceiling_when_no_override_given(aws,
     assert start_resize(ec2, state, notifier, config, volume_id, "i-1", 100) is True
 
 
+def test_start_resize_caps_the_step_at_the_ceiling_instead_of_refusing(aws, state, notifier):
+    # 499GB + 20% would be 599GB; the ceiling is 500GB, so it grows by the 1GB that fits.
+    ec2 = boto3.client("ec2", region_name="us-east-1")
+    volume_id = ec2.create_volume(AvailabilityZone="us-east-1a", Size=499)["VolumeId"]
+    config = Config.from_dict({"dry_run": False, "resize": {"max_volume_size_gb": 500}})
+
+    started = start_resize(ec2, state, notifier, config, volume_id, "i-1", 499)
+
+    assert started is True
+    assert state.get(volume_id).to_size_gb == 500
+
+
+def test_start_resize_refuses_a_volume_already_at_the_ceiling(aws, state, notifier):
+    ec2 = boto3.client("ec2", region_name="us-east-1")
+    volume_id = ec2.create_volume(AvailabilityZone="us-east-1a", Size=500)["VolumeId"]
+    config = Config.from_dict({"dry_run": False, "resize": {"max_volume_size_gb": 500}})
+    sent = []
+    notifier.send = lambda subject, *a, **k: sent.append(subject)
+
+    assert start_resize(ec2, state, notifier, config, volume_id, "i-1", 500) is False
+    assert state.get(volume_id) is None
+    assert sent == ["EBS volume needs manual review"]
+
+
+def test_start_resize_records_how_much_it_added(aws, state, notifier):
+    ec2 = boto3.client("ec2", region_name="us-east-1")
+    volume_id = ec2.create_volume(AvailabilityZone="us-east-1a", Size=100)["VolumeId"]
+    config = Config.from_dict({"dry_run": False})
+
+    start_resize(ec2, state, notifier, config, volume_id, "i-1", 100)
+
+    assert state.total_growth_gb(volume_id) == 20
+
+
+def test_max_total_growth_zero_means_no_limit(aws, state, notifier):
+    ec2 = boto3.client("ec2", region_name="us-east-1")
+    volume_id = ec2.create_volume(AvailabilityZone="us-east-1a", Size=100)["VolumeId"]
+    config = Config.from_dict({"dry_run": True, "resize": {"max_total_growth_gb": 0}})
+    state.record_modification(volume_id, dt.datetime.now(dt.UTC), added_gb=10_000)
+
+    assert start_resize(ec2, state, notifier, config, volume_id, "i-1", 100) is True
+
+
+def test_start_resize_caps_the_step_at_the_remaining_growth_budget(aws, state, notifier):
+    # Step would be +20GB, but only 5GB of the 50GB budget is left.
+    ec2 = boto3.client("ec2", region_name="us-east-1")
+    volume_id = ec2.create_volume(AvailabilityZone="us-east-1a", Size=100)["VolumeId"]
+    config = Config.from_dict({"dry_run": False, "resize": {"max_total_growth_gb": 50}})
+    state.record_modification(volume_id, dt.datetime.now(dt.UTC) - dt.timedelta(days=3), added_gb=45)
+
+    assert start_resize(ec2, state, notifier, config, volume_id, "i-1", 100) is True
+    assert state.get(volume_id).to_size_gb == 105
+    assert state.total_growth_gb(volume_id) == 50
+
+
+def test_start_resize_refuses_once_the_growth_budget_is_spent(aws, state, notifier):
+    ec2 = boto3.client("ec2", region_name="us-east-1")
+    volume_id = ec2.create_volume(AvailabilityZone="us-east-1a", Size=100)["VolumeId"]
+    config = Config.from_dict({"dry_run": False, "resize": {"max_total_growth_gb": 50}})
+    state.record_modification(volume_id, dt.datetime.now(dt.UTC) - dt.timedelta(days=3), added_gb=50)
+    sent = []
+    notifier.send = lambda subject, *a, **k: sent.append(subject)
+
+    assert start_resize(ec2, state, notifier, config, volume_id, "i-1", 100) is False
+    assert state.get(volume_id) is None
+    assert sent == ["EBS volume needs manual review"]
+
+
+def test_growth_cap_alert_fires_once_until_it_clears(aws, state, notifier):
+    ec2 = boto3.client("ec2", region_name="us-east-1")
+    volume_id = ec2.create_volume(AvailabilityZone="us-east-1a", Size=100)["VolumeId"]
+    spent = Config.from_dict({"dry_run": True, "resize": {"max_total_growth_gb": 50}})
+    raised = Config.from_dict({"dry_run": True, "resize": {"max_total_growth_gb": 500}})
+    state.record_modification(volume_id, dt.datetime.now(dt.UTC) - dt.timedelta(days=3), added_gb=50)
+    sent = []
+    notifier.send = lambda subject, *a, **k: sent.append(subject)
+    alerted: set[str] = set()
+
+    start_resize(ec2, state, notifier, spent, volume_id, "i-1", 100, growth_cap_alerted=alerted)
+    start_resize(ec2, state, notifier, spent, volume_id, "i-1", 100, growth_cap_alerted=alerted)
+    assert len(sent) == 1
+
+    start_resize(ec2, state, notifier, raised, volume_id, "i-1", 100, growth_cap_alerted=alerted)
+    start_resize(ec2, state, notifier, spent, volume_id, "i-1", 100, growth_cap_alerted=alerted)
+    assert len(sent) == 2
+
+
+def test_ceiling_and_growth_cap_alerts_dedup_independently(aws, state, notifier):
+    ec2 = boto3.client("ec2", region_name="us-east-1")
+    volume_id = ec2.create_volume(AvailabilityZone="us-east-1a", Size=100)["VolumeId"]
+    sent = []
+    notifier.send = lambda subject, *a, **k: sent.append(k["dedup_key"])
+    ceiling_alerted: set[str] = set()
+    growth_alerted: set[str] = set()
+    state.record_modification(volume_id, dt.datetime.now(dt.UTC) - dt.timedelta(days=3), added_gb=50)
+
+    at_ceiling = Config.from_dict({"dry_run": True, "resize": {"max_volume_size_gb": 100}})
+    out_of_budget = Config.from_dict({"dry_run": True, "resize": {"max_total_growth_gb": 50}})
+    for config in (at_ceiling, out_of_budget):
+        start_resize(
+            ec2, state, notifier, config, volume_id, "i-1", 100,
+            ceiling_alerted=ceiling_alerted, growth_cap_alerted=growth_alerted,
+        )  # fmt: skip
+
+    assert sent == [f"ceiling:{volume_id}", f"growth-cap:{volume_id}"]
+
+
 def test_start_resize_modification_limit_guard(aws, state, notifier):
     ec2 = boto3.client("ec2", region_name="us-east-1")
     volume_id = ec2.create_volume(AvailabilityZone="us-east-1a", Size=100)["VolumeId"]

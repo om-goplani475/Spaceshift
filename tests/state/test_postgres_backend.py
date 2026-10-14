@@ -753,3 +753,14 @@ def test_retry_extend_and_mark_resolved_are_guarded_and_audited(postgres_state):
     assert postgres_state.get("vol-a") is None
     assert len(audit(AuditAction.RESIZE_MARK_RESOLVED)) == 1
     assert not postgres_state.mark_resolved("vol-a", actor)
+
+
+def test_total_growth_sums_added_gb_and_defaults_to_zero(postgres_state):
+    now = datetime.now(UTC)
+    postgres_state.record_modification("vol-1", now, added_gb=20)
+    postgres_state.record_modification("vol-1", now, added_gb=24)
+    postgres_state.record_modification("vol-1", now)  # no size recorded: counts as 0
+    postgres_state.record_modification("vol-2", now, added_gb=7)
+
+    assert postgres_state.total_growth_gb("vol-1") == 44
+    assert postgres_state.total_growth_gb("vol-never") == 0

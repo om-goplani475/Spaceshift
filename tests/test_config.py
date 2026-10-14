@@ -13,6 +13,13 @@ def test_invalid_threshold_percent_rejected():
         Config(default_threshold_percent=150)
 
 
+def test_max_total_growth_defaults_to_no_limit_and_rejects_negative():
+    assert Config.from_dict({}).resize.max_total_growth_gb == 0
+    assert Config.from_dict({"resize": {"max_total_growth_gb": 200}}).resize.max_total_growth_gb == 200
+    with pytest.raises(ValueError, match="max_total_growth_gb"):
+        Config.from_dict({"resize": {"max_total_growth_gb": -1}})
+
+
 def test_non_positive_growth_increment_rejected():
     with pytest.raises(ValueError, match="growth_increment_percent"):
         Config.from_dict({"resize": {"growth_increment_percent": 0}})

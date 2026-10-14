@@ -78,6 +78,17 @@ def test_modification_history():
     assert backend.modification_count_since("vol-1", now + timedelta(seconds=1)) == 0
 
 
+def test_total_growth_sums_added_gb_per_volume():
+    backend = InMemoryStateBackend()
+    now = datetime.now(UTC)
+    backend.record_modification("vol-1", now, added_gb=20)
+    backend.record_modification("vol-1", now, added_gb=24)
+    backend.record_modification("vol-1", now)  # recorded without a size: counts as 0
+    backend.record_modification("vol-2", now, added_gb=7)
+    assert backend.total_growth_gb("vol-1") == 44
+    assert backend.total_growth_gb("vol-never") == 0
+
+
 def test_list_all():
     backend = InMemoryStateBackend()
     backend.create_if_absent("vol-1", "i-1", 100, 150)

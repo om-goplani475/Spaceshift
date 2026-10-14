@@ -56,6 +56,24 @@ def compute_target_size_gb(current_size_gb: int, growth_increment_percent: int) 
     return current_size_gb + max(increment, 1)
 
 
+def _alert_needs_review_once(
+    notifier: Notifier,
+    alerted: set[str] | None,
+    volume_id: str,
+    dedup_key: str,
+    message: str,
+) -> None:
+    """Send the critical "needs manual review" alert, at most once per
+    volume for as long as `alerted` (the caller's dedup set) still holds it.
+    With alerted=None every call alerts - the behavior for direct/test
+    callers that don't keep a set."""
+    if alerted is not None and volume_id in alerted:
+        return
+    notifier.send("EBS volume needs manual review", message, severity=SEVERITY_CRITICAL, dedup_key=dedup_key)
+    if alerted is not None:
+        alerted.add(volume_id)
+
+
 def start_resize(
     ec2_client,
     state: StateBackend,
@@ -68,6 +86,7 @@ def start_resize(
     region: str = "",
     max_size_gb: int | None = None,
     ceiling_alerted: set[str] | None = None,
+    growth_cap_alerted: set[str] | None = None,
 ) -> bool:
     """Attempt to start the AWS-side resize for volume_id.
 
@@ -77,6 +96,12 @@ def start_resize(
     directly when not given, so every existing caller that only cares about
     the global ceiling is unaffected.
 
+    The step is shortened rather than refused when it would overshoot: the
+    target is capped at the ceiling and, if resize.max_total_growth_gb is
+    set, at what is left of that volume's lifetime growth budget. A volume
+    that is already at the ceiling or out of budget gets a "needs manual
+    review" alert instead, and is not resized.
+
     ceiling_alerted is an optional caller-owned dedup set (the scheduler
     passes its own, kept for the life of the process): without it, hitting
     the ceiling alerts every single cycle for as long as the volume stays
@@ -84,32 +109,64 @@ def start_resize(
     and passes the ceiling check are what clears it again - so raising the
     ceiling (or the volume no longer needing to grow past it) naturally
     re-arms the alert. None (the default) preserves the old always-alert
-    behavior, for direct/test callers that don't care.
+    behavior, for direct/test callers that don't care. growth_cap_alerted
+    is the same thing for the total-growth limit's alert.
 
     Returns True if a resize was started (or dry-run logged), False if
     skipped for an expected reason (already in flight, at the size
-    ceiling, or over the 24h modification cap). Unexpected AWS errors
+    ceiling, out of total-growth budget, or over the 24h modification cap). Unexpected AWS errors
     propagate - the scheduler wraps each volume in its own try/except so
     one bad volume never blocks the rest of the fleet.
     """
     effective_max_size_gb = max_size_gb if max_size_gb is not None else config.resize.max_volume_size_gb
-    target_size_gb = compute_target_size_gb(current_size_gb, config.resize.growth_increment_percent)
+    step_target_gb = compute_target_size_gb(current_size_gb, config.resize.growth_increment_percent)
+    target_size_gb = min(step_target_gb, effective_max_size_gb)
 
-    if target_size_gb > effective_max_size_gb:
-        if ceiling_alerted is None or volume_id not in ceiling_alerted:
-            notifier.send(
-                "EBS volume needs manual review",
-                f"Volume {volume_id} on {instance_id} would grow to {target_size_gb}GB, exceeding "
-                f"the configured max size ({effective_max_size_gb}GB). "
-                f"Auto-resize has stopped for this volume - investigate before raising the ceiling.",
-                severity=SEVERITY_CRITICAL,
-                dedup_key=f"ceiling:{volume_id}",
-            )
-            if ceiling_alerted is not None:
-                ceiling_alerted.add(volume_id)
+    if target_size_gb <= current_size_gb:
+        _alert_needs_review_once(
+            notifier,
+            alerted=ceiling_alerted,
+            volume_id=volume_id,
+            dedup_key=f"ceiling:{volume_id}",
+            message=(
+                f"Volume {volume_id} on {instance_id} is already at {current_size_gb}GB, at or above the "
+                f"configured max size ({effective_max_size_gb}GB), so it can't grow. "
+                f"Auto-resize has stopped for this volume - investigate before raising the ceiling."
+            ),
+        )
         return False
     if ceiling_alerted is not None:
         ceiling_alerted.discard(volume_id)
+
+    max_total_growth_gb = config.resize.max_total_growth_gb
+    if max_total_growth_gb > 0:
+        grown_gb = state.total_growth_gb(volume_id)
+        remaining_gb = max_total_growth_gb - grown_gb
+        if remaining_gb <= 0:
+            _alert_needs_review_once(
+                notifier,
+                alerted=growth_cap_alerted,
+                volume_id=volume_id,
+                dedup_key=f"growth-cap:{volume_id}",
+                message=(
+                    f"Volume {volume_id} on {instance_id} has already been grown {grown_gb}GB by the "
+                    f"controller, reaching the configured limit of {max_total_growth_gb}GB total growth per "
+                    f"volume. Auto-resize has stopped for this volume - investigate before raising the limit."
+                ),
+            )
+            return False
+        target_size_gb = min(target_size_gb, current_size_gb + remaining_gb)
+    if growth_cap_alerted is not None:
+        growth_cap_alerted.discard(volume_id)
+
+    if target_size_gb < step_target_gb:
+        logger.info(
+            "%s: growth step %dGB -> %dGB shortened to %dGB by the size ceiling / total-growth limit",
+            volume_id,
+            current_size_gb,
+            step_target_gb,
+            target_size_gb,
+        )
 
     if config.dry_run:
         logger.info(
@@ -173,7 +230,7 @@ def start_resize(
             )
         raise ModifyVolumeError(f"modify-volume rejected for {volume_id}: {exc}") from exc
 
-    state.record_modification(volume_id, datetime.now(UTC))
+    state.record_modification(volume_id, datetime.now(UTC), added_gb=target_size_gb - current_size_gb)
     # Row stays at MODIFY_REQUESTED (create_if_absent's default) - no
     # synchronous wait for AWS to report the new size usable. That used to
     # block this worker thread for up to 15 minutes, inside the same small

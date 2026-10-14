@@ -59,6 +59,7 @@ class InMemoryStateBackend(StateBackend):
         self._lock = threading.Lock()
         self._records: dict[str, ResizeRecord] = {}
         self._modifications: dict[str, list[datetime]] = {}
+        self._growth_gb: dict[str, int] = {}
         self._scans: list[ScanRecord] = []
         self._next_scan_id = 1
         self._instances: dict[str, InstanceRecord] = {}
@@ -178,9 +179,13 @@ class InMemoryStateBackend(StateBackend):
         rows = [r for r in self._records.values() if account_names is None or r.account_name in account_names]
         return sorted(rows, key=lambda r: r.updated_at, reverse=True)[:limit]
 
-    def record_modification(self, volume_id: str, requested_at: datetime) -> None:
+    def record_modification(self, volume_id: str, requested_at: datetime, added_gb: int = 0) -> None:
         with self._lock:
             self._modifications.setdefault(volume_id, []).append(requested_at)
+            self._growth_gb[volume_id] = self._growth_gb.get(volume_id, 0) + added_gb
+
+    def total_growth_gb(self, volume_id: str) -> int:
+        return self._growth_gb.get(volume_id, 0)
 
     def modification_count_since(self, volume_id: str, since: datetime) -> int:
         return sum(1 for requested_at in self._modifications.get(volume_id, []) if requested_at >= since)

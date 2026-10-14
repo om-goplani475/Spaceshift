@@ -132,13 +132,20 @@ class ResizeStateContract(abc.ABC):
         """
 
     @abc.abstractmethod
-    def record_modification(self, volume_id: str, requested_at: datetime) -> None:
+    def record_modification(self, volume_id: str, requested_at: datetime, added_gb: int = 0) -> None:
         """Append an entry to volume_id's modification-history log.
 
         Called once per modify-volume API call, independent of the resize
         state machine above, so the AWS 4-per-24h limit can be enforced
-        even across resize attempts that eventually succeed.
+        even across resize attempts that eventually succeed. `added_gb` is
+        how much the call grew the volume, for total_growth_gb().
         """
+
+    @abc.abstractmethod
+    def total_growth_gb(self, volume_id: str) -> int:
+        """Total GB the controller has added to volume_id across every
+        recorded modification. Modifications recorded without an `added_gb`
+        count as 0."""
 
     @abc.abstractmethod
     def modification_count_since(self, volume_id: str, since: datetime) -> int:

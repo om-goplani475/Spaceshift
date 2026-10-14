@@ -175,12 +175,19 @@ class PostgresResizeMixin(ResizeStateContract):
             columns = [desc[0] for desc in cur.description]
         return [self._row_to_record(dict(zip(columns, row, strict=True))) for row in rows]
 
-    def record_modification(self, volume_id: str, requested_at: datetime) -> None:
+    def record_modification(self, volume_id: str, requested_at: datetime, added_gb: int = 0) -> None:
         with self._cursor(commit=True) as cur:
             cur.execute(
-                "INSERT INTO modification_history (volume_id, requested_at) VALUES (%s, %s)",
-                (volume_id, requested_at),
+                "INSERT INTO modification_history (volume_id, requested_at, added_gb) VALUES (%s, %s, %s)",
+                (volume_id, requested_at, added_gb),
             )
+
+    def total_growth_gb(self, volume_id: str) -> int:
+        with self._cursor() as cur:
+            cur.execute(
+                "SELECT COALESCE(SUM(added_gb), 0) FROM modification_history WHERE volume_id = %s", (volume_id,)
+            )
+            return int(cur.fetchone()[0])
 
     def modification_count_since(self, volume_id: str, since: datetime) -> int:
         with self._cursor() as cur:

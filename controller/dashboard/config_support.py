@@ -44,6 +44,7 @@ _CONFIG_LABELS: dict[str, str] = {
     "scheduler.audit_log_retention_days": "Audit log retention (days)",
     "resize.max_volume_size_gb": "Max volume size (GB)",
     "resize.growth_increment_percent": "Growth increment (%)",
+    "resize.max_total_growth_gb": "Max total growth (GB)",
     "resize.extend_retry.max_attempts": "Extend retry attempts",
     "resize.extend_retry.backoff_seconds": "Extend retry backoff (sec)",
     "resize.stale_lock_timeout_minutes": "Stale lock timeout (min)",
@@ -72,11 +73,16 @@ _CONFIG_DESCRIPTIONS: dict[str, str] = {
         "How long the audit log keeps a record of who changed what. Minimum 30 days. Changing this is itself recorded."
     ),
     "resize.max_volume_size_gb": (
-        "Hard per-volume ceiling. Crossing it stops auto-resize for that volume and alerts for manual review "
-        "instead of continuing."
+        "Hard per-volume ceiling. A resize that would overshoot it is shortened to land exactly on it; a volume "
+        "already at the ceiling stops auto-resizing and alerts for manual review."
     ),
     "resize.growth_increment_percent": (
         "How much bigger each resize makes the volume (e.g. 100GB → 120GB), not the target size itself."
+    ),
+    "resize.max_total_growth_gb": (
+        "The most the controller may add to one volume, in total across all its resizes. 0 means no limit. "
+        "Counts only growth made after this feature was installed. Out of budget, the volume stops "
+        "auto-resizing and alerts for manual review."
     ),
     "resize.extend_retry.max_attempts": (
         "How many times to retry the OS-side filesystem extend step before giving up and alerting. Never "
@@ -124,7 +130,12 @@ _CONFIG_GROUPS: list[tuple[str, list[str]]] = [
     ("Safety", ["dry_run", "discovery.honor_resource_tags"]),
     (
         "Thresholds and growth",
-        ["default_threshold_percent", "resize.growth_increment_percent", "resize.max_volume_size_gb"],
+        [
+            "default_threshold_percent",
+            "resize.growth_increment_percent",
+            "resize.max_volume_size_gb",
+            "resize.max_total_growth_gb",
+        ],
     ),
     (
         "Scheduling",

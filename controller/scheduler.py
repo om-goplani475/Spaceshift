@@ -129,6 +129,7 @@ class Scheduler:
         # start_resize() itself once a volume no longer exceeds its
         # ceiling (admin raised it, or the override changed).
         self._ceiling_alerted: set[str] = set()
+        self._growth_cap_alerted: set[str] = set()
 
         # When a pending resize's instance first becomes SSM-unreachable -
         # keyed by volume_id, cleared once it's reachable again. Gates
@@ -319,10 +320,11 @@ class Scheduler:
             instance = self._state.get_instance(instance_id)
             if instance is None or instance.is_stale:
                 self._ssm_not_ready_alerted.discard(key)
-        for volume_id in list(self._ceiling_alerted):
-            volume = self._state.get_volume(volume_id)
-            if volume is None or volume.is_stale:
-                self._ceiling_alerted.discard(volume_id)
+        for alerted in (self._ceiling_alerted, self._growth_cap_alerted):
+            for volume_id in list(alerted):
+                volume = self._state.get_volume(volume_id)
+                if volume is None or volume.is_stale:
+                    alerted.discard(volume_id)
         for volume_id in list(self._ssm_unreachable_since):
             volume = self._state.get_volume(volume_id)
             if volume is None or volume.is_stale:
@@ -411,6 +413,7 @@ class Scheduler:
                         region,
                         max_size_gb=volume.max_size_gb,
                         ceiling_alerted=self._ceiling_alerted,
+                        growth_cap_alerted=self._growth_cap_alerted,
                     )
                 except ModifyVolumeError as exc:
                     # Already alerted and recorded as MODIFY_FAILED inside

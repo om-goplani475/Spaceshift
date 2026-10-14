@@ -211,6 +211,7 @@ def test_prune_alert_dedup_sets_drops_stale_or_gone_entries(scheduler, state):
 
     scheduler._ssm_not_ready_alerted = {(_ACCOUNT, "i-gone"), (_ACCOUNT, "i-live"), (_ACCOUNT, "i-never-existed")}
     scheduler._ceiling_alerted = {"vol-gone", "vol-live", "vol-never-existed"}
+    scheduler._growth_cap_alerted = {"vol-gone", "vol-live", "vol-never-existed"}
     scheduler._ssm_unreachable_since = {
         "vol-gone": dt.datetime.now(dt.UTC),
         "vol-live": dt.datetime.now(dt.UTC),
@@ -220,6 +221,7 @@ def test_prune_alert_dedup_sets_drops_stale_or_gone_entries(scheduler, state):
 
     assert scheduler._ssm_not_ready_alerted == {(_ACCOUNT, "i-live")}
     assert scheduler._ceiling_alerted == {"vol-live"}
+    assert scheduler._growth_cap_alerted == {"vol-live"}
     assert set(scheduler._ssm_unreachable_since) == {"vol-live"}
 
 
