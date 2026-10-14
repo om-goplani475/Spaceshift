@@ -14,6 +14,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - A `proxy` service in `docker-compose.yml` (nginx, config in `nginx/default.conf`): the in-compose second hop between a host TLS proxy and the dashboard. It passes the host proxy's `X-Forwarded-*` headers through untouched, so the app's one-hop `SPACESHIFT_BEHIND_TLS_PROXY` trust and per-address login rate limiting keep seeing the real client.
 
 ### Fixed
+- Wide tables (Volumes, Instances) no longer show a thick scrollbar on a normal-width screen: the page is a little wider (1520px max), table cells are slightly tighter, and every scrollbar is now thin and theme-colored.
 - Overview: hovering the usage donut no longer shows a colored strip over the legend, and the stray line above the chart is gone. ApexCharts injects its styles at runtime, which the dashboard's CSP blocks; its stylesheet is now served as a static file.
 
 ### Changed
