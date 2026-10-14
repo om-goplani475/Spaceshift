@@ -47,8 +47,8 @@ const liveLabel = document.getElementById("live-label");
 
 async function refreshLiveData() {
   if (document.hidden || refreshInFlight || batchUpdateInFlight) return;
-  // A swap would wipe a limit being typed - skip this cycle.
-  if (document.activeElement && document.activeElement.classList.contains("limit-input")) return;
+  // A swap would wipe an edit that hasn't been saved yet - skip this cycle.
+  if (document.querySelector('.limit-input[data-dirty="true"]')) return;
   refreshInFlight = true;
   if (liveIndicator) liveIndicator.dataset.state = "refreshing";
   try {

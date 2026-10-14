@@ -377,40 +377,48 @@ function wireAutoresizeToggles(root) {
 }
 
 // Inline per-volume / per-instance limit editor (threshold %, max size GB).
-// Blank clears the override (the row then inherits, shown as the
-// placeholder); Enter or leaving the field saves, Escape reverts. The
-// field, JSON key, unit and bounds all come from the input's data-*
-// attributes, set by the limit_cell macro.
+// Editing only marks the field as changed and reveals its Save / Discard
+// buttons - nothing is sent until Save is pressed (or Enter, the keyboard
+// equivalent); Escape or Discard puts the old value back. Blank means
+// "inherit". The field, JSON key, unit and bounds all come from the input's
+// data-* attributes, set by the limit_cell macro.
 function wireLimitInputs(root) {
   root.querySelectorAll(".limit-input").forEach(function (input) {
     if (input.dataset.wired) return;
     input.dataset.wired = "1";
+    const cell = input.closest("td");
+    const note = cell.querySelector(".limit-note");
+    const actions = cell.querySelector(".limit-actions");
+    const saveBtn = cell.querySelector(".limit-save");
+    const cancelBtn = cell.querySelector(".limit-cancel");
+    const label = input.dataset.label;
+    const unit = input.dataset.unit;
+    const id = input.dataset.id;
     let saved = input.value;
 
-    input.addEventListener("keydown", function (e) {
-      if (e.key === "Enter") input.blur();
-      if (e.key === "Escape") {
-        input.value = saved;
-        input.blur();
-      }
-    });
+    function showDirty(dirty) {
+      input.dataset.dirty = dirty ? "true" : "false";
+      actions.hidden = !dirty;
+      note.hidden = dirty;
+    }
 
-    input.addEventListener("change", function () {
-      const label = input.dataset.label;
-      const unit = input.dataset.unit;
-      const low = Number(input.min);
-      const high = Number(input.max);
+    function discard() {
+      input.value = saved;
+      showDirty(false);
+    }
+
+    function save() {
       const raw = input.value.trim();
       const limit = raw === "" ? null : Number(raw);
+      const low = Number(input.min);
+      const high = Number(input.max);
       if (limit !== null && (!Number.isInteger(limit) || limit < low || limit > high)) {
-        input.value = saved;
         showToast(label + " must be a whole number from " + low + " to " + high + ", or blank to inherit", "error");
         return;
       }
-      const id = input.dataset.id;
       const body = {};
       body[input.dataset.bodyKey] = limit;
-      input.disabled = true;
+      input.disabled = saveBtn.disabled = cancelBtn.disabled = true;
       postJSON("/api/" + input.dataset.kind + "/" + encodeURIComponent(id) + "/" + input.dataset.field, body)
         .then(function (resp) {
           if (!resp.ok) {
@@ -422,24 +430,34 @@ function wireLimitInputs(root) {
             });
           }
           saved = input.value = limit === null ? "" : String(limit);
-          const cell = input.closest("td");
           const inheritedNote = "(" + input.dataset.inheritedSource + ")";
-          cell.querySelector(".limit-note").textContent = limit === null ? inheritedNote : "";
+          note.textContent = limit === null ? inheritedNote : "";
           cell.querySelector(".limit-text").textContent =
             limit === null ? input.dataset.inherited + unit + " " + inheritedNote : limit + unit;
+          showDirty(false);
           showToast(label + " for " + id + (limit === null ? " cleared" : " set to " + limit + unit), "success");
         })
         .catch(function (err) {
-          input.value = saved;
+          // The edit stays pending, so nothing typed is lost and it can be corrected.
           showToast(
             err.fromServer ? err.message : "Couldn't update the " + label.toLowerCase() + " for " + id + ". Please try again.",
             "error"
           );
         })
         .finally(function () {
-          input.disabled = false;
+          input.disabled = saveBtn.disabled = cancelBtn.disabled = false;
         });
+    }
+
+    input.addEventListener("input", function () {
+      showDirty(input.value.trim() !== saved);
     });
+    input.addEventListener("keydown", function (e) {
+      if (e.key === "Enter" && input.dataset.dirty === "true") save();
+      if (e.key === "Escape") discard();
+    });
+    saveBtn.addEventListener("click", save);
+    cancelBtn.addEventListener("click", discard);
   });
 }
 
