@@ -141,7 +141,38 @@ def _parse_limit_body(key: str, low: int, high: int) -> tuple[bool, int | None]:
     return True, value
 
 
-def _set_limit(state: StateBackend, kind: str, resource_id: str, limit: tuple[str, int, int], setter):
+def _volume_max_size_error(state: StateBackend, volume, value: int | None) -> str | None:
+    # Equal to the current size is allowed on purpose: it freezes the volume
+    # (the controller alerts instead of growing it). Below it can never be
+    # honored - the volume is already bigger than its own ceiling.
+    if value is not None and value < volume.size_gb:
+        return (
+            f"Max size {value} GB is below this volume's current size ({volume.size_gb} GB), so it could never "
+            f"grow - use at least {volume.size_gb} GB."
+        )
+    return None
+
+
+def _instance_max_size_error(state: StateBackend, instance, value: int | None) -> str | None:
+    # An instance's max size covers every attached volume that has none of
+    # its own, so it must not be below the biggest of those.
+    if value is None:
+        return None
+    covered = [
+        v
+        for v in state.list_volumes(account_name=instance.account_name, region=instance.region)
+        if v.instance_id == instance.instance_id and v.max_size_gb is None
+    ]
+    biggest = max(covered, key=lambda v: v.size_gb, default=None)
+    if biggest is not None and value < biggest.size_gb:
+        return (
+            f"Max size {value} GB is below the current size of {biggest.volume_id} ({biggest.size_gb} GB), which "
+            f"has no max size of its own - set one on that volume first, or use at least {biggest.size_gb} GB."
+        )
+    return None
+
+
+def _set_limit(state: StateBackend, kind: str, resource_id: str, limit: tuple[str, int, int], setter, check=None):
     key, low, high = limit
     valid, value = _parse_limit_body(key, low, high)
     if not valid:
@@ -150,6 +181,8 @@ def _set_limit(state: StateBackend, kind: str, resource_id: str, limit: tuple[st
     if record is None:
         return jsonify({"error": f"no known {kind} {resource_id!r}"}), 404
     require_operator(record.account_name, kind, resource_id)
+    if check is not None and (error := check(state, record, value)) is not None:
+        return jsonify({"error": error}), 400
     if not setter(resource_id, value, audit=current_actor()):
         return jsonify({"error": f"no known {kind} {resource_id!r}"}), 404
     return jsonify({f"{kind}_id": resource_id, key: value})
@@ -164,8 +197,10 @@ def set_volume_threshold_view(state: StateBackend, volume_id: str):
 
 
 def set_instance_max_size_view(state: StateBackend, instance_id: str):
-    return _set_limit(state, "instance", instance_id, _MAX_SIZE, state.set_instance_max_size)
+    return _set_limit(
+        state, "instance", instance_id, _MAX_SIZE, state.set_instance_max_size, check=_instance_max_size_error
+    )
 
 
 def set_volume_max_size_view(state: StateBackend, volume_id: str):
-    return _set_limit(state, "volume", volume_id, _MAX_SIZE, state.set_volume_max_size)
+    return _set_limit(state, "volume", volume_id, _MAX_SIZE, state.set_volume_max_size, check=_volume_max_size_error)

@@ -59,7 +59,9 @@ def test_rejects_values_that_are_not_a_whole_gb_from_1_to_65536(client, state, f
 
 
 def test_accepts_the_boundaries(client, state, fleet):
-    assert client.post("/api/volumes/vol-dev/max-size", json={"max_size_gb": 1}).status_code == 200
+    state.upsert_volume("dev", "vol-tiny", "i-dev", "us-east-1", 1, "/dev/xvdi")  # 1 GB so a max of 1 is not below it
+
+    assert client.post("/api/volumes/vol-tiny/max-size", json={"max_size_gb": 1}).status_code == 200
     assert client.post("/api/volumes/vol-dev/max-size", json={"max_size_gb": 65536}).status_code == 200
 
 
@@ -100,6 +102,50 @@ def test_an_operator_can_change_it_only_in_their_account(app, state, fleet):
 
     assert client.post("/api/volumes/vol-dev/max-size", json={"max_size_gb": 1000}).status_code == 200
     assert client.post("/api/volumes/vol-prod/max-size", json={"max_size_gb": 1000}).status_code == 404
+
+
+# ---- Validation against the current size -----------------------------------
+
+
+def test_a_volume_max_size_below_its_current_size_is_rejected_with_the_reason(client, state, fleet):
+    response = client.post("/api/volumes/vol-dev/max-size", json={"max_size_gb": 99})
+
+    assert response.status_code == 400
+    assert "100 GB" in response.get_json()["error"] and "never" in response.get_json()["error"]
+    assert state.get_volume("vol-dev").max_size_gb is None
+    assert _audit(state, AuditAction.VOLUME_MAX_SIZE) == []
+
+
+def test_a_volume_max_size_equal_to_its_current_size_is_allowed_to_freeze_it(client, state, fleet):
+    assert client.post("/api/volumes/vol-dev/max-size", json={"max_size_gb": 100}).status_code == 200
+
+
+def test_clearing_a_max_size_is_always_allowed(client, state, fleet):
+    state.set_volume_max_size("vol-dev", 100)
+
+    assert client.post("/api/volumes/vol-dev/max-size", json={"max_size_gb": None}).status_code == 200
+
+
+def test_an_instance_max_size_below_an_inheriting_volume_is_rejected_naming_it(client, state, fleet):
+    response = client.post("/api/instances/i-dev/max-size", json={"max_size_gb": 50})
+
+    assert response.status_code == 400
+    assert "vol-dev" in response.get_json()["error"] and "100 GB" in response.get_json()["error"]
+    assert state.get_instance("i-dev").max_size_gb is None
+
+
+def test_an_instance_max_size_ignores_volumes_with_their_own_max_size(client, state, fleet):
+    state.set_volume_max_size("vol-dev", 1000)
+
+    assert client.post("/api/instances/i-dev/max-size", json={"max_size_gb": 50}).status_code == 200
+
+
+def test_an_instance_max_size_ignores_stale_volumes_and_other_instances(client, state, fleet):
+    state.upsert_volume("dev", "vol-big", "i-other", "us-east-1", 900, "/dev/xvdg")
+    state.upsert_volume("dev", "vol-gone", "i-dev", "us-east-1", 900, "/dev/xvdh")
+    state.mark_stale("dev", "us-east-1", seen_instance_ids={"i-dev"}, seen_volume_ids={"vol-dev", "vol-big"})
+
+    assert client.post("/api/instances/i-dev/max-size", json={"max_size_gb": 100}).status_code == 200
 
 
 # ---- Pages ----------------------------------------------------------------

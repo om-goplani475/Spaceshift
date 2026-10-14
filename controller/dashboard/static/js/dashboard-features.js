@@ -413,7 +413,14 @@ function wireLimitInputs(root) {
       input.disabled = true;
       postJSON("/api/" + input.dataset.kind + "/" + encodeURIComponent(id) + "/" + input.dataset.field, body)
         .then(function (resp) {
-          if (!resp.ok) throw new Error("request failed");
+          if (!resp.ok) {
+            // A 400 carries the reason (e.g. a max size below the volume's current size).
+            return resp.json().catch(function () { return {}; }).then(function (data) {
+              const err = new Error(data.error || "request failed");
+              err.fromServer = resp.status === 400 && Boolean(data.error);
+              throw err;
+            });
+          }
           saved = input.value = limit === null ? "" : String(limit);
           const cell = input.closest("td");
           const inheritedNote = "(" + input.dataset.inheritedSource + ")";
@@ -422,9 +429,12 @@ function wireLimitInputs(root) {
             limit === null ? input.dataset.inherited + unit + " " + inheritedNote : limit + unit;
           showToast(label + " for " + id + (limit === null ? " cleared" : " set to " + limit + unit), "success");
         })
-        .catch(function () {
+        .catch(function (err) {
           input.value = saved;
-          showToast("Couldn't update the " + label.toLowerCase() + " for " + id + ". Please try again.", "error");
+          showToast(
+            err.fromServer ? err.message : "Couldn't update the " + label.toLowerCase() + " for " + id + ". Please try again.",
+            "error"
+          );
         })
         .finally(function () {
           input.disabled = false;
