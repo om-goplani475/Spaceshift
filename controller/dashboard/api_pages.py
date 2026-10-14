@@ -7,6 +7,7 @@ from __future__ import annotations
 
 from flask import jsonify, request
 
+from controller.config import MAX_EBS_VOLUME_GB, MIN_THRESHOLD_PERCENT
 from controller.dashboard._common import _SCAN_LIST_LIMIT, _readable
 from controller.dashboard.auth import current_actor
 from controller.dashboard.rbac import require_operator
@@ -122,9 +123,8 @@ def set_volume_autoresize_view(state: StateBackend, volume_id: str):
 
 
 # (JSON key, lowest, highest) of each per-resource limit an operator can set.
-# 65536 GiB is the largest EBS volume (io2 Block Express).
-_THRESHOLD = ("threshold_percent", 1, 100)
-_MAX_SIZE = ("max_size_gb", 1, 65536)
+_THRESHOLD = ("threshold_percent", MIN_THRESHOLD_PERCENT, 100)
+_MAX_SIZE = ("max_size_gb", 1, MAX_EBS_VOLUME_GB)
 
 
 def _parse_limit_body(key: str, low: int, high: int) -> tuple[bool, int | None]:

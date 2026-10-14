@@ -467,7 +467,7 @@ def test_set_config_valid_value_persists(state, client):
     response = client.post("/api/config/dry_run", json={"value": "false"})
 
     assert response.status_code == 200
-    assert response.get_json() == {"key": "dry_run", "value": "false"}
+    assert response.get_json() == {"key": "dry_run", "value": "false", "warnings": []}
     assert state.get_config("dry_run") == "false"
 
 

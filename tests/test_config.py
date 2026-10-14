@@ -185,3 +185,41 @@ def test_notification_settings_are_live_editable_and_validated():
     # an emptied Settings field means unset, and a numeric-looking id stays a string
     assert Config.from_dict({"notifications": {"slack_channel_id": ""}}).notifications.slack_channel_id is None
     assert Config.from_dict({"notifications": {"slack_channel_id": 123}}).notifications.slack_channel_id == "123"
+
+
+# ---- Bounds that stop a typo from doing damage -------------------------------
+
+_REJECTED = [
+    ("default_threshold_percent", {"default_threshold_percent": 0}),
+    ("scheduler.interval_seconds", {"scheduler": {"interval_seconds": 9}}),
+    ("resize.stale_lock_timeout_minutes", {"resize": {"stale_lock_timeout_minutes": 14}}),
+    ("resize.growth_increment_percent", {"resize": {"growth_increment_percent": 101}}),
+    ("resize.max_volume_size_gb", {"resize": {"max_volume_size_gb": 65537}}),
+    ("resize.max_total_growth_gb", {"resize": {"max_total_growth_gb": 65537}}),
+    ("resize.extend_retry.max_attempts", {"resize": {"extend_retry": {"max_attempts": 21}}}),
+]
+_ACCEPTED_AT_THE_EDGE = [
+    {"default_threshold_percent": 1},
+    {"default_threshold_percent": 100},
+    {"scheduler": {"interval_seconds": 10}},
+    {"resize": {"stale_lock_timeout_minutes": 15}},
+    {"resize": {"growth_increment_percent": 100}},
+    {"resize": {"max_volume_size_gb": 65536}},
+    {"resize": {"max_total_growth_gb": 65536}},
+    {"resize": {"extend_retry": {"max_attempts": 20}}},
+]
+
+
+@pytest.mark.parametrize(("label", "data"), _REJECTED, ids=[label for label, _ in _REJECTED])
+def test_a_value_just_outside_its_bound_is_rejected_naming_the_setting(label, data):
+    with pytest.raises(ValueError, match=label.split(".")[-1]):
+        Config.from_dict(data)
+
+
+@pytest.mark.parametrize("data", _ACCEPTED_AT_THE_EDGE)
+def test_a_value_exactly_at_its_bound_is_accepted(data):
+    Config.from_dict(data)
+
+
+def test_the_defaults_satisfy_every_bound():
+    Config.from_dict({})

@@ -6,8 +6,10 @@ Blueprint.
 
 from __future__ import annotations
 
+import os
 from dataclasses import asdict
 
+from controller import notifications
 from controller.config import DB_CONFIG_KEYS, Config, apply_db_overrides
 from controller.state.base import StateBackend
 
@@ -177,6 +179,78 @@ _CONFIG_GROUPS: list[tuple[str, list[str]]] = [
         ],
     ),
 ]
+
+
+# channel -> (display name, the environment variable holding its secret)
+_CHANNEL_SECRETS = {
+    "slack": ("Slack", notifications.SLACK_TOKEN_ENV),
+    "discord": ("Discord", notifications.DISCORD_WEBHOOK_ENV),
+    "teams": ("Microsoft Teams", notifications.TEAMS_WEBHOOK_ENV),
+    "telegram": ("Telegram", notifications.TELEGRAM_TOKEN_ENV),
+    "pagerduty": ("PagerDuty", notifications.PAGERDUTY_KEY_ENV),
+}
+
+
+def _missing_secret_warning(channel: str) -> str | None:
+    name, env_var = _CHANNEL_SECRETS[channel]
+    if os.environ.get(env_var):
+        return None
+    return (
+        f"{name} is on, but {env_var} isn't set in .env - alerts to {name} will fail until it is "
+        "(then restart the controller and dashboard)."
+    )
+
+
+def _notification_secret_warnings(config: Config) -> list[str]:
+    """One warning per enabled channel whose secret is missing from this
+    process's environment. The dashboard gets the same variables as the
+    controller (docker-compose.yml), so its view is the controller's."""
+    warnings = (_missing_secret_warning(channel) for channel in config.notifications.enabled_channels())
+    return [w for w in warnings if w is not None]
+
+
+def _ceiling_warnings(state: StateBackend, new_ceiling_gb: int) -> list[str]:
+    """Watched volumes this global ceiling would stop from growing: already
+    at or above it, with no max size of their own or their instance's."""
+    instances = {i.instance_id: i for i in state.list_instances()}
+    stuck = []
+    for volume in state.list_volumes():
+        instance = instances.get(volume.instance_id) if volume.instance_id else None
+        watched = volume.autoresize or (instance is not None and instance.autoresize)
+        has_own_limit = volume.max_size_gb is not None or (instance is not None and instance.max_size_gb is not None)
+        if watched and not has_own_limit and volume.size_gb >= new_ceiling_gb:
+            stuck.append(volume)
+    if not stuck:
+        return []
+    shown = ", ".join(v.volume_id for v in stuck[:3]) + (", ..." if len(stuck) > 3 else "")
+    return [
+        f"{len(stuck)} watched volume{'s are' if len(stuck) != 1 else ' is'} already at or above {new_ceiling_gb} GB "
+        f"({shown}) and will stop growing - the controller will send a needs-manual-review alert for each."
+    ]
+
+
+def _save_warnings(state: StateBackend, key: str, value: str) -> list[str]:
+    """Non-blocking warnings for one just-saved setting. The save has
+    already succeeded; these say what it will do that the admin may not
+    expect."""
+    if key == "resize.max_volume_size_gb":
+        try:
+            return _ceiling_warnings(state, int(value))
+        except ValueError:
+            return []
+    channel = key.removeprefix("notifications.").removesuffix("_enabled")
+    if key.startswith("notifications.") and key.endswith("_enabled") and channel in _CHANNEL_SECRETS:
+        if value.strip().lower() == "true":
+            warning = _missing_secret_warning(channel)
+            return [warning] if warning else []
+    return []
+
+
+def _effective_config(state: StateBackend) -> Config:
+    try:
+        return Config.from_dict(apply_db_overrides(_DEFAULT_CONFIG_DICT, state.list_config()))
+    except (ValueError, TypeError):
+        return Config.from_dict({})
 
 
 def _list_settings(state: StateBackend) -> list[dict]:

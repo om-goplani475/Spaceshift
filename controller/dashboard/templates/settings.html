@@ -7,6 +7,11 @@
 {% endblock %}
 
 {% block content %}
+<div id="settings-warnings" aria-live="polite">
+  {% for warning in warnings %}
+  <div class="banner-dryrun" role="status"><div><strong>Check this.</strong> <p>{{ warning }}</p></div></div>
+  {% endfor %}
+</div>
 <div class="settings-nav-tabs" id="settings-tabs">
   {% for group in setting_groups %}
   <button type="button" class="settings-tab-btn{{ ' is-active' if loop.first }}" data-target="group-{{ loop.index }}">{{ group.title }}</button>

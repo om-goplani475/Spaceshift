@@ -45,6 +45,24 @@ def _require_int(label: str, value: Any, *, minimum: int, maximum: int | None = 
 MAX_CONCURRENT_RESIZES = 32
 MIN_AUDIT_LOG_RETENTION_DAYS = 30
 
+# Bounds that keep a typo from doing real damage. Each is a limit on what the
+# Settings page (and app_config) will accept, not a recommendation.
+# A scan every few seconds would hammer SSM and the AWS APIs (cost, throttling).
+MIN_SCAN_INTERVAL_SECONDS = 10
+# A modify can take a while to show up in AWS; a lock treated as stale sooner
+# than this could be recovered while its resize is still genuinely running.
+MIN_STALE_LOCK_TIMEOUT_MINUTES = 15
+# 0% would make every volume resize on every scan.
+MIN_THRESHOLD_PERCENT = 1
+# Doubling a volume per resize is already extreme; the size ceiling is the
+# backstop, not the first line of defense.
+MAX_GROWTH_INCREMENT_PERCENT = 100
+# The largest EBS volume (io2 Block Express), in GiB. Also bounds the
+# per-volume max size and the AWS tags that seed it.
+MAX_EBS_VOLUME_GB = 65536
+# Extends retry once per backoff; this many is already hours of retrying.
+MAX_EXTEND_RETRY_ATTEMPTS = 20
+
 
 # Dotted app_config key -> the nested path into the dict shape
 # Config.from_dict() expects. AWS accounts and secrets (assume-role ARNs,
@@ -220,12 +238,13 @@ class Config:
             raise ValueError("notifications.slack_enabled is on but notifications.slack_channel_id is not set")
         if self.notifications.telegram_enabled and not self.notifications.telegram_chat_id:
             raise ValueError("notifications.telegram_enabled is on but notifications.telegram_chat_id is not set")
-        _require_int("default_threshold_percent", self.default_threshold_percent, minimum=0)
+        _require_int("default_threshold_percent", self.default_threshold_percent, minimum=MIN_THRESHOLD_PERCENT)
         if self.default_threshold_percent > 100:
             raise ValueError(
-                f"default_threshold_percent must be between 0 and 100, got {self.default_threshold_percent}"
+                f"default_threshold_percent must be between {MIN_THRESHOLD_PERCENT} and 100, "
+                f"got {self.default_threshold_percent}"
             )
-        _require_int("scheduler.interval_seconds", self.scheduler.interval_seconds, minimum=1)
+        _require_int("scheduler.interval_seconds", self.scheduler.interval_seconds, minimum=MIN_SCAN_INTERVAL_SECONDS)
         _require_int(
             "scheduler.max_concurrent_resizes",
             self.scheduler.max_concurrent_resizes,
@@ -240,15 +259,31 @@ class Config:
             self.scheduler.audit_log_retention_days,
             minimum=MIN_AUDIT_LOG_RETENTION_DAYS,
         )
-        _require_int("resize.max_volume_size_gb", self.resize.max_volume_size_gb, minimum=1)
-        _require_int("resize.growth_increment_percent", self.resize.growth_increment_percent, minimum=1)
-        _require_int("resize.max_total_growth_gb", self.resize.max_total_growth_gb, minimum=0)
+        _require_int("resize.max_volume_size_gb", self.resize.max_volume_size_gb, minimum=1, maximum=MAX_EBS_VOLUME_GB)
+        _require_int(
+            "resize.growth_increment_percent",
+            self.resize.growth_increment_percent,
+            minimum=1,
+            maximum=MAX_GROWTH_INCREMENT_PERCENT,
+        )
+        _require_int(
+            "resize.max_total_growth_gb", self.resize.max_total_growth_gb, minimum=0, maximum=MAX_EBS_VOLUME_GB
+        )
         _require_int(
             "notifications.usage_alert_percent", self.notifications.usage_alert_percent, minimum=0, maximum=100
         )
-        _require_int("resize.extend_retry.max_attempts", self.resize.extend_retry.max_attempts, minimum=1)
+        _require_int(
+            "resize.extend_retry.max_attempts",
+            self.resize.extend_retry.max_attempts,
+            minimum=1,
+            maximum=MAX_EXTEND_RETRY_ATTEMPTS,
+        )
         _require_int("resize.extend_retry.backoff_seconds", self.resize.extend_retry.backoff_seconds, minimum=0)
-        _require_int("resize.stale_lock_timeout_minutes", self.resize.stale_lock_timeout_minutes, minimum=1)
+        _require_int(
+            "resize.stale_lock_timeout_minutes",
+            self.resize.stale_lock_timeout_minutes,
+            minimum=MIN_STALE_LOCK_TIMEOUT_MINUTES,
+        )
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> Config:

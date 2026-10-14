@@ -3,6 +3,7 @@
 from dataclasses import replace
 
 import boto3
+import pytest
 from botocore.stub import Stubber
 
 from controller.config import DiscoveryConfig
@@ -287,6 +288,35 @@ def test_out_of_range_threshold_tag_is_skipped(aws, state, config):
 
     instance = next(i for i in state.list_instances(region=_REGION) if i.instance_id == instance_id)
     assert instance.threshold_percent is None
+
+
+@pytest.mark.parametrize(
+    ("tag", "value"),
+    [("spaceshift:threshold", "0"), ("spaceshift:max_gb", "0"), ("spaceshift:max_gb", "65537")],
+)
+def test_tag_values_outside_the_allowed_range_are_skipped(aws, state, config, tag, value):
+    ec2 = boto3.client("ec2", region_name=_REGION)
+    instance_id = _new_instance(ec2)
+    ec2.create_tags(Resources=[instance_id], Tags=[{"Key": tag, "Value": value}])
+
+    discover_eligible_volumes(ec2, state, _ACCOUNT, _REGION, _with_tags_honored(config))
+
+    instance = next(i for i in state.list_instances(region=_REGION) if i.instance_id == instance_id)
+    assert instance.threshold_percent is None and instance.max_size_gb is None
+
+
+def test_tag_values_at_the_edge_of_the_allowed_range_are_applied(aws, state, config):
+    ec2 = boto3.client("ec2", region_name=_REGION)
+    instance_id = _new_instance(ec2)
+    ec2.create_tags(
+        Resources=[instance_id],
+        Tags=[{"Key": "spaceshift:threshold", "Value": "1"}, {"Key": "spaceshift:max_gb", "Value": "65536"}],
+    )
+
+    discover_eligible_volumes(ec2, state, _ACCOUNT, _REGION, _with_tags_honored(config))
+
+    instance = next(i for i in state.list_instances(region=_REGION) if i.instance_id == instance_id)
+    assert (instance.threshold_percent, instance.max_size_gb) == (1, 65536)
 
 
 def test_untagged_volume_inherits_its_instance_tags(aws, state, config):

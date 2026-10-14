@@ -731,7 +731,7 @@ def test_recover_stale_rows_does_not_probe_aws_for_rows_that_are_not_waiting_on_
     state.create_if_absent("vol-c", "i-1", 100, 120, account_name=_ACCOUNT, region="us-east-1")
     state.update_status("vol-c", ResizeStatus.MODIFY_COMPLETED)
     scheduler._config = replace(
-        scheduler._config, resize=replace(scheduler._config.resize, stale_lock_timeout_minutes=1)
+        scheduler._config, resize=replace(scheduler._config.resize, stale_lock_timeout_minutes=15)
     )
     with patch("controller.scheduler.datetime") as fake:
         fake.now.return_value = dt.datetime.now(dt.UTC) + dt.timedelta(hours=2)

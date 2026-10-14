@@ -477,6 +477,28 @@ function wireConfigDirtyTracking(root) {
   });
 }
 
+// Warnings the server attached to a successful save (a channel switched on
+// without its secret, a ceiling that strands volumes). Built with
+// textContent: they carry resource ids, never markup.
+function showSettingsWarnings(warnings) {
+  const box = document.getElementById("settings-warnings");
+  if (!box || warnings.length === 0) return;
+  warnings.forEach(function (text) {
+    const banner = document.createElement("div");
+    banner.className = "banner-dryrun";
+    banner.setAttribute("role", "status");
+    const inner = document.createElement("div");
+    const strong = document.createElement("strong");
+    strong.textContent = "Check this. ";
+    const p = document.createElement("p");
+    p.textContent = text;
+    inner.append(strong, p);
+    banner.appendChild(inner);
+    box.appendChild(banner);
+  });
+  box.scrollIntoView({ behavior: "smooth", block: "nearest" });
+}
+
 function wireSettingsUpdateButton() {
   // Enter in a text field would otherwise submit the form as a plain
   // page POST; the Update button is the only way settings are saved.
@@ -517,9 +539,11 @@ function wireSettingsUpdateButton() {
     Promise.all(requests).then(function (results) {
       let succeeded = 0;
       let failed = 0;
+      const warnings = [];
       results.forEach(function (result) {
         if (result.ok) {
           succeeded++;
+          (result.data.warnings || []).forEach(function (w) { warnings.push(w); });
           delete result.row.dataset.dirty;
           result.statusEl.textContent = "Saved";
           result.statusEl.className = "config-status ok";
@@ -533,6 +557,7 @@ function wireSettingsUpdateButton() {
         ? "Saved " + succeeded + " setting" + (succeeded === 1 ? "" : "s") + " - applies on the next cycle"
         : "Saved " + succeeded + ", " + failed + " failed - see the messages above";
       summaryEl.className = "config-status " + (failed === 0 ? "ok" : "error");
+      showSettingsWarnings(warnings);
       btn.disabled = false;
     });
   });

@@ -32,7 +32,7 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass
 
-from controller.config import Config
+from controller.config import MAX_EBS_VOLUME_GB, MIN_THRESHOLD_PERCENT, Config
 from controller.state.base import StateBackend
 
 logger = logging.getLogger(__name__)
@@ -160,11 +160,15 @@ def _parse_resource_tags(tags: list[dict], resource_id: str) -> ResourceTagSeed:
     if raw_threshold is not None:
         try:
             value = int(raw_threshold)
-            if not 0 <= value <= 100:
+            if not MIN_THRESHOLD_PERCENT <= value <= 100:
                 raise ValueError
         except ValueError:
             logger.warning(
-                "%s: ignoring malformed %s=%r (expected an integer 0-100)", resource_id, _TAG_THRESHOLD, raw_threshold
+                "%s: ignoring malformed %s=%r (expected an integer %d-100)",
+                resource_id,
+                _TAG_THRESHOLD,
+                raw_threshold,
+                MIN_THRESHOLD_PERCENT,
             )
         else:
             seed.threshold_percent = value
@@ -173,11 +177,15 @@ def _parse_resource_tags(tags: list[dict], resource_id: str) -> ResourceTagSeed:
     if raw_max_gb is not None:
         try:
             value = int(raw_max_gb)
-            if value <= 0:
+            if not 1 <= value <= MAX_EBS_VOLUME_GB:
                 raise ValueError
         except ValueError:
             logger.warning(
-                "%s: ignoring malformed %s=%r (expected a positive integer)", resource_id, _TAG_MAX_GB, raw_max_gb
+                "%s: ignoring malformed %s=%r (expected an integer 1-%d)",
+                resource_id,
+                _TAG_MAX_GB,
+                raw_max_gb,
+                MAX_EBS_VOLUME_GB,
             )
         else:
             seed.max_size_gb = value

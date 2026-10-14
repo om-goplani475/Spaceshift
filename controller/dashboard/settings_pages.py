@@ -10,7 +10,14 @@ from flask import jsonify, render_template, request
 from controller.audit import AuditAction, AuditEvent, record_audit_event
 from controller.config import DB_CONFIG_KEYS, Config, apply_db_overrides
 from controller.dashboard.auth import current_actor
-from controller.dashboard.config_support import _DEFAULT_CONFIG_DICT, _group_settings, _list_settings
+from controller.dashboard.config_support import (
+    _DEFAULT_CONFIG_DICT,
+    _effective_config,
+    _group_settings,
+    _list_settings,
+    _notification_secret_warnings,
+    _save_warnings,
+)
 from controller.dashboard.rbac import require_admin
 from controller.notifications import Notifier
 from controller.state.base import StateBackend
@@ -18,7 +25,11 @@ from controller.state.base import StateBackend
 
 def settings_view(state: StateBackend):
     require_admin()
-    return render_template("settings.html", setting_groups=_group_settings(_list_settings(state)))
+    return render_template(
+        "settings.html",
+        setting_groups=_group_settings(_list_settings(state)),
+        warnings=_notification_secret_warnings(_effective_config(state)),
+    )
 
 
 def api_config_view(state: StateBackend):
@@ -73,4 +84,4 @@ def set_app_config_view(state: StateBackend, key: str):
         return jsonify({"error": str(exc)}), 400
 
     state.set_config(key, value, audit=current_actor())
-    return jsonify({"key": key, "value": value})
+    return jsonify({"key": key, "value": value, "warnings": _save_warnings(state, key, value)})
