@@ -49,7 +49,7 @@ _CONFIG_LABELS: dict[str, str] = {
     "resize.max_total_growth_gb": "Max total growth (GB)",
     "resize.extend_retry.max_attempts": "Extend retry attempts",
     "resize.extend_retry.backoff_seconds": "Extend retry backoff (sec)",
-    "resize.stale_lock_timeout_minutes": "Stale lock timeout (min)",
+    "resize.stale_lock_timeout_minutes": "Stuck resize recovery after (min)",
     "dry_run": "Dry run",
     "notifications.slack_enabled": "Slack",
     "notifications.slack_channel_id": "Slack channel ID",
@@ -95,8 +95,8 @@ _CONFIG_DESCRIPTIONS: dict[str, str] = {
     ),
     "resize.extend_retry.backoff_seconds": "Minimum wait between extend retries.",
     "resize.stale_lock_timeout_minutes": (
-        "If the controller crashes mid-resize, how long before a stuck row gets checked against AWS's real state "
-        "instead of being retried blindly."
+        "How long a resize can sit with no progress (for example after the controller crashed mid-resize) before "
+        "the controller checks AWS for where it really got to, instead of retrying blindly. Minimum 15."
     ),
     "dry_run": (
         "When on, the controller only logs what it would do - no real AWS resize call or filesystem change. "
