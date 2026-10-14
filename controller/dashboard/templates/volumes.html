@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% from "_macros.html" import filter_select, autoresize_select, pager, autoresize_switch, scan_decision, empty_row, copy_button, search_input with context %}
+{% from "_macros.html" import filter_select, autoresize_select, pager, autoresize_switch, threshold_cell, scan_decision, empty_row, copy_button, search_input with context %}
 
 {% block title %}Volumes{% endblock %}
 {% block heading %}Volumes{% endblock %}
@@ -83,13 +83,10 @@
       <td class="num">{{ v.size_gb }} GB</td>
       <td class="mono">{{ v.device_name or "–" }}</td>
       <td class="num">
-        {% if row.threshold is not none %}
-        {{ row.threshold }}%
-        {%- if row.threshold_source != "own" %}
-        <span class="eligibility-note">({{ row.threshold_source }})</span>
-        {%- endif %}
-        {% else %}
+        {% if row.threshold is none %}
         –
+        {% else %}
+        {{ threshold_cell("volumes", v.volume_id, v.account_name, v.threshold_percent, row.inherited_threshold, row.inherited_source) }}
         {% endif %}
       </td>
       <td>{{ autoresize_switch("volumes", v.volume_id, v.autoresize) }}</td>

@@ -90,6 +90,25 @@
 .chart-legend i.dot-green { background: var(--green); }
 .chart-legend i.dot-amber { background: var(--amber); }
 .chart-legend i.dot-red { background: var(--red); }
+.threshold-input {
+  width: 4.5rem;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  background: var(--surface-2);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  padding: 4px 8px;
+  color: var(--text);
+  font-size: var(--text-sm);
+  transition: border-color var(--ease), box-shadow var(--ease);
+}
+.threshold-input:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 20%, transparent);
+}
+.threshold-input::placeholder { color: var(--text-3); }
+.threshold-input:disabled { opacity: 0.6; }
 .chart-empty { display: flex; align-items: center; justify-content: center; height: 220px; color: var(--text-3); font-size: var(--text-sm); }
 
 /* Inline percentage meters inside table cells. */

@@ -52,6 +52,8 @@ def test_every_action_has_a_place():
     transactional = {
         AuditAction.INSTANCE_AUTORESIZE,
         AuditAction.VOLUME_AUTORESIZE,
+        AuditAction.INSTANCE_THRESHOLD,
+        AuditAction.VOLUME_THRESHOLD,
         AuditAction.RESIZE_RETRY_EXTEND,
         AuditAction.RESIZE_MARK_RESOLVED,
         AuditAction.CONFIG_SET,

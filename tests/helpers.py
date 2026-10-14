@@ -394,43 +394,59 @@ class InMemoryStateBackend(StateBackend):
         return self._volumes.get(volume_id)
 
     def set_instance_autoresize(self, instance_id: str, autoresize: bool, audit: AuditActor | None = None) -> bool:
-        with self._lock:
-            record = self._instances.get(instance_id)
-            if record is None:
-                return False
-            if audit is not None:
-                self._append_audit(
-                    AuditEvent(
-                        actor=audit,
-                        action=AuditAction.INSTANCE_AUTORESIZE,
-                        target_type="instance",
-                        target_id=instance_id,
-                        account_name=record.account_name,
-                        before={"autoresize": record.autoresize},
-                        after={"autoresize": autoresize},
-                    )
-                )
-            self._instances[instance_id] = replace(record, autoresize=autoresize)
-            return True
+        return self._set_resource_field(
+            self._instances, "instance", instance_id, "autoresize", autoresize, AuditAction.INSTANCE_AUTORESIZE, audit
+        )
 
     def set_volume_autoresize(self, volume_id: str, autoresize: bool, audit: AuditActor | None = None) -> bool:
+        return self._set_resource_field(
+            self._volumes, "volume", volume_id, "autoresize", autoresize, AuditAction.VOLUME_AUTORESIZE, audit
+        )
+
+    def set_instance_threshold(
+        self, instance_id: str, threshold_percent: int | None, audit: AuditActor | None = None
+    ) -> bool:
+        return self._set_resource_field(
+            self._instances,
+            "instance",
+            instance_id,
+            "threshold_percent",
+            threshold_percent,
+            AuditAction.INSTANCE_THRESHOLD,
+            audit,
+        )
+
+    def set_volume_threshold(
+        self, volume_id: str, threshold_percent: int | None, audit: AuditActor | None = None
+    ) -> bool:
+        return self._set_resource_field(
+            self._volumes,
+            "volume",
+            volume_id,
+            "threshold_percent",
+            threshold_percent,
+            AuditAction.VOLUME_THRESHOLD,
+            audit,
+        )
+
+    def _set_resource_field(self, records, target_type, row_id, field, value, action, audit) -> bool:
         with self._lock:
-            record = self._volumes.get(volume_id)
+            record = records.get(row_id)
             if record is None:
                 return False
             if audit is not None:
                 self._append_audit(
                     AuditEvent(
                         actor=audit,
-                        action=AuditAction.VOLUME_AUTORESIZE,
-                        target_type="volume",
-                        target_id=volume_id,
+                        action=action,
+                        target_type=target_type,
+                        target_id=row_id,
                         account_name=record.account_name,
-                        before={"autoresize": record.autoresize},
-                        after={"autoresize": autoresize},
+                        before={field: getattr(record, field)},
+                        after={field: value},
                     )
                 )
-            self._volumes[volume_id] = replace(record, autoresize=autoresize)
+            records[row_id] = replace(record, **{field: value})
             return True
 
     def get_config(self, key: str) -> str | None:

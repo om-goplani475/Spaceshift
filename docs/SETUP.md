@@ -43,6 +43,8 @@ The controller checks this automatically before attempting a disk check - an ins
 
 Eligibility isn't an AWS tag or a setting - it's a column in Postgres. Every instance and volume the controller can see gets synced into the `instances`/`volumes` tables **every cycle, regardless of eligibility** (that's the point: tag-based discovery was replaced because it made the fleet view incomplete - you could only see what was already opted in, never what *could* be). Nothing is actually resized until its `autoresize` column is `true`.
 
+A volume's or instance's own threshold is edited the same way: the **Threshold** column on the Instances and Volumes pages is an input for operators of that account (blank inherits; the inherited value shows as the placeholder). Each change is audited. The plain-`UPDATE` route below still works for scripting, but it bypasses the audit log.
+
 The easiest way to flip this is the dashboard (already running as part of `docker compose up` - no separate flag needed; visit `localhost:8089` and open **Instances** or **Volumes** - each row has an `Autoresize` toggle). If you'd rather script it, it's a plain `UPDATE`:
 
 ```bash

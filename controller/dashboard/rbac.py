@@ -84,6 +84,9 @@ class AccountScope:
             names |= self.known_accounts
         return frozenset(names)
 
+    def can_operate(self, account_name: str) -> bool:
+        return role_at_least(self.role_for(account_name), Role.OPERATOR)
+
     def can_read(self, account_name: str) -> bool:
         return self.is_admin or account_name in (self.readable or frozenset())
 
@@ -144,5 +147,5 @@ def require_operator(account_name: str, target_type: str, target_id: str) -> Non
     scope = _scope()
     if not scope.can_read(account_name):
         abort(404)
-    if not role_at_least(scope.role_for(account_name), Role.OPERATOR):
+    if not scope.can_operate(account_name):
         _deny("operator", target_type, target_id, account_name)

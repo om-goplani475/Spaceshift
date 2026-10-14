@@ -268,32 +268,65 @@ class PostgresDiscoveryMixin(DiscoveryStateContract):
         return VolumeRecord(**dict(zip(columns, row, strict=True)))
 
     def set_instance_autoresize(self, instance_id: str, autoresize: bool, audit: AuditActor | None = None) -> bool:
-        return self._set_autoresize("instances", "instance_id", instance_id, autoresize, audit)
+        return self._set_field(
+            "instances", "instance_id", instance_id, "autoresize", autoresize, AuditAction.INSTANCE_AUTORESIZE, audit
+        )
 
     def set_volume_autoresize(self, volume_id: str, autoresize: bool, audit: AuditActor | None = None) -> bool:
-        return self._set_autoresize("volumes", "volume_id", volume_id, autoresize, audit)
+        return self._set_field(
+            "volumes", "volume_id", volume_id, "autoresize", autoresize, AuditAction.VOLUME_AUTORESIZE, audit
+        )
 
-    def _set_autoresize(self, table: str, id_column: str, row_id: str, autoresize: bool, audit) -> bool:
-        # The self-join returns the value being overwritten and the row's
-        # account, so the audit row is exact even under concurrent toggles
-        # - and it's written before the same COMMIT as the change.
+    def set_instance_threshold(
+        self, instance_id: str, threshold_percent: int | None, audit: AuditActor | None = None
+    ) -> bool:
+        return self._set_field(
+            "instances",
+            "instance_id",
+            instance_id,
+            "threshold_percent",
+            threshold_percent,
+            AuditAction.INSTANCE_THRESHOLD,
+            audit,
+        )
+
+    def set_volume_threshold(
+        self, volume_id: str, threshold_percent: int | None, audit: AuditActor | None = None
+    ) -> bool:
+        return self._set_field(
+            "volumes",
+            "volume_id",
+            volume_id,
+            "threshold_percent",
+            threshold_percent,
+            AuditAction.VOLUME_THRESHOLD,
+            audit,
+        )
+
+    def _set_field(
+        self, table: str, id_column: str, row_id: str, column: str, value, action: AuditAction, audit
+    ) -> bool:
+        # table/id_column/column are fixed strings from the callers above,
+        # never request data. The self-join returns the value being
+        # overwritten and the row's account, so the audit row is exact even
+        # under concurrent edits - and it's written before the same COMMIT
+        # as the change.
         with self._cursor(commit=True) as cur:
             cur.execute(
                 f"""
-                UPDATE {table} AS t SET autoresize = %s
+                UPDATE {table} AS t SET {column} = %s
                 FROM (
-                    SELECT {id_column}, autoresize, account_name FROM {table} WHERE {id_column} = %s FOR UPDATE
+                    SELECT {id_column}, {column}, account_name FROM {table} WHERE {id_column} = %s FOR UPDATE
                 ) AS old
                 WHERE t.{id_column} = old.{id_column}
-                RETURNING old.autoresize, old.account_name
+                RETURNING old.{column}, old.account_name
                 """,
-                (autoresize, row_id),
+                (value, row_id),
             )
             row = cur.fetchone()
             if row is None:
                 return False
             if audit is not None:
-                action = AuditAction.INSTANCE_AUTORESIZE if table == "instances" else AuditAction.VOLUME_AUTORESIZE
                 self._insert_audit(
                     cur,
                     AuditEvent(
@@ -302,8 +335,8 @@ class PostgresDiscoveryMixin(DiscoveryStateContract):
                         target_type=table[:-1],
                         target_id=row_id,
                         account_name=row[1],
-                        before={"autoresize": row[0]},
-                        after={"autoresize": autoresize},
+                        before={column: row[0]},
+                        after={column: value},
                     ),
                 )
             return True

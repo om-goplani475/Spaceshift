@@ -30,6 +30,24 @@
 </label>
 {% endmacro %}
 
+{# A resource's own threshold. Operators on the account get an inline input (blank = inherit, with the inherited
+   value as placeholder); everyone else sees plain text. The hidden span carries the effective value as text so
+   sorting, the detail drawer and CSV export read it the same either way. #}
+{% macro threshold_cell(kind, id, account_name, own, inherited, inherited_source) %}
+{% set effective = own if own is not none else inherited %}
+{% set source = "own" if own is not none else inherited_source %}
+{% if scope and scope.can_operate(account_name) %}
+<span class="threshold-text" hidden>{{ effective }}%{% if source != "own" %} ({{ source }}){% endif %}</span>
+<input type="number" class="threshold-input" min="1" max="100" step="1" inputmode="numeric" autocomplete="off"
+       data-kind="{{ kind }}" data-id="{{ id }}" data-inherited="{{ inherited }}" data-inherited-source="{{ inherited_source }}"
+       value="{{ own if own is not none }}" placeholder="{{ inherited }}"
+       aria-label="Threshold for {{ id }} (blank inherits the {{ inherited_source }} value)">
+<span class="eligibility-note threshold-note">{% if own is none %}({{ inherited_source }}){% endif %}</span>
+{% else %}
+{{ effective }}%{% if source != "own" %} <span class="eligibility-note">({{ source }})</span>{% endif %}
+{% endif %}
+{% endmacro %}
+
 {% macro scan_decision(decision) %}
 {% if decision %}
 <span class="badge {{ decision_badge(decision) }}" title="{{ decision_hint(decision) }}">{{ decision }}</span>

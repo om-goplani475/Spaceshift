@@ -764,3 +764,37 @@ def test_total_growth_sums_added_gb_and_defaults_to_zero(postgres_state):
 
     assert postgres_state.total_growth_gb("vol-1") == 44
     assert postgres_state.total_growth_gb("vol-never") == 0
+
+
+def test_set_threshold_sets_clears_and_audits_in_the_same_transaction(postgres_state):
+    from controller.audit import AuditAction, AuditActor, AuditFilters
+
+    postgres_state.upsert_instance(_ACCOUNT, "i-1", "us-east-1", "t3.micro", "running")
+    postgres_state.upsert_volume(_ACCOUNT, "vol-1", "i-1", "us-east-1", 100, "/dev/xvdf")
+
+    assert postgres_state.set_volume_threshold("vol-1", 91, audit=AuditActor.cli()) is True
+    assert postgres_state.set_instance_threshold("i-1", 70, audit=AuditActor.cli()) is True
+    assert postgres_state.get_volume("vol-1").threshold_percent == 91
+    assert postgres_state.get_instance("i-1").threshold_percent == 70
+
+    assert postgres_state.set_volume_threshold("vol-1", None, audit=AuditActor.cli()) is True
+    assert postgres_state.get_volume("vol-1").threshold_percent is None
+    rows = postgres_state.list_audit(AuditFilters(action=AuditAction.VOLUME_THRESHOLD), limit=10)
+    assert [(r.before, r.after) for r in rows] == [
+        ({"threshold_percent": 91}, {"threshold_percent": None}),
+        ({"threshold_percent": None}, {"threshold_percent": 91}),
+    ]
+    assert rows[0].account_name == _ACCOUNT
+
+
+def test_set_threshold_returns_false_for_unknown_id(postgres_state):
+    assert postgres_state.set_volume_threshold("vol-nope", 80) is False
+    assert postgres_state.set_instance_threshold("i-nope", 80) is False
+
+
+def test_threshold_outside_0_100_is_rejected_by_the_database(postgres_state):
+    import psycopg2
+
+    postgres_state.upsert_volume(_ACCOUNT, "vol-1", None, "us-east-1", 100, None)
+    with pytest.raises(psycopg2.errors.CheckViolation):
+        postgres_state.set_volume_threshold("vol-1", 101)

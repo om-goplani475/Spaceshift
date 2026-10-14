@@ -626,8 +626,8 @@ def test_threshold_shows_own_value_without_annotation(state, client):
     row_end = html.index("</tr>", row_start)
     row = html[row_start:row_end]
 
-    assert "42%" in row
-    assert "eligibility-note" not in row
+    assert '<span class="threshold-text" hidden>42%</span>' in row
+    assert '<span class="eligibility-note threshold-note"></span>' in row  # nothing inherited to annotate
 
 
 def test_threshold_falls_back_to_instance_with_annotation(state, client):
@@ -640,8 +640,8 @@ def test_threshold_falls_back_to_instance_with_annotation(state, client):
     row_end = html.index("</tr>", row_start)
     row = html[row_start:row_end]
 
-    assert "55%" in row
-    assert '<span class="eligibility-note">(instance)</span>' in row
+    assert "55% (instance)" in row
+    assert '<span class="eligibility-note threshold-note">(instance)</span>' in row
 
 
 def test_threshold_falls_back_to_global_default_with_annotation(state, client):
@@ -653,8 +653,8 @@ def test_threshold_falls_back_to_global_default_with_annotation(state, client):
     row_end = html.index("</tr>", row_start)
     row = html[row_start:row_end]
 
-    assert "80%" in row  # dataclass default
-    assert '<span class="eligibility-note">(default)</span>' in row
+    assert "80% (default)" in row  # dataclass default
+    assert '<span class="eligibility-note threshold-note">(default)</span>' in row
 
 
 def test_threshold_default_reflects_app_config_override(state, client):

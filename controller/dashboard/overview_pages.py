@@ -133,6 +133,8 @@ def _resolve_volume_row(volume, instances_by_id: dict, default_threshold: int) -
             "watched_reason": "unattached",
             "threshold": None,
             "threshold_source": None,
+            "inherited_threshold": None,
+            "inherited_source": None,
             "instance_name": instance_name,
             "instance_autoresize": instance_autoresize,
         }
@@ -144,18 +146,25 @@ def _resolve_volume_row(volume, instances_by_id: dict, default_threshold: int) -
     else:
         watched, watched_reason = False, "off"
 
+    # What the volume would use with no threshold of its own - the
+    # placeholder the dashboard's threshold editor shows.
+    if instance is not None and instance.threshold_percent is not None:
+        inherited_threshold, inherited_source = instance.threshold_percent, "instance"
+    else:
+        inherited_threshold, inherited_source = default_threshold, "default"
+
     if volume.threshold_percent is not None:
         threshold, threshold_source = volume.threshold_percent, "own"
-    elif instance is not None and instance.threshold_percent is not None:
-        threshold, threshold_source = instance.threshold_percent, "instance"
     else:
-        threshold, threshold_source = default_threshold, "default"
+        threshold, threshold_source = inherited_threshold, inherited_source
 
     return {
         "watched": watched,
         "watched_reason": watched_reason,
         "threshold": threshold,
         "threshold_source": threshold_source,
+        "inherited_threshold": inherited_threshold,
+        "inherited_source": inherited_source,
         "instance_name": instance_name,
         "instance_autoresize": instance_autoresize,
     }

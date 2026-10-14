@@ -376,6 +376,55 @@ function wireAutoresizeToggles(root) {
   });
 }
 
+// Inline per-volume / per-instance threshold editor. Blank clears the
+// override (the row then inherits, shown as the placeholder); Enter or
+// leaving the field saves, Escape reverts.
+function wireThresholdInputs(root) {
+  root.querySelectorAll(".threshold-input").forEach(function (input) {
+    if (input.dataset.wired) return;
+    input.dataset.wired = "1";
+    let saved = input.value;
+
+    input.addEventListener("keydown", function (e) {
+      if (e.key === "Enter") input.blur();
+      if (e.key === "Escape") {
+        input.value = saved;
+        input.blur();
+      }
+    });
+
+    input.addEventListener("change", function () {
+      const raw = input.value.trim();
+      const threshold = raw === "" ? null : Number(raw);
+      if (threshold !== null && (!Number.isInteger(threshold) || threshold < 1 || threshold > 100)) {
+        input.value = saved;
+        showToast("Threshold must be a whole number from 1 to 100, or blank to inherit", "error");
+        return;
+      }
+      const id = input.dataset.id;
+      input.disabled = true;
+      postJSON("/api/" + input.dataset.kind + "/" + encodeURIComponent(id) + "/threshold", { threshold_percent: threshold })
+        .then(function (resp) {
+          if (!resp.ok) throw new Error("request failed");
+          saved = input.value = threshold === null ? "" : String(threshold);
+          const cell = input.closest("td");
+          const inheritedNote = "(" + input.dataset.inheritedSource + ")";
+          cell.querySelector(".threshold-note").textContent = threshold === null ? inheritedNote : "";
+          cell.querySelector(".threshold-text").textContent =
+            threshold === null ? input.dataset.inherited + "% " + inheritedNote : threshold + "%";
+          showToast("Threshold for " + id + (threshold === null ? " cleared" : " set to " + threshold + "%"), "success");
+        })
+        .catch(function () {
+          input.value = saved;
+          showToast("Couldn't update the threshold for " + id + ". Please try again.", "error");
+        })
+        .finally(function () {
+          input.disabled = false;
+        });
+    });
+  });
+}
+
 // ---- Settings ----------------------------------------------------------------
 
 // Marks a setting "dirty" (edited, not yet submitted) rather than saving on

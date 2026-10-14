@@ -236,3 +236,19 @@ class DiscoveryStateContract(abc.ABC):
     def set_volume_autoresize(self, volume_id: str, autoresize: bool, audit: AuditActor | None = None) -> bool:
         """Set volume_id's eligibility flag. Same return and audit
         contract as set_instance_autoresize."""
+
+    @abc.abstractmethod
+    def set_instance_threshold(
+        self, instance_id: str, threshold_percent: int | None, audit: AuditActor | None = None
+    ) -> bool:
+        """Set instance_id's own threshold; None clears it so the volumes
+        on it fall back to the default. Same return and audit contract as
+        set_instance_autoresize (an INSTANCE_THRESHOLD row with the old and
+        new value). The caller validates the range."""
+
+    @abc.abstractmethod
+    def set_volume_threshold(
+        self, volume_id: str, threshold_percent: int | None, audit: AuditActor | None = None
+    ) -> bool:
+        """Set volume_id's own threshold; None clears it so it inherits its
+        instance's, then the default. Same contract as set_instance_threshold."""

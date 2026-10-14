@@ -1,5 +1,5 @@
 """The read-only JSON API (/api/status, /api/scans, /api/instances,
-/api/volumes) and the two autoresize-toggle endpoints - plain functions
+/api/volumes) and the autoresize-toggle and threshold endpoints - plain functions
 called from create_app(), not a Blueprint (see controller/dashboard/app.py).
 """
 
@@ -119,3 +119,46 @@ def set_volume_autoresize_view(state: StateBackend, volume_id: str):
     if not state.set_volume_autoresize(volume_id, autoresize, audit=current_actor()):
         return jsonify({"error": f"no known volume {volume_id!r}"}), 404
     return jsonify({"volume_id": volume_id, "autoresize": autoresize})
+
+
+_THRESHOLD_BODY_ERROR = "body must be JSON {'threshold_percent': <integer 1-100> | null}"
+
+
+def _parse_threshold_body() -> tuple[bool, int | None]:
+    """(valid, threshold). null clears the override, so valid and None."""
+    body = request.get_json(silent=True)
+    if not isinstance(body, dict) or "threshold_percent" not in body:
+        return False, None
+    value = body["threshold_percent"]
+    if value is None:
+        return True, None
+    # bool is an int subclass - {"threshold_percent": true} must not mean 1.
+    if isinstance(value, bool) or not isinstance(value, int) or not 1 <= value <= 100:
+        return False, None
+    return True, value
+
+
+def set_instance_threshold_view(state: StateBackend, instance_id: str):
+    valid, threshold = _parse_threshold_body()
+    if not valid:
+        return jsonify({"error": _THRESHOLD_BODY_ERROR}), 400
+    instance = state.get_instance(instance_id)
+    if instance is None:
+        return jsonify({"error": f"no known instance {instance_id!r}"}), 404
+    require_operator(instance.account_name, "instance", instance_id)
+    if not state.set_instance_threshold(instance_id, threshold, audit=current_actor()):
+        return jsonify({"error": f"no known instance {instance_id!r}"}), 404
+    return jsonify({"instance_id": instance_id, "threshold_percent": threshold})
+
+
+def set_volume_threshold_view(state: StateBackend, volume_id: str):
+    valid, threshold = _parse_threshold_body()
+    if not valid:
+        return jsonify({"error": _THRESHOLD_BODY_ERROR}), 400
+    volume = state.get_volume(volume_id)
+    if volume is None:
+        return jsonify({"error": f"no known volume {volume_id!r}"}), 404
+    require_operator(volume.account_name, "volume", volume_id)
+    if not state.set_volume_threshold(volume_id, threshold, audit=current_actor()):
+        return jsonify({"error": f"no known volume {volume_id!r}"}), 404
+    return jsonify({"volume_id": volume_id, "threshold_percent": threshold})

@@ -530,3 +530,28 @@ def test_prune_audit_log_records_itself_only_when_it_deleted_something(state):
     (row,) = state.list_audit(AuditFilters(), limit=10)
     assert row.action == "audit.prune" and row.actor_type == "system"
     assert row.detail["deleted"] == 1
+
+
+def test_set_threshold_sets_clears_and_audits():
+    backend = InMemoryStateBackend()
+    backend.upsert_instance(_ACCOUNT, "i-1", "us-east-1", "t3.micro", "running")
+    backend.upsert_volume(_ACCOUNT, "vol-1", "i-1", "us-east-1", 100, "/dev/xvdf")
+
+    assert backend.set_volume_threshold("vol-1", 91, audit=AuditActor.cli()) is True
+    assert backend.set_instance_threshold("i-1", 70, audit=AuditActor.cli()) is True
+    assert backend.get_volume("vol-1").threshold_percent == 91
+    assert backend.get_instance("i-1").threshold_percent == 70
+
+    assert backend.set_volume_threshold("vol-1", None, audit=AuditActor.cli()) is True
+    assert backend.get_volume("vol-1").threshold_percent is None
+    rows = backend.list_audit(AuditFilters(action=AuditAction.VOLUME_THRESHOLD), limit=10)
+    assert [(r.before, r.after) for r in rows] == [
+        ({"threshold_percent": 91}, {"threshold_percent": None}),
+        ({"threshold_percent": None}, {"threshold_percent": 91}),
+    ]
+
+
+def test_set_threshold_returns_false_for_unknown_id():
+    backend = InMemoryStateBackend()
+    assert backend.set_volume_threshold("vol-nope", 80) is False
+    assert backend.set_instance_threshold("i-nope", 80) is False
