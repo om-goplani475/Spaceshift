@@ -303,6 +303,16 @@ class PostgresDiscoveryMixin(DiscoveryStateContract):
             audit,
         )
 
+    def set_instance_max_size(self, instance_id: str, max_size_gb: int | None, audit: AuditActor | None = None) -> bool:
+        return self._set_field(
+            "instances", "instance_id", instance_id, "max_size_gb", max_size_gb, AuditAction.INSTANCE_MAX_SIZE, audit
+        )
+
+    def set_volume_max_size(self, volume_id: str, max_size_gb: int | None, audit: AuditActor | None = None) -> bool:
+        return self._set_field(
+            "volumes", "volume_id", volume_id, "max_size_gb", max_size_gb, AuditAction.VOLUME_MAX_SIZE, audit
+        )
+
     def _set_field(
         self, table: str, id_column: str, row_id: str, column: str, value, action: AuditAction, audit
     ) -> bool:

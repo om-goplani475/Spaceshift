@@ -798,3 +798,32 @@ def test_threshold_outside_0_100_is_rejected_by_the_database(postgres_state):
     postgres_state.upsert_volume(_ACCOUNT, "vol-1", None, "us-east-1", 100, None)
     with pytest.raises(psycopg2.errors.CheckViolation):
         postgres_state.set_volume_threshold("vol-1", 101)
+
+
+def test_set_max_size_sets_clears_and_audits_in_the_same_transaction(postgres_state):
+    from controller.audit import AuditAction, AuditActor, AuditFilters
+
+    postgres_state.upsert_instance(_ACCOUNT, "i-1", "us-east-1", "t3.micro", "running")
+    postgres_state.upsert_volume(_ACCOUNT, "vol-1", "i-1", "us-east-1", 100, "/dev/xvdf")
+
+    assert postgres_state.set_volume_max_size("vol-1", 1000, audit=AuditActor.cli()) is True
+    assert postgres_state.set_instance_max_size("i-1", 750, audit=AuditActor.cli()) is True
+    assert postgres_state.get_volume("vol-1").max_size_gb == 1000
+    assert postgres_state.get_instance("i-1").max_size_gb == 750
+
+    assert postgres_state.set_volume_max_size("vol-1", None, audit=AuditActor.cli()) is True
+    rows = postgres_state.list_audit(AuditFilters(action=AuditAction.VOLUME_MAX_SIZE), limit=10)
+    assert [(r.before, r.after) for r in rows] == [
+        ({"max_size_gb": 1000}, {"max_size_gb": None}),
+        ({"max_size_gb": None}, {"max_size_gb": 1000}),
+    ]
+    assert rows[0].account_name == _ACCOUNT
+
+
+def test_set_max_size_returns_false_for_unknown_id_and_database_rejects_zero(postgres_state):
+    import psycopg2
+
+    assert postgres_state.set_volume_max_size("vol-nope", 500) is False
+    postgres_state.upsert_volume(_ACCOUNT, "vol-1", None, "us-east-1", 100, None)
+    with pytest.raises(psycopg2.errors.CheckViolation):
+        postgres_state.set_volume_max_size("vol-1", 0)

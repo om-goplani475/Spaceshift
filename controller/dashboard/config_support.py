@@ -74,8 +74,9 @@ _CONFIG_DESCRIPTIONS: dict[str, str] = {
         "How long the audit log keeps a record of who changed what. Minimum 30 days. Changing this is itself recorded."
     ),
     "resize.max_volume_size_gb": (
-        "Hard per-volume ceiling. A resize that would overshoot it is shortened to land exactly on it; a volume "
-        "already at the ceiling stops auto-resizing and alerts for manual review."
+        "Default hard per-volume ceiling; a volume or instance can set its own on the Volumes and Instances pages. "
+        "A resize that would overshoot it is shortened to land exactly on it; a volume already at the ceiling "
+        "stops auto-resizing and alerts for manual review."
     ),
     "resize.growth_increment_percent": (
         "How much bigger each resize makes the volume, as a percent of its current size (rounded up, at least "
@@ -207,6 +208,16 @@ def _effective_default_threshold(state: StateBackend) -> int:
         return config.default_threshold_percent
     except (ValueError, TypeError):
         return _DEFAULT_CONFIG_DICT["default_threshold_percent"]
+
+
+def _effective_max_volume_size(state: StateBackend) -> int:
+    # Same resolution and fallback as _effective_default_threshold - the
+    # global ceiling a volume with no max size of its own would get.
+    try:
+        config = Config.from_dict(apply_db_overrides(_DEFAULT_CONFIG_DICT, state.list_config()))
+        return config.resize.max_volume_size_gb
+    except (ValueError, TypeError):
+        return _DEFAULT_CONFIG_DICT["resize"]["max_volume_size_gb"]
 
 
 def _effective_dry_run(state: StateBackend) -> bool:

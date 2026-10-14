@@ -52,6 +52,8 @@ class AuditAction(enum.StrEnum):
     VOLUME_AUTORESIZE = "volume.autoresize"
     INSTANCE_THRESHOLD = "instance.threshold"
     VOLUME_THRESHOLD = "volume.threshold"
+    INSTANCE_MAX_SIZE = "instance.max_size"
+    VOLUME_MAX_SIZE = "volume.max_size"
     RESIZE_RETRY_EXTEND = "resize.retry_extend"
     RESIZE_MARK_RESOLVED = "resize.mark_resolved"
     CONFIG_SET = "config.set"

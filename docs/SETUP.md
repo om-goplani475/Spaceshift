@@ -43,7 +43,7 @@ The controller checks this automatically before attempting a disk check - an ins
 
 Eligibility isn't an AWS tag or a setting - it's a column in Postgres. Every instance and volume the controller can see gets synced into the `instances`/`volumes` tables **every cycle, regardless of eligibility** (that's the point: tag-based discovery was replaced because it made the fleet view incomplete - you could only see what was already opted in, never what *could* be). Nothing is actually resized until its `autoresize` column is `true`.
 
-A volume's or instance's own threshold is edited the same way: the **Threshold** column on the Instances and Volumes pages is an input for operators of that account (blank inherits; the inherited value shows as the placeholder). Each change is audited. The plain-`UPDATE` route below still works for scripting, but it bypasses the audit log.
+A volume's or instance's own threshold and max size are edited the same way: the **Threshold** and **Max size** columns on the Instances and Volumes pages are inputs for operators of that account (blank inherits; the inherited value shows as the placeholder; a max size is 1-65536 GB). Each change is audited. The plain-`UPDATE` route below still works for scripting, but it bypasses the audit log.
 
 The easiest way to flip this is the dashboard (already running as part of `docker compose up` - no separate flag needed; visit `localhost:8089` and open **Instances** or **Volumes** - each row has an `Autoresize` toggle). If you'd rather script it, it's a plain `UPDATE`:
 
@@ -52,7 +52,7 @@ docker compose exec postgres psql -U ebs_auto_resize -d ebs_auto_resize \
   -c "UPDATE volumes SET autoresize = true WHERE volume_id = 'vol-xxxxxxxx';"
 ```
 
-Setting `autoresize` on an **instance** row instead makes every volume attached to it eligible, including its root volume - same fallback semantics the old tag model had. A volume's own `threshold_percent` (or its instance's) overrides the `default_threshold_percent` app_config setting (section 5) if set; both default to `NULL` (falls through to the config default) until something sets them.
+Setting `autoresize` on an **instance** row instead makes every volume attached to it eligible, including its root volume - same fallback semantics the old tag model had. A volume's own `threshold_percent` (or its instance's) overrides the `default_threshold_percent` app_config setting (section 5) if set, and its own `max_size_gb` (or its instance's) overrides `resize.max_volume_size_gb` the same way; all default to `NULL` (falls through to the config default) until something sets them.
 
 **Security note:** because eligibility lives in application data instead of an AWS tag, `ec2:ModifyVolume` in the default `docs/iam-policy.json` is not scoped by an IAM `Condition` - AWS itself will allow the call on any volume; only the controller's own check of the `autoresize` column stands between "eligible" and "not." For an IAM-enforced second gate, use the tag-scoped policy described in section 1.1.
 

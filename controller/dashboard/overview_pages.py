@@ -10,7 +10,11 @@ from decimal import Decimal
 from flask import g, render_template
 
 from controller.dashboard._common import _SCAN_LIST_LIMIT, _readable
-from controller.dashboard.config_support import _effective_default_threshold, _effective_dry_run
+from controller.dashboard.config_support import (
+    _effective_default_threshold,
+    _effective_dry_run,
+    _effective_max_volume_size,
+)
 from controller.dashboard.rbac import Role, role_at_least
 from controller.pricing import CostEstimator
 from controller.state.base import TERMINAL_STATUSES, ResizeRecord, ResizeStatus, StateBackend, VolumeRecord
@@ -113,7 +117,7 @@ def _resize_cost_delta(
     return f"{sign}${abs(delta):,.2f}/mo"
 
 
-def _resolve_volume_row(volume, instances_by_id: dict, default_threshold: int) -> dict:
+def _resolve_volume_row(volume, instances_by_id: dict, default_threshold: int, default_max_size_gb: int) -> dict:
     """Mirrors controller.discovery.discover_eligible_volumes()'s exact
     fallback chain, purely for display - "is this volume actually going to
     get checked, and at what threshold" without a human needing to
@@ -135,6 +139,8 @@ def _resolve_volume_row(volume, instances_by_id: dict, default_threshold: int) -
             "threshold_source": None,
             "inherited_threshold": None,
             "inherited_source": None,
+            "inherited_max_size_gb": None,
+            "inherited_max_source": None,
             "instance_name": instance_name,
             "instance_autoresize": instance_autoresize,
         }
@@ -158,6 +164,12 @@ def _resolve_volume_row(volume, instances_by_id: dict, default_threshold: int) -
     else:
         threshold, threshold_source = inherited_threshold, inherited_source
 
+    # The same for the max size: what clearing the volume's own would give.
+    if instance is not None and instance.max_size_gb is not None:
+        inherited_max_size_gb, inherited_max_source = instance.max_size_gb, "instance"
+    else:
+        inherited_max_size_gb, inherited_max_source = default_max_size_gb, "default"
+
     return {
         "watched": watched,
         "watched_reason": watched_reason,
@@ -165,6 +177,8 @@ def _resolve_volume_row(volume, instances_by_id: dict, default_threshold: int) -
         "threshold_source": threshold_source,
         "inherited_threshold": inherited_threshold,
         "inherited_source": inherited_source,
+        "inherited_max_size_gb": inherited_max_size_gb,
+        "inherited_max_source": inherited_max_source,
         "instance_name": instance_name,
         "instance_autoresize": instance_autoresize,
     }
@@ -176,7 +190,10 @@ def _build_volume_rows(state: StateBackend, volumes: list) -> list[dict]:
     # same scope is right here too.
     instances_by_id = {i.instance_id: i for i in state.list_instances(account_names=_readable())}
     default_threshold = _effective_default_threshold(state)
-    return [{"v": v, **_resolve_volume_row(v, instances_by_id, default_threshold)} for v in volumes]
+    default_max_size_gb = _effective_max_volume_size(state)
+    return [
+        {"v": v, **_resolve_volume_row(v, instances_by_id, default_threshold, default_max_size_gb)} for v in volumes
+    ]
 
 
 def overview_view(state: StateBackend, cost_estimator: CostEstimator):
@@ -245,6 +262,7 @@ def instances_view(state: StateBackend):
         instance_accounts=sorted({i.account_name for i in instances}),
         instance_regions=sorted({i.region for i in instances}),
         default_threshold=_effective_default_threshold(state),
+        default_max_size_gb=_effective_max_volume_size(state),
     )
 
 

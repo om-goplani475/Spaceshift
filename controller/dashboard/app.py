@@ -139,6 +139,14 @@ def create_app(state: StateBackend, auth: AuthSettings, cost_estimator: CostEsti
     def set_volume_threshold(volume_id: str):
         return api_pages.set_volume_threshold_view(state, volume_id)
 
+    @app.post("/api/instances/<instance_id>/max-size")
+    def set_instance_max_size(instance_id: str):
+        return api_pages.set_instance_max_size_view(state, instance_id)
+
+    @app.post("/api/volumes/<volume_id>/max-size")
+    def set_volume_max_size(volume_id: str):
+        return api_pages.set_volume_max_size_view(state, volume_id)
+
     @app.post("/api/config/<key>")
     def set_app_config(key: str):
         return settings_pages.set_app_config_view(state, key)

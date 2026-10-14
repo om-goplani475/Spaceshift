@@ -50,6 +50,8 @@ _AUDIT_LABELS = {
     AuditAction.VOLUME_AUTORESIZE: "Autoresize toggled (volume)",
     AuditAction.INSTANCE_THRESHOLD: "Threshold changed (instance)",
     AuditAction.VOLUME_THRESHOLD: "Threshold changed (volume)",
+    AuditAction.INSTANCE_MAX_SIZE: "Max size changed (instance)",
+    AuditAction.VOLUME_MAX_SIZE: "Max size changed (volume)",
     AuditAction.RESIZE_RETRY_EXTEND: "Extend retry requested",
     AuditAction.RESIZE_MARK_RESOLVED: "Stuck resize marked resolved",
     AuditAction.CONFIG_SET: "Setting changed",

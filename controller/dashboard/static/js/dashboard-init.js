@@ -8,7 +8,7 @@
 formatTimestamps(document);
 renderMeters(document);
 wireAutoresizeToggles(document);
-wireThresholdInputs(document);
+wireLimitInputs(document);
 wireConfigDirtyTracking(document);
 wireSettingsUpdateButton();
 wireNotificationTestButton();
@@ -47,8 +47,8 @@ const liveLabel = document.getElementById("live-label");
 
 async function refreshLiveData() {
   if (document.hidden || refreshInFlight || batchUpdateInFlight) return;
-  // A swap would wipe a threshold being typed - skip this cycle.
-  if (document.activeElement && document.activeElement.classList.contains("threshold-input")) return;
+  // A swap would wipe a limit being typed - skip this cycle.
+  if (document.activeElement && document.activeElement.classList.contains("limit-input")) return;
   refreshInFlight = true;
   if (liveIndicator) liveIndicator.dataset.state = "refreshing";
   try {
@@ -113,7 +113,7 @@ async function refreshLiveData() {
     formatTimestamps(document);
     renderMeters(document);
     wireAutoresizeToggles(document);
-    wireThresholdInputs(document);
+    wireLimitInputs(document);
     wireConfigDirtyTracking(document);
     wireInlineCopyButtons(document);
     markClickableRows();

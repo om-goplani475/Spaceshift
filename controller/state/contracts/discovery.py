@@ -252,3 +252,15 @@ class DiscoveryStateContract(abc.ABC):
     ) -> bool:
         """Set volume_id's own threshold; None clears it so it inherits its
         instance's, then the default. Same contract as set_instance_threshold."""
+
+    @abc.abstractmethod
+    def set_instance_max_size(self, instance_id: str, max_size_gb: int | None, audit: AuditActor | None = None) -> bool:
+        """Set instance_id's own max volume size in GB; None clears it so the
+        volumes on it fall back to the global ceiling. Same return and audit
+        contract as set_instance_threshold (an INSTANCE_MAX_SIZE row)."""
+
+    @abc.abstractmethod
+    def set_volume_max_size(self, volume_id: str, max_size_gb: int | None, audit: AuditActor | None = None) -> bool:
+        """Set volume_id's own max size in GB; None clears it so it inherits
+        its instance's, then the global ceiling. Same contract as
+        set_instance_max_size."""

@@ -429,6 +429,16 @@ class InMemoryStateBackend(StateBackend):
             audit,
         )
 
+    def set_instance_max_size(self, instance_id: str, max_size_gb: int | None, audit: AuditActor | None = None) -> bool:
+        return self._set_resource_field(
+            self._instances, "instance", instance_id, "max_size_gb", max_size_gb, AuditAction.INSTANCE_MAX_SIZE, audit
+        )
+
+    def set_volume_max_size(self, volume_id: str, max_size_gb: int | None, audit: AuditActor | None = None) -> bool:
+        return self._set_resource_field(
+            self._volumes, "volume", volume_id, "max_size_gb", max_size_gb, AuditAction.VOLUME_MAX_SIZE, audit
+        )
+
     def _set_resource_field(self, records, target_type, row_id, field, value, action, audit) -> bool:
         with self._lock:
             record = records.get(row_id)

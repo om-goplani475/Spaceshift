@@ -376,11 +376,13 @@ function wireAutoresizeToggles(root) {
   });
 }
 
-// Inline per-volume / per-instance threshold editor. Blank clears the
-// override (the row then inherits, shown as the placeholder); Enter or
-// leaving the field saves, Escape reverts.
-function wireThresholdInputs(root) {
-  root.querySelectorAll(".threshold-input").forEach(function (input) {
+// Inline per-volume / per-instance limit editor (threshold %, max size GB).
+// Blank clears the override (the row then inherits, shown as the
+// placeholder); Enter or leaving the field saves, Escape reverts. The
+// field, JSON key, unit and bounds all come from the input's data-*
+// attributes, set by the limit_cell macro.
+function wireLimitInputs(root) {
+  root.querySelectorAll(".limit-input").forEach(function (input) {
     if (input.dataset.wired) return;
     input.dataset.wired = "1";
     let saved = input.value;
@@ -394,29 +396,35 @@ function wireThresholdInputs(root) {
     });
 
     input.addEventListener("change", function () {
+      const label = input.dataset.label;
+      const unit = input.dataset.unit;
+      const low = Number(input.min);
+      const high = Number(input.max);
       const raw = input.value.trim();
-      const threshold = raw === "" ? null : Number(raw);
-      if (threshold !== null && (!Number.isInteger(threshold) || threshold < 1 || threshold > 100)) {
+      const limit = raw === "" ? null : Number(raw);
+      if (limit !== null && (!Number.isInteger(limit) || limit < low || limit > high)) {
         input.value = saved;
-        showToast("Threshold must be a whole number from 1 to 100, or blank to inherit", "error");
+        showToast(label + " must be a whole number from " + low + " to " + high + ", or blank to inherit", "error");
         return;
       }
       const id = input.dataset.id;
+      const body = {};
+      body[input.dataset.bodyKey] = limit;
       input.disabled = true;
-      postJSON("/api/" + input.dataset.kind + "/" + encodeURIComponent(id) + "/threshold", { threshold_percent: threshold })
+      postJSON("/api/" + input.dataset.kind + "/" + encodeURIComponent(id) + "/" + input.dataset.field, body)
         .then(function (resp) {
           if (!resp.ok) throw new Error("request failed");
-          saved = input.value = threshold === null ? "" : String(threshold);
+          saved = input.value = limit === null ? "" : String(limit);
           const cell = input.closest("td");
           const inheritedNote = "(" + input.dataset.inheritedSource + ")";
-          cell.querySelector(".threshold-note").textContent = threshold === null ? inheritedNote : "";
-          cell.querySelector(".threshold-text").textContent =
-            threshold === null ? input.dataset.inherited + "% " + inheritedNote : threshold + "%";
-          showToast("Threshold for " + id + (threshold === null ? " cleared" : " set to " + threshold + "%"), "success");
+          cell.querySelector(".limit-note").textContent = limit === null ? inheritedNote : "";
+          cell.querySelector(".limit-text").textContent =
+            limit === null ? input.dataset.inherited + unit + " " + inheritedNote : limit + unit;
+          showToast(label + " for " + id + (limit === null ? " cleared" : " set to " + limit + unit), "success");
         })
         .catch(function () {
           input.value = saved;
-          showToast("Couldn't update the threshold for " + id + ". Please try again.", "error");
+          showToast("Couldn't update the " + label.toLowerCase() + " for " + id + ". Please try again.", "error");
         })
         .finally(function () {
           input.disabled = false;

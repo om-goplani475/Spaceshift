@@ -54,6 +54,8 @@ def test_every_action_has_a_place():
         AuditAction.VOLUME_AUTORESIZE,
         AuditAction.INSTANCE_THRESHOLD,
         AuditAction.VOLUME_THRESHOLD,
+        AuditAction.INSTANCE_MAX_SIZE,
+        AuditAction.VOLUME_MAX_SIZE,
         AuditAction.RESIZE_RETRY_EXTEND,
         AuditAction.RESIZE_MARK_RESOLVED,
         AuditAction.CONFIG_SET,

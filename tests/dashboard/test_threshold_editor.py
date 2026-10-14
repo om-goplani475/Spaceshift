@@ -120,7 +120,7 @@ def test_volumes_page_shows_an_editor_with_the_inherited_value_as_placeholder(cl
 
     html = client.get("/volumes").data.decode()
 
-    assert 'class="threshold-input"' in html
+    assert 'class="limit-input"' in html
     assert 'data-id="vol-dev"' in html and 'data-inherited="70"' in html and 'data-inherited-source="instance"' in html
     assert 'placeholder="70"' in html
 
@@ -131,7 +131,7 @@ def test_volumes_page_shows_the_volumes_own_value(client, state, fleet):
     html = client.get("/volumes").data.decode()
 
     assert 'value="91"' in html
-    assert '<span class="threshold-text" hidden>91%</span>' in html
+    assert '<span class="limit-text" hidden>91%</span>' in html
 
 
 def test_instances_page_shows_an_editor_that_inherits_the_default(client, state, fleet):
@@ -145,5 +145,5 @@ def test_a_viewer_sees_the_threshold_as_text_without_an_editor(app, state, fleet
     client = _client_as(app, state, "vic", {"dev": "viewer"})
 
     for path in ("/volumes", "/instances"):
-        assert "threshold-input" not in client.get(path).data.decode()
+        assert "limit-input" not in client.get(path).data.decode()
     assert "91%" in client.get("/volumes").data.decode()

@@ -555,3 +555,28 @@ def test_set_threshold_returns_false_for_unknown_id():
     backend = InMemoryStateBackend()
     assert backend.set_volume_threshold("vol-nope", 80) is False
     assert backend.set_instance_threshold("i-nope", 80) is False
+
+
+def test_set_max_size_sets_clears_and_audits():
+    backend = InMemoryStateBackend()
+    backend.upsert_instance(_ACCOUNT, "i-1", "us-east-1", "t3.micro", "running")
+    backend.upsert_volume(_ACCOUNT, "vol-1", "i-1", "us-east-1", 100, "/dev/xvdf")
+
+    assert backend.set_volume_max_size("vol-1", 1000, audit=AuditActor.cli()) is True
+    assert backend.set_instance_max_size("i-1", 750, audit=AuditActor.cli()) is True
+    assert backend.get_volume("vol-1").max_size_gb == 1000
+    assert backend.get_instance("i-1").max_size_gb == 750
+
+    assert backend.set_volume_max_size("vol-1", None, audit=AuditActor.cli()) is True
+    assert backend.get_volume("vol-1").max_size_gb is None
+    rows = backend.list_audit(AuditFilters(action=AuditAction.VOLUME_MAX_SIZE), limit=10)
+    assert [(r.before, r.after) for r in rows] == [
+        ({"max_size_gb": 1000}, {"max_size_gb": None}),
+        ({"max_size_gb": None}, {"max_size_gb": 1000}),
+    ]
+
+
+def test_set_max_size_returns_false_for_unknown_id():
+    backend = InMemoryStateBackend()
+    assert backend.set_volume_max_size("vol-nope", 500) is False
+    assert backend.set_instance_max_size("i-nope", 500) is False

@@ -1,5 +1,5 @@
 """The read-only JSON API (/api/status, /api/scans, /api/instances,
-/api/volumes) and the autoresize-toggle and threshold endpoints - plain functions
+/api/volumes) and the autoresize-toggle, threshold and max-size endpoints - plain functions
 called from create_app(), not a Blueprint (see controller/dashboard/app.py).
 """
 
@@ -121,44 +121,51 @@ def set_volume_autoresize_view(state: StateBackend, volume_id: str):
     return jsonify({"volume_id": volume_id, "autoresize": autoresize})
 
 
-_THRESHOLD_BODY_ERROR = "body must be JSON {'threshold_percent': <integer 1-100> | null}"
+# (JSON key, lowest, highest) of each per-resource limit an operator can set.
+# 65536 GiB is the largest EBS volume (io2 Block Express).
+_THRESHOLD = ("threshold_percent", 1, 100)
+_MAX_SIZE = ("max_size_gb", 1, 65536)
 
 
-def _parse_threshold_body() -> tuple[bool, int | None]:
-    """(valid, threshold). null clears the override, so valid and None."""
+def _parse_limit_body(key: str, low: int, high: int) -> tuple[bool, int | None]:
+    """(valid, value). null clears the override, so it is valid and None."""
     body = request.get_json(silent=True)
-    if not isinstance(body, dict) or "threshold_percent" not in body:
+    if not isinstance(body, dict) or key not in body:
         return False, None
-    value = body["threshold_percent"]
+    value = body[key]
     if value is None:
         return True, None
-    # bool is an int subclass - {"threshold_percent": true} must not mean 1.
-    if isinstance(value, bool) or not isinstance(value, int) or not 1 <= value <= 100:
+    # bool is an int subclass - {"key": true} must not mean 1.
+    if isinstance(value, bool) or not isinstance(value, int) or not low <= value <= high:
         return False, None
     return True, value
 
 
-def set_instance_threshold_view(state: StateBackend, instance_id: str):
-    valid, threshold = _parse_threshold_body()
+def _set_limit(state: StateBackend, kind: str, resource_id: str, limit: tuple[str, int, int], setter):
+    key, low, high = limit
+    valid, value = _parse_limit_body(key, low, high)
     if not valid:
-        return jsonify({"error": _THRESHOLD_BODY_ERROR}), 400
-    instance = state.get_instance(instance_id)
-    if instance is None:
-        return jsonify({"error": f"no known instance {instance_id!r}"}), 404
-    require_operator(instance.account_name, "instance", instance_id)
-    if not state.set_instance_threshold(instance_id, threshold, audit=current_actor()):
-        return jsonify({"error": f"no known instance {instance_id!r}"}), 404
-    return jsonify({"instance_id": instance_id, "threshold_percent": threshold})
+        return jsonify({"error": f"body must be JSON {{'{key}': <integer {low}-{high}> | null}}"}), 400
+    record = (state.get_instance if kind == "instance" else state.get_volume)(resource_id)
+    if record is None:
+        return jsonify({"error": f"no known {kind} {resource_id!r}"}), 404
+    require_operator(record.account_name, kind, resource_id)
+    if not setter(resource_id, value, audit=current_actor()):
+        return jsonify({"error": f"no known {kind} {resource_id!r}"}), 404
+    return jsonify({f"{kind}_id": resource_id, key: value})
+
+
+def set_instance_threshold_view(state: StateBackend, instance_id: str):
+    return _set_limit(state, "instance", instance_id, _THRESHOLD, state.set_instance_threshold)
 
 
 def set_volume_threshold_view(state: StateBackend, volume_id: str):
-    valid, threshold = _parse_threshold_body()
-    if not valid:
-        return jsonify({"error": _THRESHOLD_BODY_ERROR}), 400
-    volume = state.get_volume(volume_id)
-    if volume is None:
-        return jsonify({"error": f"no known volume {volume_id!r}"}), 404
-    require_operator(volume.account_name, "volume", volume_id)
-    if not state.set_volume_threshold(volume_id, threshold, audit=current_actor()):
-        return jsonify({"error": f"no known volume {volume_id!r}"}), 404
-    return jsonify({"volume_id": volume_id, "threshold_percent": threshold})
+    return _set_limit(state, "volume", volume_id, _THRESHOLD, state.set_volume_threshold)
+
+
+def set_instance_max_size_view(state: StateBackend, instance_id: str):
+    return _set_limit(state, "instance", instance_id, _MAX_SIZE, state.set_instance_max_size)
+
+
+def set_volume_max_size_view(state: StateBackend, volume_id: str):
+    return _set_limit(state, "volume", volume_id, _MAX_SIZE, state.set_volume_max_size)
