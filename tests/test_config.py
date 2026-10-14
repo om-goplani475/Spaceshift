@@ -20,6 +20,14 @@ def test_max_total_growth_defaults_to_no_limit_and_rejects_negative():
         Config.from_dict({"resize": {"max_total_growth_gb": -1}})
 
 
+def test_usage_alert_percent_defaults_to_off_and_must_be_a_percentage():
+    assert Config.from_dict({}).notifications.usage_alert_percent == 0
+    assert Config.from_dict({"notifications": {"usage_alert_percent": 85}}).notifications.usage_alert_percent == 85
+    for bad in (-1, 101):
+        with pytest.raises(ValueError, match="usage_alert_percent"):
+            Config.from_dict({"notifications": {"usage_alert_percent": bad}})
+
+
 def test_non_positive_growth_increment_rejected():
     with pytest.raises(ValueError, match="growth_increment_percent"):
         Config.from_dict({"resize": {"growth_increment_percent": 0}})

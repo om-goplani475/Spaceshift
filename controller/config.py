@@ -74,6 +74,7 @@ DB_CONFIG_KEYS: dict[str, tuple[str, ...]] = {
     "notifications.pagerduty_enabled": ("notifications", "pagerduty_enabled"),
     "notifications.slack_channel_id": ("notifications", "slack_channel_id"),
     "notifications.telegram_chat_id": ("notifications", "telegram_chat_id"),
+    "notifications.usage_alert_percent": ("notifications", "usage_alert_percent"),
     "discovery.honor_resource_tags": ("discovery", "honor_resource_tags"),
 }
 
@@ -144,6 +145,9 @@ class NotificationsConfig:
     pagerduty_enabled: bool = False
     slack_channel_id: str | None = None
     telegram_chat_id: str | None = None
+    # 0 = off. Otherwise a volume at or above this percent full triggers one
+    # alert, independent of its resize threshold and of dry_run.
+    usage_alert_percent: int = 0
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> NotificationsConfig:
@@ -157,6 +161,7 @@ class NotificationsConfig:
             # An empty Settings field means "unset", not the string "".
             slack_channel_id=_optional_str(data.get("slack_channel_id")),
             telegram_chat_id=_optional_str(data.get("telegram_chat_id")),
+            usage_alert_percent=data.get("usage_alert_percent", d.usage_alert_percent),
         )
 
     def enabled_channels(self) -> list[str]:
@@ -238,6 +243,9 @@ class Config:
         _require_int("resize.max_volume_size_gb", self.resize.max_volume_size_gb, minimum=1)
         _require_int("resize.growth_increment_percent", self.resize.growth_increment_percent, minimum=1)
         _require_int("resize.max_total_growth_gb", self.resize.max_total_growth_gb, minimum=0)
+        _require_int(
+            "notifications.usage_alert_percent", self.notifications.usage_alert_percent, minimum=0, maximum=100
+        )
         _require_int("resize.extend_retry.max_attempts", self.resize.extend_retry.max_attempts, minimum=1)
         _require_int("resize.extend_retry.backoff_seconds", self.resize.extend_retry.backoff_seconds, minimum=0)
         _require_int("resize.stale_lock_timeout_minutes", self.resize.stale_lock_timeout_minutes, minimum=1)

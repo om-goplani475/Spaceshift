@@ -52,6 +52,91 @@ def test_under_threshold_no_action(scheduler, volume):
         start.assert_not_called()
 
 
+def _scan_at(scheduler, volume, percent):
+    with (
+        patch("controller.scheduler.is_ssm_ready", return_value=True),
+        patch("controller.scheduler.check_disk_usage", return_value=DiskUsage("/dev/xvdf", "/data", percent)),
+        patch("controller.scheduler.start_resize"),
+    ):
+        scheduler._process_volume(_ACCOUNT, MagicMock(), MagicMock(), MagicMock(), volume, "us-east-1")
+
+
+def _capture_alerts(scheduler):
+    sent = []
+    scheduler._notifier.send = lambda subject, message, **kwargs: sent.append((subject, message, kwargs))
+    return sent
+
+
+def test_usage_alert_is_off_by_default(scheduler, volume):
+    sent = _capture_alerts(scheduler)
+
+    _scan_at(scheduler, volume, 99)
+
+    assert sent == []
+
+
+def test_usage_alert_fires_once_when_the_level_is_reached(scheduler, volume):
+    scheduler._config = Config.from_dict({"notifications": {"usage_alert_percent": 70}})
+    sent = _capture_alerts(scheduler)
+
+    _scan_at(scheduler, volume, 75)
+    _scan_at(scheduler, volume, 76)
+
+    assert len(sent) == 1
+    subject, message, kwargs = sent[0]
+    assert subject == "EBS volume usage high"
+    assert "vol-1" in message and "75%" in message
+    assert kwargs["dedup_key"] == "usage:vol-1"
+
+
+def test_usage_alert_does_not_fire_below_the_level(scheduler, volume):
+    scheduler._config = Config.from_dict({"notifications": {"usage_alert_percent": 70}})
+    sent = _capture_alerts(scheduler)
+
+    _scan_at(scheduler, volume, 69)
+
+    assert sent == []
+
+
+def test_usage_alert_fires_at_exactly_the_level(scheduler, volume):
+    scheduler._config = Config.from_dict({"notifications": {"usage_alert_percent": 70}})
+    sent = _capture_alerts(scheduler)
+
+    _scan_at(scheduler, volume, 70)
+
+    assert len(sent) == 1
+
+
+def test_usage_alert_rearms_after_usage_drops_back_under(scheduler, volume):
+    scheduler._config = Config.from_dict({"notifications": {"usage_alert_percent": 70}})
+    sent = _capture_alerts(scheduler)
+
+    _scan_at(scheduler, volume, 80)
+    _scan_at(scheduler, volume, 40)  # e.g. after a resize
+    _scan_at(scheduler, volume, 85)
+
+    assert len(sent) == 2
+
+
+def test_usage_alert_fires_in_dry_run_and_says_it_will_not_resize(scheduler, volume):
+    scheduler._config = Config.from_dict({"dry_run": True, "notifications": {"usage_alert_percent": 70}})
+    sent = _capture_alerts(scheduler)
+
+    _scan_at(scheduler, volume, 90)
+
+    assert "Dry run is on" in sent[0][1]
+
+
+def test_usage_alert_is_sent_even_when_a_resize_is_triggered(scheduler, volume):
+    scheduler._config = Config.from_dict({"dry_run": False, "notifications": {"usage_alert_percent": 70}})
+    sent = _capture_alerts(scheduler)
+
+    _scan_at(scheduler, volume, 95)  # over the 80% resize threshold too
+
+    assert len(sent) == 1
+    assert "auto-resize at 80%" in sent[0][1]
+
+
 def test_over_threshold_triggers_resize(scheduler, volume):
     with (
         patch("controller.scheduler.is_ssm_ready", return_value=True),
@@ -212,6 +297,7 @@ def test_prune_alert_dedup_sets_drops_stale_or_gone_entries(scheduler, state):
     scheduler._ssm_not_ready_alerted = {(_ACCOUNT, "i-gone"), (_ACCOUNT, "i-live"), (_ACCOUNT, "i-never-existed")}
     scheduler._ceiling_alerted = {"vol-gone", "vol-live", "vol-never-existed"}
     scheduler._growth_cap_alerted = {"vol-gone", "vol-live", "vol-never-existed"}
+    scheduler._usage_alerted = {"vol-gone", "vol-live", "vol-never-existed"}
     scheduler._ssm_unreachable_since = {
         "vol-gone": dt.datetime.now(dt.UTC),
         "vol-live": dt.datetime.now(dt.UTC),
@@ -222,6 +308,7 @@ def test_prune_alert_dedup_sets_drops_stale_or_gone_entries(scheduler, state):
     assert scheduler._ssm_not_ready_alerted == {(_ACCOUNT, "i-live")}
     assert scheduler._ceiling_alerted == {"vol-live"}
     assert scheduler._growth_cap_alerted == {"vol-live"}
+    assert scheduler._usage_alerted == {"vol-live"}
     assert set(scheduler._ssm_unreachable_since) == {"vol-live"}
 
 

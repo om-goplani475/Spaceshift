@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- `notifications.usage_alert_percent` (Settings, default `0` = off): one alert to every enabled channel when a scanned volume reaches that percent full, independent of the resize threshold and of dry run, re-armed once usage drops back under it. Info severity, so it never pages PagerDuty.
 - `resize.max_total_growth_gb` (Settings, default `0` = no limit): the most the controller may add to one volume in total across all its resizes, independent of its current size. The last step is shortened to fit the remaining budget; once spent, the volume stops auto-resizing and a critical "needs manual review" alert is sent (once). Growth is recorded per modification from now on (migration `0008`); resizes made before upgrading aren't counted.
 - A `proxy` service in `docker-compose.yml` (nginx, config in `nginx/default.conf`): the in-compose second hop between a host TLS proxy and the dashboard. It passes the host proxy's `X-Forwarded-*` headers through untouched, so the app's one-hop `SPACESHIFT_BEHIND_TLS_PROXY` trust and per-address login rate limiting keep seeing the real client.
 

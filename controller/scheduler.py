@@ -131,6 +131,11 @@ class Scheduler:
         self._ceiling_alerted: set[str] = set()
         self._growth_cap_alerted: set[str] = set()
 
+        # Volumes already alerted for high usage; a volume leaves the set
+        # when its usage drops back under the alert level, so the next time
+        # it crosses, it alerts again.
+        self._usage_alerted: set[str] = set()
+
         # When a pending resize's instance first becomes SSM-unreachable -
         # keyed by volume_id, cleared once it's reachable again. Gates
         # _SSM_UNREACHABLE_GRACE before the first occurrence counts as an
@@ -320,7 +325,7 @@ class Scheduler:
             instance = self._state.get_instance(instance_id)
             if instance is None or instance.is_stale:
                 self._ssm_not_ready_alerted.discard(key)
-        for alerted in (self._ceiling_alerted, self._growth_cap_alerted):
+        for alerted in (self._ceiling_alerted, self._growth_cap_alerted, self._usage_alerted):
             for volume_id in list(alerted):
                 volume = self._state.get_volume(volume_id)
                 if volume is None or volume.is_stale:
@@ -399,6 +404,7 @@ class Scheduler:
                 return  # already alerted; needs a human, not another tick
 
             usage = check_disk_usage(connector, target, volume.device_name, volume.volume_id)
+            self._alert_on_high_usage(account_name, volume, region, usage.percent_used)
             if usage.percent_used >= volume.threshold_percent:
                 try:
                     started = start_resize(
@@ -433,6 +439,28 @@ class Scheduler:
                 self._record_scan(account_name, volume, region, "below_threshold", percent_used=usage.percent_used)
         except Exception:
             logger.exception("Error processing volume %s (instance %s)", volume.volume_id, volume.instance_id)
+
+    def _alert_on_high_usage(self, account_name: str, volume: EligibleVolume, region: str, percent_used: float) -> None:
+        """One alert when a volume reaches notifications.usage_alert_percent,
+        re-armed once it drops back under. Independent of the resize
+        threshold and of dry_run, so it also works as monitoring-only."""
+        alert_percent = self._config.notifications.usage_alert_percent
+        if alert_percent == 0 or percent_used < alert_percent:
+            self._usage_alerted.discard(volume.volume_id)
+            return
+        if volume.volume_id in self._usage_alerted:
+            return
+        self._usage_alerted.add(volume.volume_id)
+        if self._config.dry_run:
+            resize_note = f"Dry run is on, so it will not be resized at its {volume.threshold_percent}% threshold."
+        else:
+            resize_note = f"It will auto-resize at {volume.threshold_percent}%."
+        self._notifier.send(
+            "EBS volume usage high",
+            f"Volume {volume.volume_id} on {volume.instance_id} ({account_name}, {region}) is "
+            f"{percent_used:.0f}% full (alert level {alert_percent}%). {resize_note}",
+            dedup_key=f"usage:{volume.volume_id}",
+        )
 
     def _advance_pending_modification(
         self,

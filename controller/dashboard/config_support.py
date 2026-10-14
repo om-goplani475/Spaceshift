@@ -55,6 +55,7 @@ _CONFIG_LABELS: dict[str, str] = {
     "notifications.teams_enabled": "Microsoft Teams",
     "notifications.telegram_enabled": "Telegram",
     "notifications.telegram_chat_id": "Telegram chat ID",
+    "notifications.usage_alert_percent": "Usage alert (%)",
     "notifications.pagerduty_enabled": "PagerDuty (critical only)",
     "discovery.honor_resource_tags": "Honor resource tags",
 }
@@ -109,6 +110,12 @@ _CONFIG_DESCRIPTIONS: dict[str, str] = {
         "Send alerts to Telegram. Needs SPACESHIFT_TELEGRAM_BOT_TOKEN in .env and the chat ID below."
     ),
     "notifications.telegram_chat_id": "The Telegram chat or channel ID the bot sends to.",
+    "notifications.usage_alert_percent": (
+        "Send one alert when a scanned volume reaches this percent full, to every enabled channel. 0 turns it "
+        "off. Independent of the resize threshold and of dry run, so set it below your resize thresholds to be "
+        "warned before a resize, or use it alone to monitor with dry run on. Alerts again only after usage "
+        "drops back under it."
+    ),
     "notifications.pagerduty_enabled": (
         "Create PagerDuty incidents for critical events only (ceiling reached, needs attention). Needs "
         "SPACESHIFT_PAGERDUTY_ROUTING_KEY in .env. Routine alerts never page."
@@ -164,6 +171,7 @@ _CONFIG_GROUPS: list[tuple[str, list[str]]] = [
             "notifications.telegram_enabled",
             "notifications.telegram_chat_id",
             "notifications.pagerduty_enabled",
+            "notifications.usage_alert_percent",
         ],
     ),
 ]

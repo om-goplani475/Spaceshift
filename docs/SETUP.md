@@ -141,6 +141,7 @@ Values are parsed as YAML scalars (so `false`, `true`, `300` parse as bool/int -
 | `notifications.teams_enabled` | `false` | Post alerts to Microsoft Teams. Needs `SPACESHIFT_TEAMS_WEBHOOK_URL`. |
 | `notifications.telegram_enabled` | `false` | Send alerts to Telegram. Needs `SPACESHIFT_TELEGRAM_BOT_TOKEN` and the chat ID below. |
 | `notifications.telegram_chat_id` | unset | The Telegram chat or channel the bot sends to. Required while Telegram is enabled. |
+| `notifications.usage_alert_percent` | `0` (off) | Send one alert to every enabled channel when a scanned volume reaches this percent full. Independent of the resize threshold and of `dry_run`: set it below your resize thresholds to be warned before a resize, or use it alone to monitor with `dry_run` on. It alerts again only after usage has dropped back under it. Only volumes the controller scans (`autoresize` on) are covered. Never pages PagerDuty. |
 | `notifications.pagerduty_enabled` | `false` | Create PagerDuty incidents for critical events only: ceiling reached, or a resize that needs manual follow-up. Routine alerts never page. Needs `SPACESHIFT_PAGERDUTY_ROUTING_KEY`. |
 
 Each channel is independent: an alert goes to every enabled channel, and one channel failing never blocks the others. A toggle only chooses whether a channel is used. Its secret stays in `.env`, so you can keep a channel configured and switch it off without touching the secret.
