@@ -2,6 +2,8 @@
 {% from "_macros.html" import filter_select, pager, empty_row, usage_meter, copy_button, search_input with context %}
 
 {% block title %}Dashboard{% endblock %}
+{# ApexCharts builds this stylesheet in a <style> tag at runtime, which the CSP blocks - served as a file instead. #}
+{% block head %}<link rel="stylesheet" href="{{ url_for('static', filename='css/vendor/apexcharts.css') }}">{% endblock %}
 {% block heading %}Dashboard{% endblock %}
 {% block lede %}<p class="lede">What the controller has done, and what it's doing now.</p>{% endblock %}
 

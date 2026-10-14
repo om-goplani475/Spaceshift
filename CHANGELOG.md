@@ -11,6 +11,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `resize.max_total_growth_gb` (Settings, default `0` = no limit): the most the controller may add to one volume in total across all its resizes, independent of its current size. The last step is shortened to fit the remaining budget; once spent, the volume stops auto-resizing and a critical "needs manual review" alert is sent (once). Growth is recorded per modification from now on (migration `0008`); resizes made before upgrading aren't counted.
 - A `proxy` service in `docker-compose.yml` (nginx, config in `nginx/default.conf`): the in-compose second hop between a host TLS proxy and the dashboard. It passes the host proxy's `X-Forwarded-*` headers through untouched, so the app's one-hop `SPACESHIFT_BEHIND_TLS_PROXY` trust and per-address login rate limiting keep seeing the real client.
 
+### Fixed
+- Overview: hovering the usage donut no longer shows a colored strip over the legend, and the stray line above the chart is gone. ApexCharts injects its styles at runtime, which the dashboard's CSP blocks; its stylesheet is now served as a static file.
+
 ### Changed
 - A resize that would overshoot `resize.max_volume_size_gb` is now shortened to land on the ceiling instead of being refused outright, so a 499GB volume with a 500GB ceiling grows to 500GB rather than stopping. A volume already at the ceiling is still refused, with the same alert.
 - The dashboard container no longer publishes a port; the new `proxy` service publishes `127.0.0.1:8089`, not all interfaces. Docker publishes ports past host firewalls, so the old binding exposed plain-HTTP login directly; a reverse proxy on the same host (docs/SETUP.md 7.5) is now the only way in from the network. Anyone reaching the dashboard on `<host>:8089` from another machine needs a proxy or an SSH tunnel.

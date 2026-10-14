@@ -749,3 +749,15 @@ def test_resize_row_shows_no_cost_delta_when_the_volume_has_no_known_price(state
     html = client.get("/").data.decode()
 
     assert "/mo</span>" not in html
+
+
+def test_overview_serves_the_chart_stylesheet_the_csp_would_otherwise_block(state, client):
+    # ApexCharts injects its own styles via a <style> tag, which the CSP
+    # blocks - without this file the chart tooltip renders unstyled under
+    # the chart and a stray crosshair line shows above it.
+    response = client.get("/")
+    html = response.data.decode()
+
+    assert re.search(r'<link rel="stylesheet" href="/static/css/vendor/apexcharts\.css">', html)
+    assert "style-src" not in response.headers["Content-Security-Policy"]  # still no 'unsafe-inline'
+    assert client.get("/static/css/vendor/apexcharts.css").status_code == 200

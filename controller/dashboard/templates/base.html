@@ -8,6 +8,7 @@
 <link rel="stylesheet" href="{{ url_for('static', filename='css/dashboard-base.css') }}?v=2.6.5">
 <link rel="stylesheet" href="{{ url_for('static', filename='css/dashboard-components.css') }}?v=2.6.5">
 <link rel="stylesheet" href="{{ url_for('static', filename='css/dashboard-pages.css') }}?v=2.6.5">
+{% block head %}{% endblock %}
 </head>
 {# Sign-in pages set standalone: no nav, no live refresh - there's nothing to refresh. #}
 <body{% if standalone %} data-live="off"{% endif %}>
