@@ -78,7 +78,8 @@ _CONFIG_DESCRIPTIONS: dict[str, str] = {
         "already at the ceiling stops auto-resizing and alerts for manual review."
     ),
     "resize.growth_increment_percent": (
-        "How much bigger each resize makes the volume (e.g. 100GB → 120GB), not the target size itself."
+        "How much bigger each resize makes the volume, as a percent of its current size (rounded up, at least "
+        "1GB) - not the target size itself. At 20%, a 100GB volume becomes 120GB; at 5%, 105GB."
     ),
     "resize.max_total_growth_gb": (
         "The most the controller may add to one volume, in total across all its resizes. 0 means no limit. "

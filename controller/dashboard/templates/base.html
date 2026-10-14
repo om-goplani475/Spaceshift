@@ -7,7 +7,7 @@
 <title>{% block title %}{% endblock %} · Spaceshift</title>
 <link rel="stylesheet" href="{{ url_for('static', filename='css/dashboard-base.css') }}?v=2.6.6">
 <link rel="stylesheet" href="{{ url_for('static', filename='css/dashboard-components.css') }}?v=2.6.6">
-<link rel="stylesheet" href="{{ url_for('static', filename='css/dashboard-pages.css') }}?v=2.6.5">
+<link rel="stylesheet" href="{{ url_for('static', filename='css/dashboard-pages.css') }}?v=2.6.6">
 {% block head %}{% endblock %}
 </head>
 {# Sign-in pages set standalone: no nav, no live refresh - there's nothing to refresh. #}
@@ -187,7 +187,7 @@
 <div id="toast-container" class="toast-container" aria-live="polite"></div>
 
 <script src="{{ url_for('static', filename='js/dashboard-utils.js') }}?v=2.6.2"></script>
-<script src="{{ url_for('static', filename='js/dashboard-features.js') }}?v=2.6.3"></script>
+<script src="{{ url_for('static', filename='js/dashboard-features.js') }}?v=2.6.4"></script>
 <script src="{{ url_for('static', filename='js/dashboard-init.js') }}?v=2.6.3"></script>
 {% block scripts %}{% endblock %}
 </body>

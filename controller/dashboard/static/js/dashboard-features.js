@@ -433,6 +433,16 @@ function wireThresholdInputs(root) {
 // mean several round-trips (or several chances to forget one). A dirty
 // setting also blocks the live-refresh poll from overwriting it - see
 // refreshLiveData()'s settings guard below.
+// The pinned Update bar says how many edits are waiting, since the rows
+// that hold them may be scrolled out of view.
+function showUnsavedCount() {
+  const summaryEl = document.getElementById("settings-update-summary");
+  if (!summaryEl) return;
+  const count = document.querySelectorAll('#settings-list .setting[data-dirty="true"]').length;
+  summaryEl.textContent = count + " unsaved change" + (count === 1 ? "" : "s") + " - press Update settings to save";
+  summaryEl.className = "config-status dirty";
+}
+
 function wireConfigDirtyTracking(root) {
   // Only the Settings page's rows have the dirty/status machinery; the
   // account forms reuse the input styling and submit normally.
@@ -444,6 +454,7 @@ function wireConfigDirtyTracking(root) {
       row.dataset.dirty = "true";
       statusEl.textContent = "Unsaved";
       statusEl.className = "config-status dirty";
+      showUnsavedCount();
     });
   });
 }
