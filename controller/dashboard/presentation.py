@@ -9,7 +9,7 @@ from markupsafe import Markup
 
 from controller.audit import AuditAction
 from controller.dashboard.rbac import Role
-from controller.state.base import ResizeStatus
+from controller.state.base import TERMINAL_STATUSES, ResizeStatus
 
 _STATUS_BADGES = {
     ResizeStatus.EXTEND_COMPLETED: "badge-green",
@@ -133,7 +133,10 @@ def _account_status(account) -> tuple[str, str]:
 
 
 def _status_badge(status: ResizeStatus) -> str:
-    return _STATUS_BADGES.get(status, "badge-muted")
+    if status in _STATUS_BADGES:
+        return _STATUS_BADGES[status]
+    # Anything still moving is the one thing ultramarine is reserved for.
+    return "badge-muted" if status in TERMINAL_STATUSES else "badge-resizing"
 
 
 def _decision_badge(decision: str) -> str:

@@ -5,51 +5,47 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="csrf-token" content="{{ csrf_token() }}">
 <title>{% block title %}{% endblock %} · Spaceshift</title>
-<link rel="stylesheet" href="{{ url_for('static', filename='css/dashboard-base.css') }}?v=2.6.7">
-<link rel="stylesheet" href="{{ url_for('static', filename='css/dashboard-components.css') }}?v=2.6.9">
-<link rel="stylesheet" href="{{ url_for('static', filename='css/dashboard-pages.css') }}?v=2.6.6">
+<link rel="preload" href="{{ url_for('static', filename='fonts/BarlowCondensed-700.woff2') }}" as="font" type="font/woff2" crossorigin>
+<link rel="stylesheet" href="{{ url_for('static', filename='css/fonts.css') }}?v=3.0.0">
+<link rel="stylesheet" href="{{ url_for('static', filename='css/dashboard-base.css') }}?v=3.0.0">
+<link rel="stylesheet" href="{{ url_for('static', filename='css/dashboard-components.css') }}?v=3.0.0">
+<link rel="stylesheet" href="{{ url_for('static', filename='css/dashboard-pages.css') }}?v=3.0.0">
 {% block head %}{% endblock %}
 </head>
 {# Sign-in pages set standalone: no nav, no live refresh - there's nothing to refresh. #}
 <body{% if standalone %} data-live="off"{% endif %}>
-<header class="topbar">
-  <div class="topbar-inner">
-    <a class="brand" href="{{ url_for('overview') }}">
-      <span class="brand-mark" aria-hidden="true">
-        <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-          <defs>
-            <linearGradient id="ss-brand-g" x1="4" y1="4" x2="20" y2="20" gradientUnits="userSpaceOnUse">
-              <stop offset="0%" stop-color="#38bdf8"/>
-              <stop offset="50%" stop-color="#6366f1"/>
-              <stop offset="100%" stop-color="#c084fc"/>
-            </linearGradient>
-          </defs>
-          <path d="M17.5 4.5H9A3.75 3.75 0 0 0 9 12H15A3.75 3.75 0 0 1 15 19.5H6.5" stroke="url(#ss-brand-g)" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
-          <circle cx="17.5" cy="4.5" r="1.75" fill="#38bdf8"/>
-          <circle cx="6.5" cy="19.5" r="1.75" fill="#c084fc"/>
-        </svg>
-      </span>
-      Spaceshift
-    </a>
-    {% if not standalone %}
-    {% if scope %}<span class="scope-badge">{{ "All accounts" if scope.is_admin else (scope.readable | length ~ " account" ~ ("s" if (scope.readable | length) != 1 else "")) if scope.readable is not none else "All accounts" }}</span>{% endif %}
-    <nav class="nav" aria-label="Main">
-      {% for endpoint, label in nav_items %}
-      <a href="{{ url_for(endpoint) }}" class="nav-link{% if request.endpoint == endpoint %} is-active{% endif %}"
-         {% if request.endpoint == endpoint %}aria-current="page"{% endif %}>{{ nav_icon(endpoint) }}<span class="nav-text">{{ label }}</span></a>
-      {% endfor %}
-    </nav>
+<div class="shell{% if standalone %} is-standalone{% endif %}">
+{% if not standalone %}
+<aside class="rail">
+  <a class="brand" href="{{ url_for('overview') }}">
+    <span class="brand-mark"><svg viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+          <rect x="2" y="3" width="14" height="8" fill="#d9a21b"/>
+          <rect x="2.75" y="14.75" width="26.5" height="13.5" stroke="currentColor" stroke-width="2"/>
+          <path d="M9 15v13M16 15v13M23 15v13" stroke="currentColor" stroke-width="2"/>
+        </svg></span>
+    Spaceshift
+  </a>
+  {% if scope %}<span class="scope-badge">{{ "All accounts" if scope.is_admin else (scope.readable | length ~ " account" ~ ("s" if (scope.readable | length) != 1 else "")) if scope.readable is not none else "All accounts" }}</span>{% endif %}
+  <nav class="nav" aria-label="Main">
+    {% for endpoint, label in nav_items %}
+    <a href="{{ url_for(endpoint) }}" class="nav-link{% if request.endpoint == endpoint %} is-active{% endif %}"
+       {% if request.endpoint == endpoint %}aria-current="page"{% endif %}>{{ nav_icon(endpoint) }}<span class="nav-text">{{ label }}</span></a>
+    {% endfor %}
+  </nav>
+  <div class="rail-foot">
     <div class="live" id="live-indicator" data-state="idle" title="This page refreshes itself every 10 seconds while visible">
       <span class="live-dot" aria-hidden="true"></span>
-      <span class="live-label" id="live-label">Live</span>
+      <span class="live-label" id="live-label" role="status">Live</span>
     </div>
-    <button type="button" class="theme-toggle" id="theme-toggle" title="Toggle dark/light theme" aria-label="Toggle theme">
-      <svg class="icon theme-icon-dark" viewBox="0 0 24 24"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
-      <svg class="icon theme-icon-light" viewBox="0 0 24 24"><circle cx="12" cy="12" r="5"/><path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"/></svg>
-    </button>
+    <div class="rail-tools">
+      <button type="button" class="theme-toggle" id="theme-toggle" title="Switch between light and dark" aria-label="Switch between light and dark">
+          <svg class="icon theme-icon-dark" viewBox="0 0 24 24"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
+          <svg class="icon theme-icon-light" viewBox="0 0 24 24"><circle cx="12" cy="12" r="5"/><path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"/></svg>
+        </button>
+    </div>
     {% if current_user %}
     <div class="user-menu">
-      <a class="user-chip" href="{{ url_for('users.account') }}" title="Signed in as {{ current_user.username }} - change your password">
+      <a class="user-chip" href="{{ url_for('users.account') }}" title="Signed in as {{ current_user.username }}. Change your password.">
         <span class="user-avatar" aria-hidden="true">{{ current_user.username[:2] }}</span>
         <span class="user-meta">
           <span class="user-name">{{ current_user.username }}</span>
@@ -58,20 +54,21 @@
       </a>
       <form method="post" action="{{ url_for('auth.logout') }}">
         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-        <button type="submit" class="btn btn-quiet" title="Sign out">
+        <button type="submit" class="btn btn-quiet" title="Sign out" aria-label="Sign out">
           <svg class="icon" viewBox="0 0 24 24"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><path d="M16 17l5-5-5-5"/><path d="M21 12H9"/></svg>
         </button>
       </form>
     </div>
     {% endif %}
-    {% else %}
-    <button type="button" class="theme-toggle auth-theme-toggle" id="theme-toggle" title="Toggle dark/light theme" aria-label="Toggle theme">
-      <svg class="icon theme-icon-dark" viewBox="0 0 24 24"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
-      <svg class="icon theme-icon-light" viewBox="0 0 24 24"><circle cx="12" cy="12" r="5"/><path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"/></svg>
-    </button>
-    {% endif %}
   </div>
-</header>
+</aside>
+{% else %}
+<button type="button" class="theme-toggle auth-theme-toggle" id="theme-toggle" title="Switch between light and dark" aria-label="Switch between light and dark">
+          <svg class="icon theme-icon-dark" viewBox="0 0 24 24"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
+          <svg class="icon theme-icon-light" viewBox="0 0 24 24"><circle cx="12" cy="12" r="5"/><path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"/></svg>
+        </button>
+{% endif %}
+<div class="stage">
 
 <main class="page{% if standalone %} page-narrow{% endif %}">
   {% if no_accounts and request.endpoint != "setup_guide" %}
@@ -101,6 +98,8 @@
   {% endif %}
   {% block content %}{% endblock %}
 </main>
+</div>
+</div>
 
 {% if not standalone %}
 <div id="drawer-root">
@@ -144,7 +143,7 @@
   <div class="modal-overlay" id="shortcuts-overlay"></div>
   <div class="modal-card">
     <div class="modal-header">
-      <div class="modal-title">Keyboard Shortcuts</div>
+      <div class="modal-title">Keyboard shortcuts</div>
       <button type="button" class="drawer-close" id="shortcuts-close" aria-label="Close shortcuts dialog">
         <svg class="icon" viewBox="0 0 24 24"><path d="M18 6 6 18M6 6l12 12"/></svg>
       </button>
@@ -152,7 +151,7 @@
     <div class="modal-body">
       <div class="shortcut-row"><span>Focus search filter</span><kbd class="shortcut-key">/</kbd></div>
       <div class="shortcut-row"><span>Close drawer or modal</span><kbd class="shortcut-key">Esc</kbd></div>
-      <div class="shortcut-row"><span>Toggle dark / light theme</span><kbd class="shortcut-key">T</kbd></div>
+      <div class="shortcut-row"><span>Switch light or dark theme</span><kbd class="shortcut-key">T</kbd></div>
       <div class="shortcut-row"><span>Show keyboard shortcuts</span><kbd class="shortcut-key">?</kbd></div>
     </div>
   </div>
@@ -161,9 +160,9 @@
 <div id="batch-action-bar" class="batch-bar" role="toolbar" aria-label="Batch actions">
   <span class="batch-bar-count" id="batch-bar-count">0 selected</span>
   <div class="batch-bar-actions">
-    <button type="button" class="btn btn-primary" id="batch-enable-btn">Enable Autoresize</button>
-    <button type="button" class="btn" id="batch-disable-btn">Disable Autoresize</button>
-    <button type="button" class="btn btn-quiet" id="batch-export-btn">Export Selected</button>
+    <button type="button" class="btn btn-primary" id="batch-enable-btn">Turn autoresize on</button>
+    <button type="button" class="btn" id="batch-disable-btn">Turn autoresize off</button>
+    <button type="button" class="btn btn-quiet" id="batch-export-btn">Export selected</button>
     <button type="button" class="btn btn-quiet" id="batch-cancel-btn">Deselect</button>
   </div>
 </div>

@@ -54,6 +54,38 @@ def _storage_breakdown(scans) -> dict[str, int]:
     return counts
 
 
+_BAY_CELL_LIMIT = 240
+
+
+def _bay_plan(scans, records, volume_names: dict[str, str]) -> tuple[list[dict], int]:
+    """One cell per volume for the Overview's bay plan, using each volume's
+    most recent scan (`scans` is newest-first, same trick as
+    `_storage_breakdown`). Cells that need eyes come first - over the
+    critical line, then mid-resize, then fullest first - and the plan is
+    capped so a very large fleet stays a glanceable picture; returns
+    (cells, how many volumes were left off)."""
+    resizing = {r.volume_id for r in records if r.status not in TERMINAL_STATUSES}
+    latest: dict[str, int | None] = {}
+    for s in scans:
+        latest.setdefault(s.volume_id, s.percent_used)
+    cells = []
+    for volume_id, pct in latest.items():
+        level = "unknown" if pct is None else ("critical" if pct > 85 else ("warning" if pct >= 70 else "healthy"))
+        cells.append(
+            {
+                "volume_id": volume_id,
+                "name": volume_names.get(volume_id, volume_id),
+                "code": volume_id.removeprefix("vol-")[-4:].upper(),
+                "pct": pct,
+                "fill": 0 if pct is None else min(100, 5 * round(pct / 5)),
+                "level": level,
+                "resizing": volume_id in resizing,
+            }
+        )
+    cells.sort(key=lambda c: (c["level"] != "critical", not c["resizing"], -(c["pct"] or -1), c["volume_id"]))
+    return cells[:_BAY_CELL_LIMIT], max(0, len(cells) - _BAY_CELL_LIMIT)
+
+
 def _resize_activity(records) -> list[dict]:
     """Count of resize records per status, in the same order as the
     Overview's own status badges so the bar chart's colours line up."""
@@ -215,6 +247,7 @@ def overview_view(state: StateBackend, cost_estimator: CostEstimator):
         for r in records
         if (delta := _resize_cost_delta(r, volume_lookup, cost_estimator)) is not None
     }
+    bay_cells, bay_hidden = _bay_plan(scans, records, volume_names)
     scope = g.scope
     # Who may act on a stuck row is decided here, from the same scope the
     # POST route enforces - the button is a convenience, never the control.
@@ -238,6 +271,8 @@ def overview_view(state: StateBackend, cost_estimator: CostEstimator):
         scan_decisions=sorted({s.decision for s in scans}),
         dry_run=_effective_dry_run(state),
         storage_breakdown=_storage_breakdown(scans),
+        bay_cells=bay_cells,
+        bay_hidden=bay_hidden,
         resize_activity=_resize_activity(records),
         volume_names=volume_names,
         instance_names=instance_names,

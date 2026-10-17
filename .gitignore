@@ -15,3 +15,6 @@ venv/
 .DS_Store
 
 docs/PLAN.md
+
+# Impeccable design tooling scratch (mocks, review captures, surface briefs)
+.impeccable/

@@ -75,8 +75,8 @@ Already running as part of `docker compose up` above - no separate command neede
 Managing more than one AWS account (see [docs/SETUP.md](docs/SETUP.md) section 1.4)? Every table is filterable by account alongside region. Pages keep themselves up to date (a 10s poll while the tab is visible, paused when it isn't) - the indicator in the top-right says when the last refresh happened. JSON is also available at `/api/status`, `/api/scans`, `/api/instances`, `/api/volumes`, `/api/config`, `/api/audit` - with the same session cookie a browser gets from `/login` (a `curl` recipe is in [docs/SETUP.md](docs/SETUP.md) 7.6). The container serves plain HTTP with gunicorn - if it's reachable beyond localhost, put it behind a TLS-terminating reverse proxy (nginx, Caddy, an ALB) and set `SPACESHIFT_BEHIND_TLS_PROXY=true` so the session cookie is only ever sent over HTTPS.
 
 <p>
-  <img src="docs/screenshots/overview-light.png" alt="Spaceshift overview page: stat tiles, resize activity table, scan history table" width="49%">
-  <img src="docs/screenshots/overview-dark.png" alt="The same overview page in dark mode" width="49%">
+  <img src="docs/screenshots/overview-light.png" alt="Spaceshift overview page: fleet counts, the bay plan with one cell per volume, usage and resize charts (demo data)" width="49%">
+  <img src="docs/screenshots/overview-dark.png" alt="The same overview page in dark mode (demo data)" width="49%">
 </p>
 
 ## Setup and configuration

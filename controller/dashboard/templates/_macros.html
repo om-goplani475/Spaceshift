@@ -103,7 +103,7 @@
 {% macro search_input(id, placeholder) %}
 <div class="search-wrapper">
   <input type="search" id="{{ id }}" placeholder="{{ placeholder }}" aria-label="{{ placeholder }}">
-  <button type="button" class="search-clear-btn" aria-label="Clear search">✕</button>
+  <button type="button" class="search-clear-btn" aria-label="Clear search"><svg class="icon" viewBox="0 0 24 24"><path d="M18 6 6 18M6 6l12 12"/></svg></button>
   <span class="search-kbd-hint">/</span>
 </div>
 {% endmacro %}

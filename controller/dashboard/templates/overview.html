@@ -5,7 +5,7 @@
 {# ApexCharts builds this stylesheet in a <style> tag at runtime, which the CSP blocks - served as a file instead. #}
 {% block head %}<link rel="stylesheet" href="{{ url_for('static', filename='css/vendor/apexcharts.css') }}">{% endblock %}
 {% block heading %}Dashboard{% endblock %}
-{% block lede %}<p class="lede">What the controller has done, and what it's doing now.</p>{% endblock %}
+{% block lede %}<p class="lede">What needs attention, what is resizing, and what the controller has done.</p>{% endblock %}
 
 {% block content %}
 {% if dry_run %}
@@ -13,72 +13,84 @@
   <span class="banner-icon" aria-hidden="true">
     <svg class="icon" viewBox="0 0 24 24"><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><path d="M12 9v4M12 17h.01"/></svg>
   </span>
-  <div><strong>Dry run is on.</strong> <p>The controller is only logging what it would resize - no real AWS or filesystem change is being made. <a href="{{ url_for('settings') }}">Turn it off in Settings</a> when you're ready.</p></div>
+  <div><strong>Dry run is on.</strong> <p>The controller only logs what it would resize. Nothing in AWS or on any filesystem changes. <a href="{{ url_for('settings') }}">Turn it off in Settings</a> when the logs look right.</p></div>
 </div>
 {% endif %}
 
 <div class="kpi-grid" id="dashboard-stats">
-  <div class="kpi-card">
-    <div class="kpi-top">
-      <span class="kpi-label">Total managed storage</span>
-      <span class="kpi-icon" aria-hidden="true"><svg class="icon" viewBox="0 0 24 24"><ellipse cx="12" cy="5" rx="8" ry="3"/><path d="M4 5v6c0 1.7 3.6 3 8 3s8-1.3 8-3V5"/><path d="M4 11v6c0 1.7 3.6 3 8 3s8-1.3 8-3v-6"/></svg></span>
-    </div>
-    <div class="kpi-value">{{ "{:,}".format(stats.total_gb) }}<span class="kpi-unit">GB</span></div>
+  <div class="kpi-card {{ 'warn' if stats.needs_attention }}">
+    <div class="kpi-top"><span class="l kpi-label">Needs attention</span></div>
+    <div class="n kpi-value">{{ stats.needs_attention }}</div>
+  </div>
+  <div class="kpi-card {{ 'live-now' if stats.in_progress }}">
+    <div class="kpi-top"><span class="l kpi-label">In progress</span></div>
+    <div class="n kpi-value">{{ stats.in_progress }}</div>
   </div>
   <div class="kpi-card">
-    <div class="kpi-top">
-      <span class="kpi-label">Est. monthly EBS spend</span>
-      <span class="kpi-icon" aria-hidden="true"><svg class="icon" viewBox="0 0 24 24"><line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg></span>
-    </div>
-    {% if monthly_cost is not none %}
-    <div class="kpi-value">{{ "~" if monthly_cost_is_partial else "" }}${{ "{:,.2f}".format(monthly_cost) }}</div>
-    <p class="section-note">Estimated, AWS list pricing{{ " - some volumes excluded" if monthly_cost_is_partial else "" }}</p>
-    {% else %}
-    <div class="kpi-value">&mdash;</div>
-    <p class="section-note">Estimated, AWS list pricing</p>
-    {% endif %}
-  </div>
-  <div class="kpi-card">
-    <div class="kpi-top">
-      <span class="l kpi-label">Volumes scanned</span>
-      <span class="kpi-icon" aria-hidden="true"><svg class="icon" viewBox="0 0 24 24"><path d="M12 20V10M18 20V4M6 20v-4"/></svg></span>
-    </div>
+    <div class="kpi-top"><span class="l kpi-label">Volumes scanned</span></div>
     <div class="n kpi-value">{{ stats.tracked }}</div>
   </div>
   <div class="kpi-card">
-    <div class="kpi-top">
-      <span class="l kpi-label">Autoresize enabled</span>
-      <span class="kpi-icon" aria-hidden="true"><svg class="icon" viewBox="0 0 24 24"><path d="M21 12a9 9 0 1 1-2.64-6.36"/><path d="M21 3v6h-6"/></svg></span>
-    </div>
+    <div class="kpi-top"><span class="l kpi-label">Autoresize enabled</span></div>
     <div class="n kpi-value">{{ stats.autoresize_enabled }}</div>
   </div>
   <div class="kpi-card">
-    <div class="kpi-top">
-      <span class="l kpi-label">Resizes completed</span>
-      <span class="kpi-icon" aria-hidden="true"><svg class="icon" viewBox="0 0 24 24"><path d="M20 6 9 17l-5-5"/></svg></span>
-    </div>
+    <div class="kpi-top"><span class="l kpi-label">Resizes completed</span></div>
     <div class="n kpi-value">{{ stats.completed }}</div>
   </div>
   <div class="kpi-card">
-    <div class="kpi-top">
-      <span class="l kpi-label">In progress</span>
-      <span class="kpi-icon" aria-hidden="true"><svg class="icon" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 3"/></svg></span>
-    </div>
-    <div class="n kpi-value">{{ stats.in_progress }}</div>
+    <div class="kpi-top"><span class="l kpi-label">Managed storage</span></div>
+    <div class="n kpi-value">{{ "{:,}".format(stats.total_gb) }}<span class="kpi-unit">GB</span></div>
   </div>
-  <div class="kpi-card{{ ' warn' if stats.needs_attention }}">
-    <div class="kpi-top">
-      <span class="l kpi-label">Needs attention</span>
-      <span class="kpi-icon" aria-hidden="true"><svg class="icon" viewBox="0 0 24 24"><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><path d="M12 9v4M12 17h.01"/></svg></span>
-    </div>
-    <div class="n kpi-value">{{ stats.needs_attention }}</div>
+  <div class="kpi-card">
+    <div class="kpi-top"><span class="l kpi-label">Est. monthly EBS spend</span></div>
+    {% if monthly_cost is not none %}
+    <div class="n kpi-value">{{ "~" if monthly_cost_is_partial else "" }}${{ "{:,.2f}".format(monthly_cost) }}</div>
+    <p class="kpi-sub">AWS list pricing{{ ", some volumes excluded" if monthly_cost_is_partial else "" }}</p>
+    {% else %}
+    <div class="n kpi-value">&mdash;</div>
+    <p class="kpi-sub">AWS list pricing</p>
+    {% endif %}
   </div>
 </div>
 
 <section class="section">
   <div class="section-header">
-    <h2>Storage fleet analytics</h2>
-    <p class="section-note">Disk usage across every scanned volume, and where each resize ended up.</p>
+    <h2>Bay plan</h2>
+    <p class="section-note">One cell per volume, filled to how full it is. Fullest and mid-resize volumes come first.</p>
+  </div>
+  <div class="bay-plan">
+    <div class="bay-head">
+      <div class="bay-key" aria-hidden="true">
+        <span><i class="dot-gray"></i>Under 70%</span>
+        <span><i class="dot-amber"></i>70% to 85%</span>
+        <span><i class="dot-red"></i>Over 85%</span>
+        <span><i class="dot-blue"></i>In progress</span>
+      </div>
+    </div>
+    {% if bay_cells %}
+    <div class="bay-grid" role="list" aria-label="Volumes by how full they are">
+      {% for c in bay_cells %}
+      <a class="bay-cell{{ ' is-resizing' if c.resizing }}" role="listitem" href="{{ url_for('volumes') }}" data-level="{{ c.level }}"
+         title="{{ c.name }}: {{ c.pct ~ '% used' if c.pct is not none else 'no usage reading yet' }}{{ ', resizing now' if c.resizing }}"
+         aria-label="{{ c.name }}, {{ c.pct ~ '% used' if c.pct is not none else 'no usage reading yet' }}{{ ', resizing now' if c.resizing }}">
+        <span class="bay-fill p{{ c.fill }}"></span>
+        <span class="bay-code">{{ c.code }}</span>
+        <span class="bay-pct">{{ c.pct ~ "%" if c.pct is not none else "–" }}</span>
+      </a>
+      {% endfor %}
+    </div>
+    {% if bay_hidden %}<p class="section-note">{{ bay_hidden }} more volume{{ "s" if bay_hidden != 1 }} not shown. Open Volumes for the full list.</p>{% endif %}
+    {% else %}
+    <p class="bay-empty">No volumes scanned yet. The first cycle runs shortly after the controller starts.</p>
+    {% endif %}
+  </div>
+</section>
+
+<section class="section">
+  <div class="section-header">
+    <h2>Fleet usage and resize outcomes</h2>
+    <p class="section-note">How full the scanned volumes are, and where each resize ended up.</p>
   </div>
   <div class="charts-grid">
     <div class="chart-card">

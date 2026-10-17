@@ -1,0 +1,6 @@
+/* Barlow + Barlow Condensed (SIL OFL 1.1), latin subset, self-hosted because the CSP is default-src 'self'. */
+@font-face { font-family: "Barlow"; font-weight: 400; font-style: normal; font-display: swap; src: url("../fonts/Barlow-400.woff2") format("woff2"); }
+@font-face { font-family: "Barlow"; font-weight: 500; font-style: normal; font-display: swap; src: url("../fonts/Barlow-500.woff2") format("woff2"); }
+@font-face { font-family: "Barlow"; font-weight: 600; font-style: normal; font-display: swap; src: url("../fonts/Barlow-600.woff2") format("woff2"); }
+@font-face { font-family: "Barlow Condensed"; font-weight: 600; font-style: normal; font-display: swap; src: url("../fonts/BarlowCondensed-600.woff2") format("woff2"); }
+@font-face { font-family: "Barlow Condensed"; font-weight: 700; font-style: normal; font-display: swap; src: url("../fonts/BarlowCondensed-700.woff2") format("woff2"); }

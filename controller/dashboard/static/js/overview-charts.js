@@ -4,15 +4,34 @@
 // template put on each container - kept out of an inline <script> block
 // since the dashboard's CSP has no script-src 'unsafe-inline'.
 (function () {
+  function cssVar(name) {
+    return getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+  }
+
+  function isLight() {
+    var forced = document.documentElement.getAttribute("data-theme");
+    if (forced) return forced === "light";
+    return !!(window.matchMedia && window.matchMedia("(prefers-color-scheme: light)").matches);
+  }
+
+  // Same ink as the rest of the page: the charts read the CSS tokens, so they
+  // follow the theme and the colour meanings (green ok, amber warn, red
+  // critical, ultramarine = resizing) match the badges and the bay plan.
   function baseChartTheme() {
-    var light = window.matchMedia && window.matchMedia("(prefers-color-scheme: light)").matches;
     return {
-      theme: { mode: light ? "light" : "dark" },
-      chart: { background: "transparent", toolbar: { show: false }, fontFamily: "inherit" },
-      grid: { borderColor: "#2a2f39" },
+      theme: { mode: isLight() ? "light" : "dark" },
+      chart: { background: "transparent", toolbar: { show: false }, fontFamily: cssVar("--font-sans") || "inherit", foreColor: cssVar("--text-2") },
+      grid: { borderColor: cssVar("--border") },
       legend: { show: false },
     };
   }
+
+  var STATUS_COLOR = {
+    extend_completed: "--green",
+    extend_failed_needs_attention: "--red",
+    extend_failed: "--amber-fill",
+    modify_failed: "--amber-fill",
+  };
 
   var usageEl = document.querySelector("#chart-usage");
   if (usageEl) {
@@ -23,7 +42,7 @@
         chart: Object.assign({}, baseChartTheme().chart, { type: "donut", height: 220 }),
         series: [breakdown.healthy || 0, breakdown.warning || 0, breakdown.critical || 0],
         labels: ["Healthy", "Warning", "Critical"],
-        colors: ["#35d399", "#f0b93a", "#ff6b6b"],
+        colors: [cssVar("--green"), cssVar("--amber-fill"), cssVar("--red")],
         dataLabels: { enabled: false },
         stroke: { width: 0 },
         plotOptions: { pie: { donut: { size: "72%", labels: { show: true, total: { show: true, label: "Volumes" } } } } },
@@ -38,11 +57,11 @@
     var activity = JSON.parse(activityEl.dataset.activity || "[]");
     if (activity.length > 0 && window.ApexCharts) {
       new ApexCharts(activityEl, Object.assign({}, baseChartTheme(), {
-        chart: Object.assign({}, baseChartTheme().chart, { type: "bar", height: 220 }),
+        chart: Object.assign({}, baseChartTheme().chart, { type: "bar", height: Math.max(180, 56 * activity.length + 40) }),
         series: [{ name: "Resizes", data: activity.map(function (a) { return a.count; }) }],
-        xaxis: { categories: activity.map(function (a) { return a.status; }) },
-        plotOptions: { bar: { borderRadius: 4, columnWidth: "45%", distributed: true } },
-        colors: ["#6c8dff", "#35d399", "#f0b93a", "#ff6b6b", "#7c5cff"],
+        xaxis: { categories: activity.map(function (a) { return a.status.replace(/_/g, " "); }), labels: { formatter: function (v) { return Math.round(v); } }, tickAmount: 4 },
+        plotOptions: { bar: { borderRadius: 0, horizontal: true, barHeight: "55%", distributed: true } },
+        colors: activity.map(function (a) { return cssVar(STATUS_COLOR[a.status] || "--resizing-fill"); }),
         dataLabels: { enabled: false },
       })).render();
     } else {

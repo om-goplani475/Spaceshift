@@ -761,3 +761,53 @@ def test_overview_serves_the_chart_stylesheet_the_csp_would_otherwise_block(stat
     assert re.search(r'<link rel="stylesheet" href="/static/css/vendor/apexcharts\.css">', html)
     assert "style-src" not in response.headers["Content-Security-Policy"]  # still no 'unsafe-inline'
     assert client.get("/static/css/vendor/apexcharts.css").status_code == 200
+
+
+# ---- Bay plan and status badges --------------------------------------------------
+
+
+def test_overview_bay_plan_shows_one_cell_per_volume_fullest_first(state, client):
+    state.upsert_volume("default", "vol-aaaa1111", "i-1", "us-east-1", 100, "/dev/xvdf")
+    state.upsert_volume("default", "vol-bbbb2222", "i-1", "us-east-1", 100, "/dev/xvdg")
+    state.record_scan("default", "us-east-1", "vol-aaaa1111", "i-1", 100, 80, 40.0, "below_threshold")
+    state.record_scan("default", "us-east-1", "vol-bbbb2222", "i-1", 100, 80, 93.0, "would_resize")
+
+    html = client.get("/").data.decode()
+
+    assert html.count('class="bay-cell') == 2
+    assert html.index("2222") < html.index("1111")  # the 93% volume leads
+    assert 'data-level="critical"' in html
+
+
+def test_bay_plan_marks_a_volume_mid_resize_and_caps_a_huge_fleet(state):
+    from controller.dashboard.overview_pages import _BAY_CELL_LIMIT, _bay_plan
+
+    for n in range(_BAY_CELL_LIMIT + 5):
+        state.record_scan("default", "us-east-1", f"vol-{n:08x}", "i-1", 100, 80, 10.0, "below_threshold")
+    state.record_scan("default", "us-east-1", "vol-ffffffff", "i-1", 100, 80, 50.0, "below_threshold")
+    state.create_if_absent("vol-ffffffff", "i-1", 100, 120, "default", "us-east-1")
+
+    cells, hidden = _bay_plan(state.list_scans(limit=1000), state.list_all(), {})
+
+    assert len(cells) == _BAY_CELL_LIMIT
+    assert hidden == 6
+    assert cells[0]["volume_id"] == "vol-ffffffff" and cells[0]["resizing"] is True
+
+
+def test_bay_plan_treats_a_scan_with_no_usage_reading_as_unknown_not_empty(state):
+    from controller.dashboard.overview_pages import _bay_plan
+
+    state.record_scan("default", "us-east-1", "vol-00000001", "i-1", 100, 80, None, "ssm_not_ready")
+
+    cells, _ = _bay_plan(state.list_scans(), [], {})
+
+    assert cells[0]["level"] == "unknown" and cells[0]["pct"] is None and cells[0]["fill"] == 0
+
+
+def test_in_progress_resizes_get_the_reserved_resizing_badge_and_terminal_ones_do_not():
+    from controller.dashboard.presentation import _status_badge
+    from controller.state.base import ResizeStatus
+
+    assert _status_badge(ResizeStatus.MODIFY_REQUESTED) == "badge-resizing"
+    assert _status_badge(ResizeStatus.EXTEND_COMPLETED) == "badge-green"
+    assert _status_badge(ResizeStatus.EXTEND_FAILED_NEEDS_ATTENTION) == "badge-red"
