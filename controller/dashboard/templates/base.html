@@ -6,10 +6,10 @@
 <meta name="csrf-token" content="{{ csrf_token() }}">
 <title>{% block title %}{% endblock %} · Spaceshift</title>
 <link rel="preload" href="{{ url_for('static', filename='fonts/BarlowCondensed-700.woff2') }}" as="font" type="font/woff2" crossorigin>
-<link rel="stylesheet" href="{{ url_for('static', filename='css/fonts.css') }}?v=3.0.0">
-<link rel="stylesheet" href="{{ url_for('static', filename='css/dashboard-base.css') }}?v=3.0.0">
-<link rel="stylesheet" href="{{ url_for('static', filename='css/dashboard-components.css') }}?v=3.0.0">
-<link rel="stylesheet" href="{{ url_for('static', filename='css/dashboard-pages.css') }}?v=3.0.0">
+<link rel="stylesheet" href="{{ url_for('static', filename='css/fonts.css') }}?v=3.1.0">
+<link rel="stylesheet" href="{{ url_for('static', filename='css/dashboard-base.css') }}?v=3.1.0">
+<link rel="stylesheet" href="{{ url_for('static', filename='css/dashboard-components.css') }}?v=3.1.0">
+<link rel="stylesheet" href="{{ url_for('static', filename='css/dashboard-pages.css') }}?v=3.1.0">
 {% block head %}{% endblock %}
 </head>
 {# Sign-in pages set standalone: no nav, no live refresh - there's nothing to refresh. #}
@@ -104,7 +104,7 @@
 {% if not standalone %}
 <div id="drawer-root">
   <div class="drawer-overlay" id="drawer-overlay"></div>
-  <aside class="drawer" id="drawer" role="dialog" aria-modal="true" aria-label="Details">
+  <aside class="drawer" id="drawer" role="dialog" aria-modal="true" aria-labelledby="drawer-title" tabindex="-1">
     <div class="drawer-header">
       <div>
         <div class="drawer-title" id="drawer-title"></div>
@@ -185,9 +185,9 @@
 
 <div id="toast-container" class="toast-container" aria-live="polite"></div>
 
-<script src="{{ url_for('static', filename='js/dashboard-utils.js') }}?v=2.6.2"></script>
-<script src="{{ url_for('static', filename='js/dashboard-features.js') }}?v=2.6.9"></script>
-<script src="{{ url_for('static', filename='js/dashboard-init.js') }}?v=2.6.5"></script>
+<script src="{{ url_for('static', filename='js/dashboard-utils.js') }}?v=3.1.0"></script>
+<script src="{{ url_for('static', filename='js/dashboard-features.js') }}?v=3.1.0"></script>
+<script src="{{ url_for('static', filename='js/dashboard-init.js') }}?v=3.1.0"></script>
 {% block scripts %}{% endblock %}
 </body>
 </html>

@@ -41,7 +41,7 @@
     <tbody id="audit-tbody">
     {% for row in rows %}
     {% set r = row.r %}
-    <tr class="audit-row" data-action="{{ audit_label(r.action) }}" data-who="{{ r.actor_username if r.actor_type == 'user' else actor_label(r.actor_type) }}"
+    <tr class="audit-row" tabindex="0" data-action="{{ audit_label(r.action) }}" data-who="{{ r.actor_username if r.actor_type == 'user' else actor_label(r.actor_type) }}"
         data-target="{{ r.target_id or '' }}" data-account="{{ r.account_name or '' }}" data-from="{{ r.remote_addr or '' }}"
         data-ts="{{ r.created_at.isoformat() }}" data-change="{{ row.change or '' }}"
         data-detail='{{ r.detail | tojson if r.detail else "" }}'>

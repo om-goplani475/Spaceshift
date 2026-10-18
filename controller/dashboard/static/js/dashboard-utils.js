@@ -264,6 +264,38 @@ wireFilters(
 // compiles expressions via `new Function` at runtime).
 const DRAWER_TABLES = ["resize-table", "scan-table", "instances-table", "volumes-table"];
 
+// ---- Dialog focus management ---------------------------------------------------
+
+// Every dialog (the drawer and both modals) goes through these two calls:
+// opening moves focus inside and makes everything behind it inert (so Tab
+// and screen-reader browsing can't wander behind the overlay); closing
+// undoes that and puts focus back on whatever opened it.
+const _dialogStack = [];
+const _INERTABLE = [".shell", "#batch-action-bar", "#drawer-root", "#shortcuts-modal", "#detail-modal"];
+
+function _applyInert() {
+  const top = _dialogStack.length ? _dialogStack[_dialogStack.length - 1].el : null;
+  _INERTABLE.forEach(function (sel) {
+    const el = document.querySelector(sel);
+    if (el) el.inert = !!top && !el.contains(top) && !top.contains(el);
+  });
+}
+
+function dialogOpen(el, focusEl) {
+  if (_dialogStack.some(function (d) { return d.el === el; })) return;
+  _dialogStack.push({ el: el, opener: document.activeElement });
+  _applyInert();
+  (focusEl || el).focus({ preventScroll: true });
+}
+
+function dialogClose(el) {
+  const i = _dialogStack.findIndex(function (d) { return d.el === el; });
+  if (i === -1) return;
+  const opener = _dialogStack.splice(i, 1)[0].opener;
+  _applyInert();
+  if (opener && opener !== document.body && document.contains(opener)) opener.focus({ preventScroll: true });
+}
+
 function openDrawer(id, title, fields) {
   const root = document.getElementById("drawer-root");
   if (!root) return;
@@ -299,14 +331,19 @@ function openDrawer(id, title, fields) {
   }
 
   document.getElementById("drawer-overlay").classList.add("is-open");
-  document.getElementById("drawer").classList.add("is-open");
+  const drawerEl = document.getElementById("drawer");
+  drawerEl.classList.add("is-open");
+  dialogOpen(drawerEl, document.getElementById("drawer-close"));
 }
 
 function closeDrawer() {
   const overlay = document.getElementById("drawer-overlay");
   const drawer = document.getElementById("drawer");
   if (overlay) overlay.classList.remove("is-open");
-  if (drawer) drawer.classList.remove("is-open");
+  if (drawer && drawer.classList.contains("is-open")) {
+    drawer.classList.remove("is-open");
+    dialogClose(drawer);
+  }
 }
 
 // ---- Toast Notifications ---------------------------------------------------
@@ -429,7 +466,9 @@ function markClickableRows() {
     const table = document.getElementById(id);
     if (!table) return;
     Array.from(table.tBodies[0].rows).forEach(function (r) {
-      if (!r.classList.contains("empty-row")) r.classList.add("is-clickable");
+      if (r.classList.contains("empty-row")) return;
+      r.classList.add("is-clickable");
+      r.tabIndex = 0;
     });
   });
 }
@@ -550,8 +589,15 @@ function wireShortcutsModal() {
   if (!modal || modal.dataset.wired) return;
   modal.dataset.wired = "1";
 
-  function openShortcuts() { modal.classList.remove("is-hidden"); }
-  function closeShortcuts() { modal.classList.add("is-hidden"); }
+  function openShortcuts() {
+    modal.classList.remove("is-hidden");
+    dialogOpen(modal, document.getElementById("shortcuts-close"));
+  }
+  function closeShortcuts() {
+    if (modal.classList.contains("is-hidden")) return;
+    modal.classList.add("is-hidden");
+    dialogClose(modal);
+  }
 
   const closeBtn = document.getElementById("shortcuts-close");
   const overlay = document.getElementById("shortcuts-overlay");
@@ -591,3 +637,15 @@ function initKeyboardShortcuts() {
   });
 }
 
+
+// Rows that open a drawer or a detail dialog on click do the same on
+// Enter or Space when focused, so they aren't mouse-only.
+function wireRowKeyboard() {
+  document.addEventListener("keydown", function (e) {
+    if (e.key !== "Enter" && e.key !== " ") return;
+    const row = e.target.closest && e.target.closest("tr.is-clickable, tr.audit-row");
+    if (!row || e.target !== row) return;
+    e.preventDefault();
+    row.click();
+  });
+}

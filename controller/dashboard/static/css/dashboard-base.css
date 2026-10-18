@@ -269,6 +269,7 @@ input, select, textarea { caret-color: var(--text); accent-color: var(--action);
 .flash-error { border-color: var(--red); background: color-mix(in srgb, var(--red) 10%, var(--surface)); }
 .flash-success { border-color: var(--green); background: color-mix(in srgb, var(--green) 10%, var(--surface)); }
 .flash-warning { border-color: var(--amber); background: color-mix(in srgb, var(--amber-fill) 16%, var(--surface)); }
+.flash, .lede, .setting-description, .section-note { overflow-wrap: anywhere; }
 .lede {
   margin-top: var(--sp-1);
   color: var(--text-2);
@@ -370,6 +371,7 @@ tbody tr:last-child td { border-bottom: none; }
 tbody tr:hover td { background: var(--surface-2); }
 tbody tr.is-hidden { display: none; }
 tbody tr.is-clickable, tbody tr.audit-row { cursor: pointer; }
+tbody tr.is-clickable:focus-visible, tbody tr.audit-row:focus-visible { outline: 2px solid var(--focus); outline-offset: -2px; }
 
 /* Unit codes (volume and instance IDs) are stencilled. */
 td.mono { font-family: var(--font-display); font-size: 1rem; font-weight: 600; letter-spacing: 0.05em; }
@@ -519,4 +521,17 @@ td.empty {
   .setting-control { align-items: flex-start; }
   .config-value-input { text-align: left; }
   .drawer { width: 100vw; }
+}
+
+/* ---- Forced colours (Windows high contrast) --------------------------------
+   Fills that rely on background colour vanish there; give them system colours
+   and keep state readable from the text and borders, which are already there. */
+
+@media (forced-colors: active) {
+  .bay-fill, .meter-fill, .dist-segment, .setup-progress-fill { background: Highlight; forced-color-adjust: none; }
+  .bay-cell[data-level="critical"] { border-width: 3px; border-style: double; }
+  .bay-cell.is-resizing { border-style: dashed; }
+  .switch .slider::before { background: ButtonText; forced-color-adjust: none; }
+  .switch input:checked + .slider { background: Highlight; }
+  .nav-link.is-active { outline: 2px solid Highlight; }
 }

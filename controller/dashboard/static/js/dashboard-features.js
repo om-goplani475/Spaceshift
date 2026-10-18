@@ -180,11 +180,16 @@ function wireAuditDetailModal() {
   if (!modal || !contentEl) return;
 
   function closeModal() {
+    if (modal.classList.contains("is-hidden")) return;
     modal.classList.add("is-hidden");
+    dialogClose(modal);
   }
 
   if (overlay) overlay.addEventListener("click", closeModal);
   if (closeBtn) closeBtn.addEventListener("click", closeModal);
+  document.addEventListener("keydown", function (e) {
+    if (e.key === "Escape") closeModal();
+  });
 
   document.addEventListener("click", function (e) {
     if (e.target.closest("a, button, input, select, label")) return;
@@ -218,6 +223,7 @@ function wireAuditDetailModal() {
     metaEl.textContent = "Actor: " + (row.dataset.who || "") + " | Action: " + (row.dataset.action || "") + " | " + formattedTs;
     contentEl.textContent = lines.length ? lines.join("\n") : "No further detail recorded for this event.";
     modal.classList.remove("is-hidden");
+    dialogOpen(modal, closeBtn);
   });
 }
 

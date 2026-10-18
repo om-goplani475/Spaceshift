@@ -22,6 +22,7 @@ wireSettingsTabs();
 markClickableRows();
 initThemeToggle();
 initKeyboardShortcuts();
+wireRowKeyboard();
 wireTableSorting();
 wireExportCSVButtons();
 wireShortcutsModal();
@@ -40,7 +41,34 @@ const SWAP_IDS = [
   "dashboard-stats", "volumes-summary", "instances-summary", "volumes-dist-card", "instances-tbody", "volumes-tbody", "resize-tbody", "scan-tbody", "audit-tbody",
   "accounts-tbody", "account-status",
 ];
+const REFRESH_TIMEOUT_MS = 8000;
 let refreshInFlight = false;
+
+// The swap below replaces whole table bodies, which would drop keyboard
+// focus (and a screen reader's place) if it was on a row, toggle or copy
+// button inside one. Remember what had focus as a selector and put it back.
+function captureFocus() {
+  const el = document.activeElement;
+  if (!el || el === document.body) return null;
+  const inside = SWAP_IDS.concat(["settings-list"]).some(function (id) {
+    const root = document.getElementById(id);
+    return root && root.contains(el);
+  });
+  if (!inside) return null;
+  if (el.id) return "#" + CSS.escape(el.id);
+  let sel = el.tagName.toLowerCase();
+  el.classList.forEach(function (c) { sel += "." + CSS.escape(c); });
+  ["data-id", "data-kind", "data-copy", "data-field", "data-volume", "data-instance", "name"].forEach(function (a) {
+    if (el.hasAttribute(a)) sel += "[" + a + '="' + CSS.escape(el.getAttribute(a)) + '"]';
+  });
+  return sel;
+}
+
+function restoreFocus(sel) {
+  if (!sel || (document.activeElement && document.activeElement !== document.body)) return;
+  const target = document.querySelector(sel);
+  if (target) target.focus({ preventScroll: true });
+}
 
 const liveIndicator = document.getElementById("live-indicator");
 const liveLabel = document.getElementById("live-label");
@@ -51,9 +79,11 @@ async function refreshLiveData() {
   if (document.querySelector('.limit-input[data-dirty="true"]')) return;
   refreshInFlight = true;
   if (liveIndicator) liveIndicator.dataset.state = "refreshing";
+  const abort = new AbortController();
+  const timeout = setTimeout(function () { abort.abort(); }, REFRESH_TIMEOUT_MS);
   try {
     // Query string included: the audit page's filters live there.
-    const resp = await fetch(location.pathname + location.search);
+    const resp = await fetch(location.pathname + location.search, { signal: abort.signal });
     // The session expired (or was revoked) and the server sent us to the
     // sign-in page - go there properly instead of silently showing stale
     // data with a green "Live" dot.
@@ -76,6 +106,7 @@ async function refreshLiveData() {
       if (cb.checked && cb.dataset.table) selectAllState[cb.dataset.table] = true;
     });
 
+    const focusSel = captureFocus();
     SWAP_IDS.forEach(function (id) {
       const current = document.getElementById(id);
       const updated = fresh.getElementById(id);
@@ -120,16 +151,24 @@ async function refreshLiveData() {
     updateVolumesKPI();
     updateInstancesKPI();
     Object.values(tableControllers).forEach(function (c) { c.apply(); });
-    if (liveIndicator) liveIndicator.dataset.state = "idle";
+    restoreFocus(focusSel);
+    if (liveIndicator) {
+      liveIndicator.dataset.state = "idle";
+      liveIndicator.title = "This page refreshes itself every 10 seconds while visible";
+    }
     if (liveLabel) liveLabel.textContent = "Live";
   } catch (e) {
     // Network hiccup or similar - show it, and try again next tick. No
     // countdown/age text on this indicator (just "is it live right now",
     // not "how many seconds ago") - only the error state needs to say
     // anything at all.
-    if (liveIndicator) liveIndicator.dataset.state = "error";
-    if (liveLabel) liveLabel.textContent = "Error";
+    if (liveIndicator) {
+      liveIndicator.dataset.state = "error";
+      liveIndicator.title = "The last refresh failed, so the numbers may be out of date. Trying again in 10 seconds.";
+    }
+    if (liveLabel) liveLabel.textContent = "Not updating";
   } finally {
+    clearTimeout(timeout);
     refreshInFlight = false;
   }
 }
