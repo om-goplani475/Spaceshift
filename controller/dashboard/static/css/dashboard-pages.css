@@ -267,6 +267,17 @@
   color: var(--text-3);
 }
 
+.auth-form { display: flex; flex-direction: column; gap: var(--sp-4); max-width: 30rem; }
+.form-actions { margin-top: var(--sp-2); }
+.form-error {
+  padding: var(--sp-3) var(--sp-4);
+  border: 1px solid var(--red);
+  background: color-mix(in srgb, var(--red) 10%, var(--surface));
+  color: var(--red);
+  font-size: var(--text-sm);
+  font-weight: 500;
+}
+
 .field { display: flex; flex-direction: column; gap: var(--sp-1); }
 .field label { font-size: var(--text-sm); font-weight: 600; color: var(--text); }
 .field input {
@@ -449,6 +460,7 @@ a.user-name:hover { text-decoration: underline; }
    above and actually wins. */
 
 @media (max-width: 900px) {
+  .filters .count { white-space: normal; margin-left: 0; flex: 1 0 100%; }
   .setting { grid-template-columns: 1fr; gap: var(--sp-3); }
   .setting-control { align-items: flex-start; }
   .config-value-input { text-align: left; }

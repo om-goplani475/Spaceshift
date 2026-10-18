@@ -157,7 +157,7 @@ _NAV_ITEMS = [
     ("accounts.list_accounts", "Accounts"),
     ("settings", "Settings"),
     ("users.list_users", "Users"),
-    ("setup_guide", "Setup Guide"),
+    ("setup_guide", "Setup guide"),
 ]
 _ADMIN_NAV_ENDPOINTS = frozenset({"accounts.list_accounts", "settings", "users.list_users", "setup_guide"})
 

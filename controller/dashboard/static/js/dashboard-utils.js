@@ -405,7 +405,10 @@ function wireDrawerChrome() {
 // would otherwise show as a blank "–".
 function _drawerCellValue(header, cell, row) {
   if (header === "Autoresize") return row.dataset.autoresize === "true" ? "On" : "Off";
-  const text = cell && cell.textContent.trim();
+  // A limit cell holds an input, a hidden "80% (default)" and a visible "(default)" note;
+  // the hidden span already says it all, so reading the whole cell repeated the note.
+  const limit = cell && cell.querySelector(".limit-text");
+  const text = limit ? limit.textContent.trim() : cell && cell.textContent.trim();
   return text || "–";
 }
 
