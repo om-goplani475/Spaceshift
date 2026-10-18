@@ -443,3 +443,13 @@ a.user-name:hover { text-decoration: underline; }
 .code-copy-btn { position: absolute; top: var(--sp-2); right: var(--sp-2); }
 .code-copy-btn.is-copied { color: var(--green); border-color: color-mix(in srgb, var(--green) 40%, var(--border)); }
 
+
+/* ---- Small screens --------------------------------------------------------
+   Lives here, not in dashboard-base.css, so it comes after the .setting rules
+   above and actually wins. */
+
+@media (max-width: 900px) {
+  .setting { grid-template-columns: 1fr; gap: var(--sp-3); }
+  .setting-control { align-items: flex-start; }
+  .config-value-input { text-align: left; }
+}

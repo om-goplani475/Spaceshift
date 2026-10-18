@@ -33,6 +33,15 @@ function wireBatchActions() {
   const exportBtn = document.getElementById("batch-export-btn");
   const cancelBtn = document.getElementById("batch-cancel-btn");
 
+  // The checkbox itself is small; the whole cell around it counts as the
+  // tap target, which is what makes it usable with a thumb.
+  document.addEventListener("click", function (e) {
+    const cell = e.target.closest("td.select-col, th.select-col");
+    if (!cell || e.target.matches("input")) return;
+    const cb = cell.querySelector("input[type=checkbox]");
+    if (cb) cb.click();
+  });
+
   document.addEventListener("change", function (e) {
     if (e.target.classList.contains("select-all-checkbox")) {
       const table = document.getElementById(e.target.dataset.table);

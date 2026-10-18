@@ -431,7 +431,7 @@ function wireRowDrawer(tableId) {
   if (!table || table.dataset.drawerWired) return;
   table.dataset.drawerWired = "1";
   table.addEventListener("click", function (e) {
-    if (e.target.closest("input, select, button, a, label, .btn-inline-copy")) return;
+    if (e.target.closest("input, select, button, a, label, .btn-inline-copy, .select-col")) return;
     const row = e.target.closest("tbody tr");
     if (!row || !table.contains(row) || row.classList.contains("empty-row")) return;
     const headerCells = Array.from(table.tHead.rows[0].cells).filter(c => !c.classList.contains("select-col") && !c.classList.contains("action-col"));

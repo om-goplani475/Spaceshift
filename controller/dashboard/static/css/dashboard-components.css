@@ -387,7 +387,7 @@
 /* ---- Compact KPI Grid --------------------------------------------------- */
 
 .kpi-grid-compact {
-  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
   margin-bottom: var(--sp-5);
 }
 
@@ -510,6 +510,7 @@ th.sort-asc, th.sort-desc { color: var(--text); }
   width: 44px;
   text-align: center;
   padding: var(--sp-2);
+  cursor: pointer;
 }
 .row-checkbox, .select-all-checkbox {
   cursor: pointer;
