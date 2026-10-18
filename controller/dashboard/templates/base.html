@@ -6,10 +6,10 @@
 <meta name="csrf-token" content="{{ csrf_token() }}">
 <title>{% block title %}{% endblock %} · Spaceshift</title>
 <link rel="preload" href="{{ url_for('static', filename='fonts/BarlowCondensed-700.woff2') }}" as="font" type="font/woff2" crossorigin>
-<link rel="stylesheet" href="{{ url_for('static', filename='css/fonts.css') }}?v=3.3.2">
-<link rel="stylesheet" href="{{ url_for('static', filename='css/dashboard-base.css') }}?v=3.3.2">
-<link rel="stylesheet" href="{{ url_for('static', filename='css/dashboard-components.css') }}?v=3.3.2">
-<link rel="stylesheet" href="{{ url_for('static', filename='css/dashboard-pages.css') }}?v=3.3.2">
+<link rel="stylesheet" href="{{ url_for('static', filename='css/fonts.css') }}?v=3.4.2">
+<link rel="stylesheet" href="{{ url_for('static', filename='css/dashboard-base.css') }}?v=3.4.2">
+<link rel="stylesheet" href="{{ url_for('static', filename='css/dashboard-components.css') }}?v=3.4.2">
+<link rel="stylesheet" href="{{ url_for('static', filename='css/dashboard-pages.css') }}?v=3.4.2">
 {% block head %}{% endblock %}
 </head>
 {# Sign-in pages set standalone: no nav, no live refresh - there's nothing to refresh. #}
@@ -187,9 +187,9 @@
 
 <div id="toast-container" class="toast-container" aria-live="polite"></div>
 
-<script src="{{ url_for('static', filename='js/dashboard-utils.js') }}?v=3.3.2"></script>
-<script src="{{ url_for('static', filename='js/dashboard-features.js') }}?v=3.3.2"></script>
-<script src="{{ url_for('static', filename='js/dashboard-init.js') }}?v=3.3.2"></script>
+<script src="{{ url_for('static', filename='js/dashboard-utils.js') }}?v=3.4.2"></script>
+<script src="{{ url_for('static', filename='js/dashboard-features.js') }}?v=3.4.2"></script>
+<script src="{{ url_for('static', filename='js/dashboard-init.js') }}?v=3.4.2"></script>
 {% block scripts %}{% endblock %}
 </body>
 </html>

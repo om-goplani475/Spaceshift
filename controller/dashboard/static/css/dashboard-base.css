@@ -175,7 +175,8 @@ input, select, textarea { caret-color: var(--text); accent-color: var(--action);
   white-space: nowrap;
 }
 
-.nav { display: flex; flex-direction: column; gap: 2px; flex: 1; min-height: 0; }
+/* Never shrinks below its links: on a short window the whole rail scrolls instead of the footer overlapping them. */
+.nav { display: flex; flex-direction: column; gap: 2px; flex: 1 0 auto; }
 
 .nav-link {
   display: flex;
@@ -437,7 +438,7 @@ td.empty {
   transition: transform var(--ease), background var(--ease);
 }
 .switch input:checked + .slider { background: var(--green); border-color: var(--green); }
-.switch input:checked + .slider::before { transform: translateX(20px); background: #fff; }
+.switch input:checked + .slider::before { transform: translateX(20px); background: var(--on-state); }
 .switch input:disabled { cursor: default; }
 .switch input:disabled + .slider { opacity: 0.5; }
 .switch input:focus-visible + .slider { outline: 2px solid var(--focus); outline-offset: 2px; }
