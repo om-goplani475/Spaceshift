@@ -11,10 +11,10 @@ colors:
   ink-soft: "#424d55"
   ink-quiet: "#59656c"
   rail-steel: "#1b2229"
-  oxide-red: "#b5432f"
+  oxide-red: "#9b3928"
   safety-mustard: "#d9a21b"
-  mustard-ink: "#8a6100"
-  tide-green: "#26704a"
+  mustard-ink: "#7c5700"
+  tide-green: "#226543"
   ultramarine: "#1f5fa6"
 typography:
   display:
@@ -125,24 +125,24 @@ The look is container-terminal rather than control-room: a dark steel rail down 
 
 ## Colors
 
-A concrete ground, steel structure and three paints. Light and dark are one palette, defined once in `dashboard-base.css` with `light-dark()`; the values below are the light theme, and the dark counterparts are in the sidecar.
+A concrete ground, steel structure and three paints. State text colours are solved, not eyeballed: each is at least 4.5:1 on every surface and on its own 10-18% tint, in both themes. Light and dark are one palette, defined once in `dashboard-base.css` with `light-dark()`; the values below are the light theme, and the dark counterparts are in the sidecar.
 
 ### Primary
 - **Rail Steel** (#1b2229): the side rail in both themes, and the primary button in light mode (concrete in dark mode). It is the structure colour, not a brand accent.
 
 ### Secondary
-- **Oxide Red** (#b5432f): danger and the current page. Over-threshold bay cells, "needs attention", failed states, destructive buttons, and the active nav item.
+- **Oxide Red** (#9b3928): danger and the current page. Over-threshold bay cells, "needs attention", failed states, destructive buttons, and the active nav item.
 - **Safety Mustard** (#d9a21b): caution and dry-run. The dry-run strip, 70-85% bay cells, warning meters and badges. Text on it is always ink (#151a1e).
 
 ### Tertiary
-- **Ultramarine** (#1f5fa6): a resize is in progress. Nothing else is ever this colour.
-- **Tide Green** (#26704a): healthy and on. Autoresize switches, completed resizes, the watched share of storage.
+- **Ultramarine** (#1f5fa6): a resize is in progress. Nothing else is ever this colour. As text it is #1d599c in light and #8db9ec in dark, so it stays readable on its own tint.
+- **Tide Green** (#226543): healthy and on. Autoresize switches, completed resizes, the watched share of storage.
 
 ### Neutral
 - **Concrete Ground** (#e6e9e6): the page. **Concrete Surface** (#f6f7f5): tables, panels, tiles, inputs. **Concrete Inset** (#eceeeb): table headers and quiet fills.
 - **Steel Line** (#c3c9c5) for row dividers; **Steel Line Strong** (#8a959a) for panel and control borders.
 - **Ink** (#151a1e), **Ink Soft** (#424d55), **Ink Quiet** (#59656c): text, in falling order of emphasis. All three meet 4.5:1 on the surfaces they are used on, in both themes.
-- **Mustard Ink** (#8a6100): amber used as text, where the mustard fill would fail contrast.
+- **Mustard Ink** (#7c5700): amber used as text, where the mustard fill would fail contrast.
 
 ### Named Rules
 **The One Blue Rule.** Ultramarine means a resize is in progress, in badges, tiles, bay cells and chart bars. If a design wants a blue for any other reason, it is wrong.

@@ -47,6 +47,11 @@
   --rail-2: #28313a;
   --rail-text: #e8ecea;
   --rail-text-2: #aab5bc;
+  --rail-ok: #4cb987;
+  --rail-err: #f29887;
+  --rail-active: #9b3928;
+  --rail-line: #44525d;
+  --rail-rule: #36414a;
 
   /* Primary action is ink, not a brand colour: steel on concrete, concrete on steel. */
   --action: light-dark(#1b2229, #e8ecea);
@@ -59,11 +64,12 @@
   --focus: light-dark(#1b2229, #f2b925);
 
   /* State colours: each carries meaning only. */
-  --green: light-dark(#26704a, #4cb987);
-  --red: light-dark(#b5432f, #ee7b66);
-  --amber: light-dark(#8a6100, #e6b43a);
+  /* State text colours are solved so each is >= 4.5:1 on every surface and on its own 10-18% tint, in both themes. */
+  --green: light-dark(#226543, #62c296);
+  --red: light-dark(#9b3928, #f29887);
+  --amber: light-dark(#7c5700, #e6b43a);
   --amber-fill: #d9a21b;
-  --resizing: light-dark(#1f5fa6, #6aa3e6);
+  --resizing: light-dark(#1d599c, #8db9ec);
   --resizing-fill: #1f5fa6;
   --on-state: light-dark(#ffffff, #12171b);
 
@@ -164,7 +170,7 @@ input, select, textarea { caret-color: var(--text); accent-color: var(--action);
   font-weight: 600;
   color: var(--rail-text-2);
   padding: 2px var(--sp-2);
-  border: 1px solid #44525d;
+  border: 1px solid var(--rail-line);
   border-radius: var(--radius-sm);
   white-space: nowrap;
 }
@@ -188,7 +194,7 @@ input, select, textarea { caret-color: var(--text); accent-color: var(--action);
 .nav-link:hover { color: #fff; background: var(--rail-2); text-decoration: none; }
 .nav-link.is-active {
   color: #fff;
-  background: #b5432f;
+  background: var(--rail-active);
   font-weight: 600;
 }
 
@@ -197,7 +203,7 @@ input, select, textarea { caret-color: var(--text); accent-color: var(--action);
   flex-direction: column;
   gap: var(--sp-3);
   padding: var(--sp-4) var(--sp-5) 0;
-  border-top: 1px solid #36414a;
+  border-top: 1px solid var(--rail-rule);
 }
 .rail-tools { display: flex; align-items: center; gap: var(--sp-2); }
 
@@ -211,18 +217,18 @@ input, select, textarea { caret-color: var(--text); accent-color: var(--action);
   color: var(--rail-text-2);
   white-space: nowrap;
   cursor: default;
-  border: 1px solid #44525d;
+  border: 1px solid var(--rail-line);
   border-radius: var(--radius-sm);
 }
 .live-label { font-weight: 600; color: var(--rail-text); }
 .live-dot {
   width: 8px; height: 8px;
-  background: #4cb987;
+  background: var(--rail-ok);
   transition: background var(--ease);
 }
 .live[data-state="refreshing"] .live-dot { animation: live-pulse 900ms steps(2, jump-none) infinite; }
-.live[data-state="error"] .live-dot { background: #ee7b66; }
-.live[data-state="error"] .live-label { color: #ee7b66; }
+.live[data-state="error"] .live-dot { background: var(--rail-err); }
+.live[data-state="error"] .live-label { color: var(--rail-err); }
 
 @keyframes live-pulse {
   0%, 100% { opacity: 1; }
@@ -236,7 +242,7 @@ input, select, textarea { caret-color: var(--text); accent-color: var(--action);
   width: 32px; height: 32px;
   display: inline-flex; align-items: center; justify-content: center;
   background: var(--rail-2);
-  border: 1px solid #44525d;
+  border: 1px solid var(--rail-line);
   color: var(--rail-text);
   font-family: var(--font-display);
   font-size: 0.9375rem; font-weight: 700; letter-spacing: 0.04em;
@@ -311,7 +317,7 @@ input, select, textarea { caret-color: var(--text); accent-color: var(--action);
 
 .btn.btn-quiet { border-color: transparent; background: transparent; color: var(--text-2); }
 .btn.btn-quiet:hover:not(:disabled) { color: var(--text); background: var(--surface-2); border-color: transparent; }
-.rail .btn.btn-quiet { color: var(--rail-text-2); border-color: #44525d; }
+.rail .btn.btn-quiet { color: var(--rail-text-2); border-color: var(--rail-line); }
 .rail .btn.btn-quiet:hover:not(:disabled) { color: #fff; background: var(--rail-2); }
 
 .pager {
@@ -445,7 +451,7 @@ td.empty {
   width: 36px;
   height: 36px;
   border-radius: var(--radius);
-  border: 1px solid #44525d;
+  border: 1px solid var(--rail-line);
   background: transparent;
   color: var(--rail-text-2);
   cursor: pointer;
@@ -518,7 +524,7 @@ td.empty {
     scrollbar-width: none;
     margin: var(--sp-1) calc(var(--sp-4) * -1) 0;
     padding: 0 var(--sp-2);
-    border-top: 1px solid #36414a;
+    border-top: 1px solid var(--rail-rule);
   }
   .nav::-webkit-scrollbar { display: none; }
   .nav-link { flex: none; padding: 0 var(--sp-3); }
