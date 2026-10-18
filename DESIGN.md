@@ -38,9 +38,19 @@ typography:
     lineHeight: 1.05
   label:
     fontFamily: "Barlow Condensed, Barlow, ui-sans-serif, system-ui, sans-serif"
+    fontSize: "1rem"
+    fontWeight: 600
+    letterSpacing: "0.04em"
+  label-sm:
+    fontFamily: "Barlow Condensed, Barlow, ui-sans-serif, system-ui, sans-serif"
     fontSize: "0.9375rem"
     fontWeight: 600
     letterSpacing: "0.04em"
+  brand:
+    fontFamily: "Barlow Condensed, Barlow, ui-sans-serif, system-ui, sans-serif"
+    fontSize: "1.5rem"
+    fontWeight: 700
+    letterSpacing: "0.06em"
   body:
     fontFamily: "Barlow, ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, sans-serif"
     fontSize: "0.9375rem"
@@ -51,6 +61,15 @@ typography:
     fontSize: "0.875rem"
     fontWeight: 400
     lineHeight: 1.5
+  code:
+    fontFamily: "ui-monospace, SF Mono, Menlo, Consolas, monospace"
+    fontSize: "0.8125rem"
+    fontWeight: 400
+    lineHeight: 1.5
+  caption:
+    fontFamily: "Barlow, ui-sans-serif, system-ui, sans-serif"
+    fontSize: "0.75rem"
+    fontWeight: 400
 rounded:
   sm: "2px"
   md: "3px"
@@ -163,15 +182,20 @@ A concrete ground, steel structure and three paints. State text colours are solv
 **Character:** A stencilled, working-yard condensed face for anything that names or labels, paired with its plainer sibling for reading. Both are self-hosted (SIL OFL, latin subset) because the content security policy is `default-src 'self'`.
 
 ### Hierarchy
-- **Display** (700, 1.875rem, 1.15, 0.01em): the page heading, one per page.
+- **Brand** (700, 1.5rem, 0.06em): the wordmark in the rail (1.125rem in the top bar on small screens).
+- **Display** (700, 1.875rem, 1.15, 0.01em): the page heading, one per page, and the sign-in title.
 - **Headline** (700, 1.125rem, 1.15): section and panel headings, drawer titles.
 - **Stat** (700, 2.5rem, 1.05, tabular): fleet counts in unit tiles.
-- **Label** (600, 0.9375rem, 0.04em, sentence case): table headers, tile labels, badges, the dry-run strip lead. Never upper-cased.
+- **Label** (600, 1rem, 0.04em, sentence case): tile labels, drawer section headings, and unit codes in tables (0.05em). Never upper-cased.
+- **Label small** (600, 0.9375rem, 0.04em): table headers and badges, the same size as body.
 - **Body** (400-500, 0.9375rem, 1.5): running text and descriptions, capped around 64-72ch.
-- **Data** (400, 0.875rem, tabular figures): table cells and notes. Unit codes in tables use Label styling at 1rem with 0.05em tracking.
+- **Data** (400, 0.875rem, tabular figures): table cells and controls.
+- **Code** (400, 0.8125rem, system monospace): ARNs, command lines, audit changes, drawer values and code blocks.
+- **Caption** (400, 0.75rem): key caps and the filter-chip remove mark. Nothing is smaller.
 
 ### Named Rules
 **The Stencil Rule.** Volume and instance IDs are always condensed, bold-ish and tracked, never in the body face or a monospace.
+**The Ramp Rule.** Every font size is a step of this scale, defined once as `--text-2xs` to `--text-stat` in `dashboard-base.css`. Need a new size? Add a step there, not a literal in a component. Form fields on touch screens or below 900px are 16px so iOS does not zoom the page.
 **The Sentence Case Rule.** Labels, buttons and headings are sentence case. No tracked all-caps eyebrows above headings.
 
 ## Layout

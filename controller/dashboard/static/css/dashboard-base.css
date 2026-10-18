@@ -15,12 +15,16 @@
   --font-display: "Barlow Condensed", "Barlow", ui-sans-serif, system-ui, sans-serif;
   --font-mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
 
-  /* Type scale: 1.2 steps from a 15px body. */
-  --text-xs: 0.8125rem;   /* 13px - notes, keys */
+  /* Type scale: a 15px body, condensed labels one step above it. Every font-size in the
+     stylesheets is one of these; add a step here rather than a literal there. */
+  --text-2xs: 0.75rem;    /* 12px - key caps, chip remove */
+  --text-xs: 0.8125rem;   /* 13px - notes, monospace data, bay percent */
   --text-sm: 0.875rem;    /* 14px - table body, controls */
-  --text-md: 0.9375rem;   /* 15px - body copy, labels */
+  --text-md: 0.9375rem;   /* 15px - body copy, table headers, badges */
+  --text-label: 1rem;     /* 16px - tile labels, unit codes, drawer headings (condensed) */
   --text-lg: 1.125rem;    /* 18px - section headings */
-  --text-xl: 1.875rem;    /* 30px - page heading */
+  --text-brand: 1.5rem;   /* 24px - the wordmark */
+  --text-xl: 1.875rem;    /* 30px - page heading, sign-in title */
   --text-stat: 2.5rem;    /* 40px - unit counts */
 
   --sp-1: 4px; --sp-2: 8px; --sp-3: 12px; --sp-4: 16px;
@@ -159,7 +163,7 @@ input, select, textarea { caret-color: var(--text); accent-color: var(--action);
   padding: 0 var(--sp-5);
   font-family: var(--font-display);
   font-weight: 700;
-  font-size: 1.5rem;
+  font-size: var(--text-brand);
   letter-spacing: 0.06em;
   color: var(--rail-text);
   text-decoration: none;
@@ -251,7 +255,7 @@ input, select, textarea { caret-color: var(--text); accent-color: var(--action);
   border: 1px solid var(--rail-line);
   color: var(--rail-text);
   font-family: var(--font-display);
-  font-size: 0.9375rem; font-weight: 700; letter-spacing: 0.04em;
+  font-size: var(--text-md); font-weight: 700; letter-spacing: 0.04em;
   text-transform: uppercase;
   flex: none;
 }
@@ -373,7 +377,7 @@ th {
   background: var(--surface-2);
   color: var(--text-2);
   font-family: var(--font-display);
-  font-size: 0.9375rem;
+  font-size: var(--text-md);
   font-weight: 600;
   letter-spacing: 0.04em;
   border-bottom: 2px solid var(--border-strong);
@@ -386,7 +390,7 @@ tbody tr.is-clickable, tbody tr.audit-row { cursor: pointer; }
 tbody tr.is-clickable:focus-visible, tbody tr.audit-row:focus-visible { outline: 2px solid var(--focus); outline-offset: -2px; }
 
 /* Unit codes (volume and instance IDs) are stencilled. */
-td.mono { font-family: var(--font-display); font-size: 1rem; font-weight: 600; letter-spacing: 0.05em; }
+td.mono { font-family: var(--font-display); font-size: var(--text-label); font-weight: 600; letter-spacing: 0.05em; }
 th.num, td.num { text-align: right; font-variant-numeric: tabular-nums; }
 td.ts { color: var(--text-2); font-variant-numeric: tabular-nums; }
 
@@ -409,7 +413,7 @@ td.empty {
   border: 1px solid currentColor;
   border-radius: var(--radius-sm);
   font-family: var(--font-display);
-  font-size: 0.9375rem;
+  font-size: var(--text-md);
   font-weight: 600;
   line-height: 1.4;
   white-space: nowrap;
@@ -509,7 +513,7 @@ td.empty {
     padding: var(--sp-2) var(--sp-4) 0;
     overflow: visible;
   }
-  .brand { padding: 0; font-size: 1.25rem; min-height: 44px; margin-right: auto; }
+  .brand { padding: 0; font-size: var(--text-lg); min-height: 44px; margin-right: auto; }
   .scope-badge { display: none; }
   .rail-foot { display: contents; }
   .rail-foot > .live { order: 1; }
@@ -544,6 +548,8 @@ td.empty {
   body .btn, body .btn-preset, body .settings-tab-btn, body .filters input, body .filters select,
   body .config-value-input, body .limit-input, body .field input, body .setting-control select,
   body .audit-export { min-height: 44px; }
+  /* iOS Safari zooms the page when a field under 16px takes focus. */
+  :is(input, select, textarea):not([type=checkbox]):not([type=radio]) { font-size: max(16px, 1em); }
   body .audit-export { display: inline-flex; align-items: center; }
   .user-chip { min-width: 44px; justify-content: center; }
   .theme-toggle { width: 44px; height: 44px; }

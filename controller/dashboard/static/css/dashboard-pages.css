@@ -53,7 +53,7 @@
   display: inline-flex;
   align-items: center;
   font-family: var(--font-display);
-  font-size: 0.875rem;
+  font-size: var(--text-sm);
   font-weight: 600;
   letter-spacing: 0.03em;
   background: color-mix(in srgb, var(--amber-fill) 20%, transparent);
@@ -190,7 +190,7 @@
 
 .auth-title {
   font-family: var(--font-display);
-  font-size: 1.75rem;
+  font-size: var(--text-xl);
   font-weight: 700;
   letter-spacing: 0.04em;
   color: var(--text);
@@ -288,7 +288,7 @@
 .audit-filters input[type="search"] { min-width: 160px; flex: 0 1 200px; }
 .audit-filters input[type="date"] { min-width: 150px; }
 .audit-filters .audit-export { margin-left: auto; }
-.change { font-family: var(--font-mono); font-size: 13px; white-space: nowrap; }
+.change { font-family: var(--font-mono); font-size: var(--text-xs); white-space: nowrap; }
 .pager a.btn { text-decoration: none; }
 
 /* ---- Audit Presets & Detail Modal ---------------------------------------- */
@@ -379,7 +379,7 @@ a.user-name:hover { text-decoration: underline; }
 /* ---- Accounts --------------------------------------------------------- */
 
 .account-form { margin-bottom: var(--sp-4); }
-.config-value-input.wide { width: 26rem; max-width: 100%; text-align: left; font-family: var(--font-mono); font-size: 12.5px; }
+.config-value-input.wide { width: 26rem; max-width: 100%; text-align: left; font-family: var(--font-mono); font-size: var(--text-xs); }
 .error-cell { color: var(--red); font-size: var(--text-sm); max-width: 28rem; }
 #account-status .setting-description.mono { color: var(--red); white-space: pre-wrap; }
 
@@ -435,7 +435,7 @@ a.user-name:hover { text-decoration: underline; }
   border: 1px solid var(--border);
   border-radius: var(--radius);
   font-family: var(--font-mono);
-  font-size: 13px;
+  font-size: var(--text-xs);
   line-height: 1.5;
   overflow-x: auto;
   white-space: pre;
