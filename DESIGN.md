@@ -11,6 +11,8 @@ colors:
   ink-soft: "#424d55"
   ink-quiet: "#59656c"
   rail-steel: "#1b2229"
+  rail-text-strong: "#ffffff"
+  scrim: "#0b0f12"
   oxide-red: "#9b3928"
   safety-mustard: "#d9a21b"
   mustard-ink: "#7c5700"
@@ -142,7 +144,10 @@ A concrete ground, steel structure and three paints. State text colours are solv
 - **Concrete Ground** (#e6e9e6): the page. **Concrete Surface** (#f6f7f5): tables, panels, tiles, inputs. **Concrete Inset** (#eceeeb): table headers and quiet fills.
 - **Steel Line** (#c3c9c5) for row dividers; **Steel Line Strong** (#8a959a) for panel and control borders.
 - **Ink** (#151a1e), **Ink Soft** (#424d55), **Ink Quiet** (#59656c): text, in falling order of emphasis. All three meet 4.5:1 on the surfaces they are used on, in both themes.
+- **Rail White** (#ffffff): hovered and current-page text on the steel rail, in both themes.
+- **Scrim** (#0b0f12): the 62-68% veil behind the drawer and dialogs.
 - **Mustard Ink** (#7c5700): amber used as text, where the mustard fill would fail contrast.
+- **On Mustard** (#151a1e, the same value as Ink): text and borders on the mustard fill, fixed in both themes so the dry-run strip never loses contrast.
 
 ### Named Rules
 **The One Blue Rule.** Ultramarine means a resize is in progress, in badges, tiles, bay cells and chart bars. If a design wants a blue for any other reason, it is wrong.

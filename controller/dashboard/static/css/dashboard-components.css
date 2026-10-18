@@ -267,7 +267,7 @@
 
 .drawer-overlay {
   position: fixed; inset: 0;
-  background: color-mix(in srgb, #0b0f12 62%, transparent);
+  background: color-mix(in srgb, var(--scrim) 62%, transparent);
   z-index: 40;
   opacity: 0;
   pointer-events: none;
@@ -454,7 +454,7 @@ th.sort-asc, th.sort-desc { color: var(--text); }
 .modal-overlay {
   position: absolute;
   inset: 0;
-  background: color-mix(in srgb, #0b0f12 68%, transparent);
+  background: color-mix(in srgb, var(--scrim) 68%, transparent);
 }
 .modal-card {
   position: relative;

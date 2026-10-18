@@ -47,6 +47,7 @@
   --rail-2: #28313a;
   --rail-text: #e8ecea;
   --rail-text-2: #aab5bc;
+  --rail-text-strong: #ffffff;
   --rail-ok: #4cb987;
   --rail-err: #f29887;
   --rail-active: #9b3928;
@@ -69,9 +70,13 @@
   --red: light-dark(#9b3928, #f29887);
   --amber: light-dark(#7c5700, #e6b43a);
   --amber-fill: #d9a21b;
+  /* Text on mustard stays dark in both themes (7.6:1); it must not flip with the theme. */
+  --on-mustard: #151a1e;
   --resizing: light-dark(#1d599c, #8db9ec);
   --resizing-fill: #1f5fa6;
   --on-state: light-dark(#ffffff, #12171b);
+
+  --scrim: #0b0f12;
 
   --shadow-pop: 0 6px 0 -2px color-mix(in srgb, black 12%, transparent), 0 10px 28px rgba(8, 12, 16, 0.28);
 }
@@ -115,7 +120,7 @@ svg.icon { width: 18px; height: 18px; stroke: currentColor; fill: none; stroke-w
   outline-offset: 2px;
 }
 
-::selection { background: var(--amber-fill); color: #151a1e; }
+::selection { background: var(--amber-fill); color: var(--on-mustard); }
 input, select, textarea { caret-color: var(--text); accent-color: var(--action); }
 
 /* Reduced motion keeps state changes (colour, width) and drops travel. */
@@ -159,7 +164,7 @@ input, select, textarea { caret-color: var(--text); accent-color: var(--action);
   color: var(--rail-text);
   text-decoration: none;
 }
-.brand:hover { text-decoration: none; color: #fff; }
+.brand:hover { text-decoration: none; color: var(--rail-text-strong); }
 .brand-mark { width: 32px; height: 32px; flex: none; display: block; color: var(--rail-text); }
 .brand-mark svg { width: 100%; height: 100%; display: block; }
 
@@ -192,9 +197,9 @@ input, select, textarea { caret-color: var(--text); accent-color: var(--action);
   border-bottom: 1px solid transparent;
   transition: color var(--ease), background var(--ease);
 }
-.nav-link:hover { color: #fff; background: var(--rail-2); text-decoration: none; }
+.nav-link:hover { color: var(--rail-text-strong); background: var(--rail-2); text-decoration: none; }
 .nav-link.is-active {
-  color: #fff;
+  color: var(--rail-text-strong);
   background: var(--rail-active);
   font-weight: 600;
 }
@@ -319,7 +324,7 @@ input, select, textarea { caret-color: var(--text); accent-color: var(--action);
 .btn.btn-quiet { border-color: transparent; background: transparent; color: var(--text-2); }
 .btn.btn-quiet:hover:not(:disabled) { color: var(--text); background: var(--surface-2); border-color: transparent; }
 .rail .btn.btn-quiet { color: var(--rail-text-2); border-color: var(--rail-line); }
-.rail .btn.btn-quiet:hover:not(:disabled) { color: #fff; background: var(--rail-2); }
+.rail .btn.btn-quiet:hover:not(:disabled) { color: var(--rail-text-strong); background: var(--rail-2); }
 
 .pager {
   display: flex;
@@ -458,7 +463,7 @@ td.empty {
   cursor: pointer;
   transition: color var(--ease), background var(--ease);
 }
-.theme-toggle:hover { color: #fff; background: var(--rail-2); }
+.theme-toggle:hover { color: var(--rail-text-strong); background: var(--rail-2); }
 .auth-theme-toggle { position: fixed; top: var(--sp-4); right: var(--sp-4); color: var(--text-2); border-color: var(--border-strong); }
 .auth-theme-toggle:hover { color: var(--text); background: var(--surface-2); }
 :root[data-theme="dark"] .theme-icon-light { display: block; }

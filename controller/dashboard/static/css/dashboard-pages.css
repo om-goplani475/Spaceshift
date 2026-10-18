@@ -10,14 +10,14 @@
   gap: var(--sp-3);
   padding: var(--sp-3) var(--sp-4);
   margin-bottom: var(--sp-5);
-  border: 2px solid #151a1e;
+  border: 2px solid var(--on-mustard);
   background: var(--amber-fill);
-  color: #151a1e;
+  color: var(--on-mustard);
 }
-.banner-dryrun .banner-icon { flex: none; display: inline-flex; color: #151a1e; }
-.banner-dryrun strong { font-family: var(--font-display); font-size: var(--text-lg); letter-spacing: 0.02em; color: #151a1e; }
-.banner-dryrun p { display: inline; font-size: var(--text-sm); color: #151a1e; }
-.banner-dryrun a { margin-left: 0; color: #151a1e; font-weight: 600; }
+.banner-dryrun .banner-icon { flex: none; display: inline-flex; color: var(--on-mustard); }
+.banner-dryrun strong { font-family: var(--font-display); font-size: var(--text-lg); letter-spacing: 0.02em; color: var(--on-mustard); }
+.banner-dryrun p { display: inline; font-size: var(--text-sm); color: var(--on-mustard); }
+.banner-dryrun a { margin-left: 0; color: var(--on-mustard); font-weight: 600; }
 
 /* ---- Settings ------------------------------------------------------------ */
 
