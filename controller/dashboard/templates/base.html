@@ -6,10 +6,10 @@
 <meta name="csrf-token" content="{{ csrf_token() }}">
 <title>{% block title %}{% endblock %} · Spaceshift</title>
 <link rel="preload" href="{{ url_for('static', filename='fonts/BarlowCondensed-700.woff2') }}" as="font" type="font/woff2" crossorigin>
-<link rel="stylesheet" href="{{ url_for('static', filename='css/fonts.css') }}?v=3.3.0">
-<link rel="stylesheet" href="{{ url_for('static', filename='css/dashboard-base.css') }}?v=3.3.0">
-<link rel="stylesheet" href="{{ url_for('static', filename='css/dashboard-components.css') }}?v=3.3.0">
-<link rel="stylesheet" href="{{ url_for('static', filename='css/dashboard-pages.css') }}?v=3.3.0">
+<link rel="stylesheet" href="{{ url_for('static', filename='css/fonts.css') }}?v=3.3.2">
+<link rel="stylesheet" href="{{ url_for('static', filename='css/dashboard-base.css') }}?v=3.3.2">
+<link rel="stylesheet" href="{{ url_for('static', filename='css/dashboard-components.css') }}?v=3.3.2">
+<link rel="stylesheet" href="{{ url_for('static', filename='css/dashboard-pages.css') }}?v=3.3.2">
 {% block head %}{% endblock %}
 </head>
 {# Sign-in pages set standalone: no nav, no live refresh - there's nothing to refresh. #}
@@ -157,6 +157,7 @@
   </div>
 </div>
 
+<div role="region" aria-label="Selected rows">
 <div id="batch-action-bar" class="batch-bar" role="toolbar" aria-label="Batch actions">
   <span class="batch-bar-count" id="batch-bar-count">0 selected</span>
   <div class="batch-bar-actions">
@@ -165,6 +166,7 @@
     <button type="button" class="btn btn-quiet" id="batch-export-btn">Export selected</button>
     <button type="button" class="btn btn-quiet" id="batch-cancel-btn">Deselect</button>
   </div>
+</div>
 </div>
 
 <div id="detail-modal" class="modal-root is-hidden" role="dialog" aria-modal="true" aria-label="Event details">
@@ -185,9 +187,9 @@
 
 <div id="toast-container" class="toast-container" aria-live="polite"></div>
 
-<script src="{{ url_for('static', filename='js/dashboard-utils.js') }}?v=3.3.0"></script>
-<script src="{{ url_for('static', filename='js/dashboard-features.js') }}?v=3.3.0"></script>
-<script src="{{ url_for('static', filename='js/dashboard-init.js') }}?v=3.3.0"></script>
+<script src="{{ url_for('static', filename='js/dashboard-utils.js') }}?v=3.3.2"></script>
+<script src="{{ url_for('static', filename='js/dashboard-features.js') }}?v=3.3.2"></script>
+<script src="{{ url_for('static', filename='js/dashboard-init.js') }}?v=3.3.2"></script>
 {% block scripts %}{% endblock %}
 </body>
 </html>

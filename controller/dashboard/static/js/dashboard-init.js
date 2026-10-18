@@ -23,6 +23,8 @@ markClickableRows();
 initThemeToggle();
 initKeyboardShortcuts();
 wireRowKeyboard();
+markScrollRegions(document);
+window.addEventListener("resize", function () { markScrollRegions(document); });
 wireTableSorting();
 wireExportCSVButtons();
 wireShortcutsModal();
@@ -148,6 +150,7 @@ async function refreshLiveData() {
     wireConfigDirtyTracking(document);
     wireInlineCopyButtons(document);
     markClickableRows();
+    markScrollRegions(document);
     updateVolumesKPI();
     updateInstancesKPI();
     Object.values(tableControllers).forEach(function (c) { c.apply(); });

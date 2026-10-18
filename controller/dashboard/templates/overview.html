@@ -69,17 +69,17 @@
       </div>
     </div>
     {% if bay_cells %}
-    <div class="bay-grid" role="list" aria-label="Volumes by how full they are">
+    <ul class="bay-grid" aria-label="Volumes by how full they are">
       {% for c in bay_cells %}
-      <a class="bay-cell{{ ' is-resizing' if c.resizing }}" role="listitem" href="{{ url_for('volumes') }}" data-level="{{ c.level }}"
+      <li><a class="bay-cell{{ ' is-resizing' if c.resizing }}" href="{{ url_for('volumes') }}" data-level="{{ c.level }}"
          title="{{ c.name }}: {{ c.pct ~ '% used' if c.pct is not none else 'no usage reading yet' }}{{ ', resizing now' if c.resizing }}"
          aria-label="{{ c.name }}, {{ c.pct ~ '% used' if c.pct is not none else 'no usage reading yet' }}{{ ' (over 85%)' if c.level == 'critical' }}{{ ' (70% to 85%)' if c.level == 'warning' }}{{ ', resizing now' if c.resizing }}">
         <span class="bay-fill p{{ c.fill }}"></span>
         <span class="bay-code">{{ c.code }}</span>
         <span class="bay-pct">{{ c.pct ~ "%" if c.pct is not none else "–" }}</span>
-      </a>
+      </a></li>
       {% endfor %}
-    </div>
+    </ul>
     {% if bay_hidden %}<p class="section-note">{{ bay_hidden }} more volume{{ "s" if bay_hidden != 1 }} not shown. Open Volumes for the full list.</p>{% endif %}
     {% else %}
     <p class="bay-empty">No volumes scanned yet. The first cycle runs shortly after the controller starts.</p>
@@ -217,5 +217,5 @@
 
 {% block scripts %}
 <script src="{{ url_for('static', filename='js/vendor/apexcharts.min.js') }}"></script>
-<script src="{{ url_for('static', filename='js/overview-charts.js') }}?v=3.3.0"></script>
+<script src="{{ url_for('static', filename='js/overview-charts.js') }}?v=3.3.2"></script>
 {% endblock %}

@@ -776,6 +776,8 @@ def test_overview_bay_plan_shows_one_cell_per_volume_fullest_first(state, client
     html = client.get("/").data.decode()
 
     assert html.count('class="bay-cell') == 2
+    assert '<ul class="bay-grid"' in html and 'role="listitem"' not in html  # a real list, not ARIA on links
+    assert 'aria-label="vol-bbbb2222, 93.0% used (over 85%)"' in html  # the level is spoken, not only coloured
     assert html.index("2222") < html.index("1111")  # the 93% volume leads
     assert 'data-level="critical"' in html
 

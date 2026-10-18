@@ -640,6 +640,34 @@ function initKeyboardShortcuts() {
 
 // Rows that open a drawer or a detail dialog on click do the same on
 // Enter or Space when focused, so they aren't mouse-only.
+// A scrolling table or code block with nothing focusable inside can't be
+// scrolled from the keyboard. Give an overflowing one a tab stop and a name;
+// regions that already contain a link, button or field are left alone.
+const _FOCUSABLE = "a[href], button, input:not([type=hidden]), select, textarea, [tabindex]";
+
+function markScrollRegions(root) {
+  (root || document).querySelectorAll(".panel, .code-block pre").forEach(function (el) {
+    const overflows = el.scrollWidth > el.clientWidth + 1;
+    if (overflows && !el.querySelector(_FOCUSABLE) && !el.hasAttribute("tabindex")) {
+      const scope = el.closest(".step-body") || el.closest("section");
+      const heading = scope && scope.querySelector(".step-title, h2");
+      let name = heading ? heading.textContent.trim() : el.matches("pre") ? "Code" : "Table";
+      // Several blocks under one heading need distinct names to be told apart.
+      const siblings = scope ? Array.from(scope.querySelectorAll(".code-block pre")) : [];
+      if (el.matches("pre") && siblings.length > 1) name += ", code " + (siblings.indexOf(el) + 1);
+      el.tabIndex = 0;
+      el.setAttribute("role", "region");
+      el.setAttribute("aria-label", name + " (scrolls sideways)");
+      el.dataset.scrollRegion = "1";
+    } else if (!overflows && el.dataset.scrollRegion) {
+      el.removeAttribute("tabindex");
+      el.removeAttribute("role");
+      el.removeAttribute("aria-label");
+      delete el.dataset.scrollRegion;
+    }
+  });
+}
+
 function wireRowKeyboard() {
   document.addEventListener("keydown", function (e) {
     if (e.key !== "Enter" && e.key !== " ") return;
