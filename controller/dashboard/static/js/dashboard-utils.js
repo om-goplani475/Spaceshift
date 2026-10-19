@@ -671,6 +671,32 @@ function markScrollRegions(root) {
   });
 }
 
+// Card layout (see "Tables as unit cards" in dashboard-components.css): each
+// cell takes its header's text as a label. Switching a table to display:block
+// drops its table semantics in some screen readers, so the roles are stated
+// explicitly (harmless on desktop, where they match the native ones).
+function labelCells(root) {
+  (root || document).querySelectorAll("table.cards").forEach(function (table) {
+    const labels = Array.from(table.querySelectorAll("thead th")).map(function (th) {
+      return th.classList.contains("select-col") ? "" : th.textContent.trim();
+    });
+    table.setAttribute("role", "table");
+    table.querySelectorAll("thead, tbody").forEach(function (g) { g.setAttribute("role", "rowgroup"); });
+    table.querySelectorAll("tr").forEach(function (tr) { tr.setAttribute("role", "row"); });
+    table.querySelectorAll("thead th").forEach(function (th) { th.setAttribute("role", "columnheader"); });
+    table.querySelectorAll("tbody tr").forEach(function (tr) {
+      Array.from(tr.children).forEach(function (td, i) {
+        td.setAttribute("role", "cell");
+        if (labels[i] && td.colSpan === 1) td.dataset.label = labels[i];
+        // A card has no use for a label over nothing (audit rows often have
+        // no account or change).
+        if (!td.textContent.trim() && !td.children.length && !td.classList.contains("empty")) td.dataset.blank = "1";
+        else delete td.dataset.blank;
+      });
+    });
+  });
+}
+
 function wireRowKeyboard() {
   document.addEventListener("keydown", function (e) {
     if (e.key !== "Enter" && e.key !== " ") return;

@@ -23,6 +23,7 @@ markClickableRows();
 initThemeToggle();
 initKeyboardShortcuts();
 wireRowKeyboard();
+labelCells(document);
 markScrollRegions(document);
 window.addEventListener("resize", function () { markScrollRegions(document); });
 wireTableSorting();
@@ -178,6 +179,7 @@ async function refreshLiveData() {
     wireConfigDirtyTracking(document);
     wireInlineCopyButtons(document);
     markClickableRows();
+    labelCells(document);
     markScrollRegions(document);
     updateVolumesKPI();
     updateInstancesKPI();

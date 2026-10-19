@@ -735,3 +735,70 @@ th.sort-asc, th.sort-desc { color: var(--text); }
 .action-col { white-space: nowrap; }
 .row-actions { display: flex; gap: var(--sp-2); }
 .row-actions form { margin: 0; }
+
+/* ---- Tables as unit cards on small screens ------------------------------
+   A 12-14 column table is a sideways scroll on a phone. Under 900px a
+   `table.cards` becomes a list: one bordered card per row, the unit code
+   (first data cell) as its title and every other cell as a labelled value.
+   The labels come from the header cells (labelCells() in dashboard-utils.js,
+   which also restores the table roles display:block strips). The header row
+   is hidden, so column sorting is a desktop feature. */
+@media (max-width: 900px) {
+  table.cards, table.cards tbody { display: block; white-space: normal; }
+  table.cards thead {
+    position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%);
+  }
+  table.cards tbody tr:not(.is-hidden) {
+    position: relative;
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(9.5rem, 1fr));
+    gap: var(--sp-3) var(--sp-4);
+    padding: var(--sp-3) var(--sp-4);
+    border-bottom: 1px solid var(--border-strong);
+  }
+  table.cards tbody tr:last-child { border-bottom: none; }
+  table.cards td {
+    display: block;
+    min-width: 0;
+    padding: 0;
+    border: none;
+    text-align: left;
+    overflow-wrap: anywhere;
+  }
+  table.cards tbody tr:hover td { background: transparent; }
+  table.cards td[data-label]::before {
+    content: attr(data-label);
+    display: block;
+    margin-bottom: 2px;
+    color: var(--text-2);
+    font-family: var(--font-display);
+    font-size: var(--text-2xs);
+    font-weight: 600;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+  }
+  /* The unit code leads the card, clear of the select box. */
+  table.cards tbody tr > td:first-child:not(.select-col),
+  table.cards tbody tr > .select-col + td {
+    grid-column: 1 / -1;
+    padding-right: 48px;
+  }
+  table.cards td.select-col {
+    position: absolute;
+    top: 0;
+    right: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 48px;
+    height: 48px;
+    padding: 0;
+  }
+  table.cards td[data-blank] { display: none; }
+  table.cards td.num { text-align: left; }
+  table.cards .badge { max-width: 100%; white-space: normal; overflow-wrap: anywhere; }
+  table.cards .row-actions { flex-wrap: wrap; }
+  table.cards td.action-col { grid-column: 1 / -1; }
+  table.cards td.empty { grid-column: 1 / -1; padding: var(--sp-8) var(--sp-4); text-align: center; }
+  table.cards tr.empty-row { display: block; padding: 0; }
+}

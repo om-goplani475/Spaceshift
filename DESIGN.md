@@ -248,6 +248,9 @@ Badges are 2px-corner outlined tags in condensed type, tinted by state. Meters a
 - **Focus:** the 2px focus ring. Unsaved edits get a 2px amber border; rejected values a 2px red one.
 - **Error / Disabled:** red border plus the reason in text; disabled at 45-60% opacity.
 
+### Tables on phones
+Under 900px a `table.cards` becomes a list of unit cards: one per row, the unit code as the title (clear of the select box), every other cell a stencilled label over its value in a two-column grid, empty cells dropped. Cells take their labels from the header (`labelCells()`), and the header row is hidden, so sorting is desktop-only.
+
 ### Drawer and dialogs
 A 420px slide-over drawer and a centred 440px modal card share one behaviour: focus moves in, the page behind becomes inert, Escape closes, focus returns to the opener. Closed dialogs are not tabbable.
 
