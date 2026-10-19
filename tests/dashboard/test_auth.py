@@ -3,6 +3,7 @@ first-admin setup page, rate limiting, CSRF, and the security headers."""
 
 from __future__ import annotations
 
+import gzip
 import logging
 import re
 from datetime import UTC, datetime, timedelta
@@ -615,3 +616,58 @@ def test_validate_username_policy():
     assert validate_username("a" * 33) is not None
     assert validate_username("Alice") is not None
     assert validate_username("*setup*") is not None
+
+
+POLL = {"X-Spaceshift-Poll": "1"}
+
+
+def _signed_in_csrf_client(csrf_app):
+    client = csrf_app.test_client()
+    token = _csrf_token_from(client.get("/login").data.decode())
+    client.post("/login", data={"username": ADMIN_USERNAME, "password": ADMIN_PASSWORD, "csrf_token": token})
+    return client
+
+
+def test_poll_response_has_no_csrf_token_and_is_gzipped(csrf_app, state):
+    client = _signed_in_csrf_client(csrf_app)
+    for n in range(40):
+        state.upsert_instance("default", f"i-{n}", "us-east-1", "t3.micro", "running")
+    page = client.get("/instances")
+    token = _csrf_token_from(page.data.decode())
+
+    poll = client.get("/instances", headers={**POLL, "Accept-Encoding": "gzip"})
+    assert poll.headers["Content-Encoding"] == "gzip"
+    body = gzip.decompress(poll.data)
+    assert token.encode() not in body
+    assert b"<tbody" in body
+    assert len(poll.data) < len(page.data) / 3
+    # A normal page load is untouched: token present, not compressed, no ETag.
+    assert token.encode() in page.data
+    assert "Content-Encoding" not in page.headers
+    assert "ETag" not in page.headers
+
+
+def test_poll_gets_a_304_until_the_page_changes(csrf_app, state):
+    client = _signed_in_csrf_client(csrf_app)
+    state.upsert_instance("default", "i-1", "us-east-1", "t3.micro", "running")
+
+    first = client.get("/instances", headers=POLL)
+    etag = first.headers["ETag"]
+    # Each response carries a new token timestamp; the validator ignores it.
+    assert client.get("/instances", headers=POLL).headers["ETag"] == etag
+
+    unchanged = client.get("/instances", headers={**POLL, "If-None-Match": etag})
+    assert unchanged.status_code == 304
+    assert unchanged.data == b""
+    assert unchanged.headers["Cache-Control"] == "no-store"
+    assert unchanged.headers["X-Content-Type-Options"] == "nosniff"
+
+    state.upsert_instance("default", "i-2", "us-east-1", "t3.micro", "running")
+    changed = client.get("/instances", headers={**POLL, "If-None-Match": etag})
+    assert changed.status_code == 200
+    assert changed.headers["ETag"] != etag
+
+
+def test_json_and_signed_out_pages_are_never_conditional(client, app):
+    assert "ETag" not in client.get("/api/status", headers=POLL).headers
+    assert "ETag" not in app.test_client().get("/login", headers=POLL).headers

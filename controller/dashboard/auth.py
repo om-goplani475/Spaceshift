@@ -12,6 +12,8 @@ attacker with dashboard access must not be able to change.
 
 from __future__ import annotations
 
+import gzip
+import hashlib
 import hmac
 import ipaddress
 import logging
@@ -234,6 +236,7 @@ def init_auth(app: Flask, state: StateBackend, settings: AuthSettings) -> None:
 
     app.before_request(_require_login)
     app.after_request(_add_security_headers)
+    app.after_request(_conditional_page)
     app.register_blueprint(bp)
     from controller.dashboard.accounts_pages import bp as accounts_bp  # circular at module level
     from controller.dashboard.resize_pages import bp as resizes_bp
@@ -252,6 +255,44 @@ def init_auth(app: Flask, state: StateBackend, settings: AuthSettings) -> None:
 
 def _settings() -> AuthSettings:
     return current_app.extensions["spaceshift_auth"]
+
+
+def _conditional_page(response):
+    """Make the 10s live refresh cheap: a 304 when nothing changed, else gzip.
+
+    The poll (it sends X-Spaceshift-Poll) re-fetches the whole page and only
+    swaps table bodies and summary tiles out of it. Two things follow:
+
+    * The CSRF token is blanked from the polled body (the page script puts
+      its own back into the swapped-in forms). That lets the body be
+      ETagged - otherwise the token's per-second timestamp would make no two
+      responses match - and compressed without the BREACH exposure of a
+      stable secret sitting in compressed HTML next to reflected input.
+    * Only the poll gets this, and it is compressed here, not by the proxy:
+      a normal page load keeps its token and is never compressed.
+
+    The browser never sends If-None-Match for these no-store pages itself.
+    """
+    if (
+        request.method != "GET"
+        or not request.headers.get("X-Spaceshift-Poll")
+        or response.status_code != 200
+        or g.get("user") is None
+        or response.mimetype != "text/html"
+        or response.direct_passthrough
+    ):
+        return response
+    body = response.get_data()
+    token = g.get("csrf_token")
+    if token:
+        body = body.replace(str(token).encode(), b"")
+    response.set_etag(hashlib.sha256(body).hexdigest()[:32])
+    if "gzip" in request.headers.get("Accept-Encoding", "") and len(body) > 1024:
+        body = gzip.compress(body, compresslevel=5, mtime=0)
+        response.headers["Content-Encoding"] = "gzip"
+        response.headers.add("Vary", "Accept-Encoding")
+    response.set_data(body)
+    return response.make_conditional(request)
 
 
 def _add_security_headers(response):

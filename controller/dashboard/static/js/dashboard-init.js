@@ -45,6 +45,9 @@ const SWAP_IDS = [
 ];
 const REFRESH_TIMEOUT_MS = 8000;
 let refreshInFlight = false;
+// ETag of the last full response. The server answers 304 when nothing
+// changed, which skips the download, the parse and the table re-render.
+let lastEtag = null;
 
 // The swap below replaces whole table bodies, which would drop keyboard
 // focus (and a screen reader's place) if it was on a row, toggle or copy
@@ -75,6 +78,14 @@ function restoreFocus(sel) {
 const liveIndicator = document.getElementById("live-indicator");
 const liveLabel = document.getElementById("live-label");
 
+function markLive() {
+  if (liveIndicator) {
+    liveIndicator.dataset.state = "idle";
+    liveIndicator.title = "This page refreshes itself every 10 seconds while visible";
+  }
+  if (liveLabel) liveLabel.textContent = "Live";
+}
+
 async function refreshLiveData() {
   if (document.hidden || refreshInFlight || batchUpdateInFlight) return;
   // A swap would wipe an edit that hasn't been saved yet - skip this cycle.
@@ -85,7 +96,9 @@ async function refreshLiveData() {
   const timeout = setTimeout(function () { abort.abort(); }, REFRESH_TIMEOUT_MS);
   try {
     // Query string included: the audit page's filters live there.
-    const resp = await fetch(location.pathname + location.search, { signal: abort.signal });
+    const headers = { "X-Spaceshift-Poll": "1" };
+    if (lastEtag) headers["If-None-Match"] = lastEtag;
+    const resp = await fetch(location.pathname + location.search, { headers: headers, signal: abort.signal });
     // The session expired (or was revoked) and the server sent us to the
     // sign-in page - go there properly instead of silently showing stale
     // data with a green "Live" dot.
@@ -93,7 +106,12 @@ async function refreshLiveData() {
       location.href = "/login?next=" + encodeURIComponent(location.pathname + location.search);
       return;
     }
+    if (resp.status === 304) {
+      markLive();
+      return;
+    }
     if (!resp.ok) throw new Error("refresh failed: " + resp.status);
+    lastEtag = resp.headers.get("ETag");
     const html = await resp.text();
     const fresh = new DOMParser().parseFromString(html, "text/html");
 
@@ -126,7 +144,17 @@ async function refreshLiveData() {
     const hasUnsavedSettings = settingsList && settingsList.querySelector('.setting[data-dirty="true"]');
     if (settingsList && updatedSettings && !editingSettings && !hasUnsavedSettings) {
       settingsList.innerHTML = updatedSettings.innerHTML;
+    } else if (settingsList && updatedSettings) {
+      // Skipped this cycle: forget the ETag so the next poll is a full
+      // response instead of a 304 that would leave settings stale.
+      lastEtag = null;
     }
+
+    // The polled HTML has its CSRF token blanked (see _conditional_page);
+    // the forms just swapped in get this page's own, which stays valid.
+    document.querySelectorAll('input[name="csrf_token"]').forEach(function (input) {
+      if (!input.value) input.value = CSRF_TOKEN;
+    });
 
     // Restore checkbox selections
     if (checkedIds.size > 0) {
@@ -155,11 +183,7 @@ async function refreshLiveData() {
     updateInstancesKPI();
     Object.values(tableControllers).forEach(function (c) { c.apply(); });
     restoreFocus(focusSel);
-    if (liveIndicator) {
-      liveIndicator.dataset.state = "idle";
-      liveIndicator.title = "This page refreshes itself every 10 seconds while visible";
-    }
-    if (liveLabel) liveLabel.textContent = "Live";
+    markLive();
   } catch (e) {
     // Network hiccup or similar - show it, and try again next tick. No
     // countdown/age text on this indicator (just "is it live right now",
